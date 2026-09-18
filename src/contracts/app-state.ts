@@ -20,6 +20,10 @@ export type ModalState =
       type: "create-agent";
       workspaceId: string;
       step: "provider" | "model" | "mode" | "thinking" | "prompt";
+      providerId?: string;
+      modelId?: string;
+      modeId?: string;
+      thinkingLevel?: string;
     }
   | { type: "rename"; agentId: string; value: string }
   | { type: "mode"; agentId: string }
