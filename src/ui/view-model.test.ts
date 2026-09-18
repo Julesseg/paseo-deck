@@ -13,6 +13,8 @@ import {
 function state(): AppState {
   return {
     connection: "connected",
+    recovery: { attempt: 0, directoryStale: false, timelineStale: false },
+    notifications: [],
     directory: {
       ...emptyDirectory(),
       projects: [{ id: "p", name: "Deck" }],

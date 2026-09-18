@@ -13,6 +13,7 @@ export type TreeOrder = "attention" | "alphabetical";
 export type ModalState =
   | { type: "none" }
   | { type: "help" }
+  | { type: "notifications"; index: number }
   | { type: "filter"; query: string }
   | {
       type: "confirm";
@@ -65,10 +66,31 @@ export interface TimelineNavigationState {
   anchor?: TimelineCursor;
 }
 
+export type RetryDescriptor = { type: "reconnect" } | { type: "operation"; token: number };
+
+export type PaseoFailureKind =
+  | "daemon-unavailable"
+  | "authentication"
+  | "protocol"
+  | "subscription"
+  | "command";
+
 export interface NotificationState {
+  id: number;
   message: string;
   detail?: string;
   kind: "info" | "error";
+  retry?: RetryDescriptor;
+  failureKind?: PaseoFailureKind;
+}
+
+/** Connection information owned by the application, not the transport. */
+export interface ConnectionRecoveryState {
+  attempt: number;
+  since?: number;
+  detail?: string;
+  directoryStale: boolean;
+  timelineStale: boolean;
 }
 
 export interface ComposerState {
@@ -89,6 +111,7 @@ export interface CreationDefaults {
 
 export interface AppState {
   connection: ConnectionState;
+  recovery: ConnectionRecoveryState;
   directory: DirectorySnapshot;
   selectedProjectId?: string;
   selectedWorkspaceId?: string;
@@ -105,7 +128,9 @@ export interface AppState {
   composer: ComposerState;
   /** Successful creation choices, isolated by workspace for the current run. */
   creationDefaults: Readonly<Record<string, CreationDefaults>>;
-  notification?: NotificationState;
+  /** Bounded FIFO; notification is retained as the currently selected entry. */
+  notifications: readonly NotificationState[];
+  activeNotificationId?: number;
 }
 
 export function emptyDirectory(): DirectorySnapshot {

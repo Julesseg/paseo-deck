@@ -82,6 +82,25 @@ describe("runCli", () => {
     expect(terminal.writes.join("")).toContain("\u001b[?1049l");
     expect(terminal.stopped).toBe(true);
   });
+
+  it("restores the terminal when shutdown races a reconnecting observation", async () => {
+    const capture = output();
+    const terminal = new RecordingTerminal();
+    const gateway = new FakePaseoGateway(emptyDirectory());
+    const running = runInteractive({ type: "default" }, capture.io, {
+      gateway,
+      terminal,
+      bindExitHandlers: () => () => undefined,
+    });
+    await tick();
+    gateway.emitDirectory({ type: "connection-changed", state: "reconnecting", attempt: 2 });
+
+    terminal.sendInput("q");
+
+    await expect(running).resolves.toBe(0);
+    expect(terminal.writes.join("")).toContain("\u001b[?1049l");
+    expect(terminal.stopped).toBe(true);
+  });
 });
 
 async function tick(): Promise<void> {

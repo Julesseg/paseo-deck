@@ -12,6 +12,8 @@ import { agentChoices, creationChoices, DeckTui, highlightFencedCode } from "./v
 function state(): AppState {
   return {
     connection: "connected",
+    recovery: { attempt: 0, directoryStale: false, timelineStale: false },
+    notifications: [],
     directory: {
       ...emptyDirectory(),
       workspaces: [{ id: "w", title: "Workspace label", directory: "/workspace", archived: false }],
@@ -397,6 +399,68 @@ describe("creation prompt", () => {
 });
 
 describe("DeckTui viewport and focus", () => {
+  it("renders reconnect attempts and elapsed time from the injected render clock", async () => {
+    const terminal = new RecordingTerminal();
+    const clock = new FakeRenderClock();
+    clock.current = 1_000;
+    const deck = new DeckTui(
+      terminal,
+      {
+        ...state(),
+        connection: "reconnecting",
+        recovery: { attempt: 2, since: 1_000, directoryStale: true, timelineStale: true },
+      },
+      () => undefined,
+      { renderClock: clock },
+    );
+    deck.start();
+    await terminal.waitForRender();
+    expect(terminal.viewport().join("\n")).toContain("reconnecting #2 · 0s · stale");
+    clock.advance(1_000);
+    await terminal.waitForRender();
+    expect(terminal.viewport().join("\n")).toContain("reconnecting #2 · 1s · stale");
+    await deck.stop();
+    const writesAfterStop = terminal.writes.length;
+    clock.advance(5_000);
+
+    expect(terminal.writes).toHaveLength(writesAfterStop);
+  });
+
+  it("renders a reviewable notification queue with category, details, and retry affordances", async () => {
+    const terminal = new RecordingTerminal();
+    const notificationState = {
+      ...state(),
+      notifications: [
+        {
+          id: 1,
+          kind: "error" as const,
+          failureKind: "daemon-unavailable" as const,
+          message: "Offline",
+        },
+        {
+          id: 2,
+          kind: "error" as const,
+          failureKind: "command" as const,
+          message: "Send failed",
+          detail: "safe detail",
+          retry: { type: "operation" as const, token: 4 },
+        },
+      ],
+      activeNotificationId: 2,
+      modal: { type: "notifications" as const, index: 1 },
+    };
+    const deck = new DeckTui(terminal, notificationState, () => undefined);
+    deck.update(notificationState);
+    deck.start();
+    await terminal.waitForRender();
+    await deck.stop();
+
+    expect(terminal.viewport().join("\n")).toContain("Notifications 2/2");
+    expect(terminal.viewport().join("\n")).toContain("error/command: Send failed");
+    expect(terminal.viewport().join("\n")).toContain("E details");
+    expect(terminal.viewport().join("\n")).toContain("R retry");
+  });
+
   it("searches source timeline text through the overlay", async () => {
     const terminal = new RecordingTerminal(80, 16);
     const searchState: AppState = {
@@ -1633,7 +1697,8 @@ describe("DeckTui viewport and focus", () => {
           usage: { inputTokens: 12, outputTokens: 3, contextTokens: 15, contextWindow: 100 },
           items: [],
         },
-        notification: { kind: "info", message: "Directory refreshed." },
+        notifications: [{ id: 1, kind: "info", message: "Directory refreshed." }],
+        activeNotificationId: 1,
       },
       () => undefined,
     );

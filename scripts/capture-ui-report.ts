@@ -52,11 +52,13 @@ const shots: Array<{
     state: {
       ...baseState,
       connection: "reconnecting",
+      recovery: { attempt: 2, since: 0, directoryStale: true, timelineStale: true },
       composer: {
         ...baseState.composer,
         drafts: { "agent-atlas-1234": "This draft remains while the daemon reconnects." },
       },
-      notification: { kind: "info", message: "Reconnecting to Paseo…" },
+      notifications: [{ id: 1, kind: "info", message: "Reconnecting to Paseo…" }],
+      activeNotificationId: 1,
     },
   },
   { name: "narrow-layout", columns: 52, rows: 18, state: baseState },
@@ -81,6 +83,8 @@ for (const shot of shots) {
 function syntheticState(): AppState {
   return {
     connection: "connected",
+    recovery: { attempt: 0, directoryStale: false, timelineStale: false },
+    notifications: [],
     directory: {
       projects: [{ id: "project-deck", name: "Deck Labs" }],
       workspaces: [

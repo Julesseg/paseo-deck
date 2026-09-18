@@ -1,10 +1,12 @@
-import type { AppState, ModalState } from "../contracts/app-state.js";
+import type { AppState, ModalState, PaseoFailureKind } from "../contracts/app-state.js";
 import type { AgentCommand } from "../contracts/commands.js";
 import type { DirectoryUpdate } from "../contracts/domain.js";
 import type { Observation, PaseoGateway } from "../contracts/gateway.js";
+import { PaseoGatewayError, paseoFailure, redactTransportDetail } from "../paseo/errors.js";
 import { composerAvailability } from "../state/composer.js";
 import {
   type AppAction,
+  activeNotification,
   createInitialState,
   pendingPermissions,
   reduceApp,
@@ -16,6 +18,14 @@ export interface ApplicationControllerOptions {
   onQuit?: () => void | Promise<void>;
 }
 
+type RetryOperation =
+  | { type: "command"; command: AgentCommand }
+  | { type: "send"; agentId: string; prompt: string }
+  | { type: "focus"; agentId: string }
+  | { type: "refresh" }
+  | { type: "recovery-directory" }
+  | { type: "recovery-timeline"; agentId: string };
+
 export class ApplicationController {
   #state = createInitialState();
   readonly #listeners = new Set<(state: AppState) => void>();
@@ -24,6 +34,13 @@ export class ApplicationController {
   #focusGeneration = 0;
   #permissionFocusGeneration = 0;
   #creationGeneration = 0;
+  #recoveryGeneration = 0;
+  #nextRetryToken = 0;
+  #reconnectRetrying = false;
+  readonly #retryOperations = new Map<
+    number,
+    { running: boolean; completed: boolean; operation: RetryOperation }
+  >();
 
   constructor(
     private readonly gateway: PaseoGateway,
@@ -51,12 +68,12 @@ export class ApplicationController {
       let hydrating = true;
       this.#directoryObservation = await this.gateway.observeDirectory((update) => {
         if (hydrating) pending.push(update);
-        else this.apply({ type: "directory", update });
+        else this.receiveDirectoryUpdate(update);
       });
       const snapshot = await this.gateway.getDirectorySnapshot();
       this.apply({ type: "directory", update: { type: "snapshot", snapshot } });
       hydrating = false;
-      for (const update of pending) this.apply({ type: "directory", update });
+      for (const update of pending) this.receiveDirectoryUpdate(update);
       this.apply({
         type: "directory",
         update: { type: "connection-changed", state: "connected" },
@@ -68,7 +85,12 @@ export class ApplicationController {
         type: "directory",
         update: { type: "connection-changed", state: "disconnected", detail: errorMessage(error) },
       });
-      this.reportError("Could not connect to Paseo.", error);
+      this.reportError(
+        "Could not connect to Paseo.",
+        error,
+        { type: "reconnect" },
+        "daemon-unavailable",
+      );
     }
   }
 
@@ -94,7 +116,16 @@ export class ApplicationController {
     this.apply({ type: "select-agent", agentId });
     try {
       const observation = await this.gateway.focusAgent(agentId, (update) => {
-        if (generation === this.#focusGeneration) this.apply({ type: "timeline", update });
+        if (generation !== this.#focusGeneration) return;
+        this.apply({ type: "timeline", update });
+        if (update.type === "error")
+          this.apply({
+            type: "notify",
+            message: update.message,
+            ...(update.detail ? { detail: update.detail } : {}),
+            kind: "error",
+            retry: this.registerRetry({ type: "focus", agentId }),
+          });
       });
       if (generation !== this.#focusGeneration) {
         await observation.release();
@@ -111,6 +142,12 @@ export class ApplicationController {
           detail: errorMessage(error),
         },
       });
+      this.reportError(
+        "Could not open the agent timeline.",
+        error,
+        this.registerRetry({ type: "focus", agentId }),
+        "subscription",
+      );
     }
   }
 
@@ -203,6 +240,34 @@ export class ApplicationController {
           modal: { type: "error-details", message: intent.message, detail: intent.detail },
         });
         return;
+      case "open-notifications": {
+        const selected = activeNotification(this.#state);
+        this.apply({
+          type: "open-modal",
+          modal: {
+            type: "notifications",
+            index: selected ? this.#state.notifications.indexOf(selected) : 0,
+          },
+        });
+        return;
+      }
+      case "move-notification": {
+        const modal = this.#state.modal;
+        if (modal.type !== "notifications" || this.#state.notifications.length === 0) return;
+        const index = Math.max(
+          0,
+          Math.min(this.#state.notifications.length - 1, modal.index + intent.direction),
+        );
+        const notification = this.#state.notifications[index];
+        if (!notification) return;
+        this.apply({ type: "select-notification", id: notification.id });
+        this.apply({ type: "open-modal", modal: { type: "notifications", index } });
+        return;
+      }
+      case "select-notification":
+        this.apply({ type: "select-notification", id: intent.id });
+        this.apply({ type: "close-modal" });
+        return;
       case "open-permissions": {
         const request = pendingPermissions(this.#state)[0];
         if (request) {
@@ -260,6 +325,9 @@ export class ApplicationController {
       case "retry-permission":
         await this.respondPermission(intent.agentId, intent.requestId, intent.allow);
         return;
+      case "retry-notification":
+        await this.retryNotification(intent.id);
+        return;
       case "command":
         await this.runCommand(intent.command);
         return;
@@ -281,6 +349,7 @@ export class ApplicationController {
   private apply(action: AppAction): void {
     const previousModal = this.#state.modal;
     this.#state = reduceApp(this.#state, action);
+    this.pruneRetries();
     for (const listener of this.#listeners) listener(this.#state);
     const modal = this.#state.modal;
     if (
@@ -386,7 +455,12 @@ export class ApplicationController {
       this.apply({ type: "directory", update: { type: "snapshot", snapshot } });
       this.apply({ type: "notify", message: "Directory refreshed." });
     } catch (error) {
-      this.reportError("Could not refresh the directory.", error);
+      this.reportError(
+        "Could not refresh the directory.",
+        error,
+        this.registerRetry({ type: "refresh" }),
+        "protocol",
+      );
     }
   }
 
@@ -411,7 +485,12 @@ export class ApplicationController {
       this.apply({ type: "composer-sent", agentId, prompt });
     } catch (error) {
       this.apply({ type: "set-composer-sending", agentId, sending: false });
-      this.reportError("Could not send the prompt.", error);
+      this.reportError(
+        "Could not send the prompt.",
+        error,
+        this.registerRetry({ type: "send", agentId, prompt }),
+        "command",
+      );
     }
   }
 
@@ -427,7 +506,12 @@ export class ApplicationController {
           result.type === "agent-created" ? `Created agent ${shortId(result.agentId)}.` : "Done.",
       });
     } catch (error) {
-      this.reportError("The Paseo command failed.", error);
+      this.reportError(
+        "The Paseo command failed.",
+        error,
+        this.registerRetry({ type: "command", command }),
+        "command",
+      );
     }
   }
 
@@ -604,8 +688,165 @@ export class ApplicationController {
     else if (modal.step === "provider") this.apply({ type: "close-modal" });
   }
 
-  private reportError(message: string, error: unknown): void {
-    this.apply({ type: "notify", message, detail: errorDetail(error), kind: "error" });
+  private receiveDirectoryUpdate(update: DirectoryUpdate): void {
+    const previous = this.#state.connection;
+    const observed =
+      update.type === "connection-changed" && update.at === undefined
+        ? { ...update, at: Date.now() }
+        : update;
+    this.apply({ type: "directory", update: observed });
+    if (update.type === "connection-changed" && update.state !== "connected")
+      this.#recoveryGeneration += 1;
+    if (
+      update.type === "connection-changed" &&
+      update.state === "connected" &&
+      previous !== "connected"
+    )
+      void this.recoverAfterConnection(this.#recoveryGeneration);
+  }
+
+  private async recoverAfterConnection(generation: number): Promise<void> {
+    await this.recoverDirectory(generation);
+    const agentId = this.#state.selectedAgentId;
+    if (!agentId) return;
+    await this.recoverTimeline(agentId, generation);
+  }
+
+  private async recoverDirectory(generation: number): Promise<void> {
+    try {
+      const snapshot = await this.gateway.getDirectorySnapshot();
+      if (generation !== this.#recoveryGeneration || this.#state.connection !== "connected") return;
+      this.apply({ type: "directory", update: { type: "snapshot", snapshot } });
+      this.apply({ type: "recovery-stage-succeeded", stage: "directory" });
+    } catch (error) {
+      if (generation !== this.#recoveryGeneration) return;
+      this.reportError(
+        "Directory recovery failed.",
+        error,
+        this.registerRetry({ type: "recovery-directory" }),
+        "protocol",
+      );
+    }
+  }
+
+  /** Reopen a focused observation without replacing visible history or navigation. */
+  private async recoverTimeline(agentId: string, recoveryGeneration: number): Promise<void> {
+    const focusGeneration = ++this.#focusGeneration;
+    const previous = this.#timelineObservation;
+    this.#timelineObservation = undefined;
+    await previous?.release();
+    if (
+      focusGeneration !== this.#focusGeneration ||
+      recoveryGeneration !== this.#recoveryGeneration ||
+      this.#state.connection !== "connected" ||
+      this.#state.selectedAgentId !== agentId
+    )
+      return;
+    try {
+      const observation = await this.gateway.focusAgent(agentId, (update) => {
+        if (
+          focusGeneration === this.#focusGeneration &&
+          recoveryGeneration === this.#recoveryGeneration &&
+          this.#state.connection === "connected"
+        )
+          this.apply({ type: "timeline", update });
+      });
+      if (
+        focusGeneration !== this.#focusGeneration ||
+        recoveryGeneration !== this.#recoveryGeneration ||
+        this.#state.connection !== "connected"
+      ) {
+        await observation.release();
+        return;
+      }
+      this.#timelineObservation = observation;
+      this.apply({ type: "recovery-stage-succeeded", stage: "timeline" });
+    } catch (error) {
+      if (recoveryGeneration !== this.#recoveryGeneration) return;
+      this.reportError(
+        "Timeline recovery failed.",
+        error,
+        this.registerRetry({ type: "recovery-timeline", agentId }),
+        "subscription",
+      );
+    }
+  }
+
+  private async retryNotification(id: number): Promise<void> {
+    const retry = this.#state.notifications.find((item) => item.id === id)?.retry;
+    if (!retry) return;
+    if (retry.type === "reconnect") {
+      if (this.#reconnectRetrying) return;
+      this.#reconnectRetrying = true;
+      try {
+        await this.refresh();
+      } finally {
+        this.#reconnectRetrying = false;
+      }
+      return;
+    }
+    const entry = this.#retryOperations.get(retry.token);
+    if (!entry || entry.running || entry.completed) return;
+    entry.running = true;
+    try {
+      switch (entry.operation.type) {
+        case "command":
+          await this.runCommand(entry.operation.command);
+          return;
+        case "send":
+          await this.submitPrompt(entry.operation.agentId, entry.operation.prompt);
+          return;
+        case "focus":
+          await this.selectAgent(entry.operation.agentId);
+          return;
+        case "refresh":
+          await this.refresh();
+          return;
+        case "recovery-directory":
+          await this.recoverDirectory(this.#recoveryGeneration);
+          return;
+        case "recovery-timeline":
+          await this.recoverTimeline(entry.operation.agentId, this.#recoveryGeneration);
+          return;
+      }
+    } finally {
+      entry.running = false;
+      entry.completed = true;
+      this.#retryOperations.delete(retry.token);
+    }
+  }
+
+  private reportError(
+    message: string,
+    error: unknown,
+    retry?: AppState["notifications"][number]["retry"],
+    fallback: PaseoFailureKind = "protocol",
+  ): void {
+    const failure = paseoFailure(error, fallback);
+    this.apply({
+      type: "notify",
+      message,
+      detail: errorDetail(failure),
+      kind: "error",
+      failureKind: failure.kind,
+      ...(retry === undefined ? {} : { retry }),
+    });
+  }
+
+  private registerRetry(operation: RetryOperation): { type: "operation"; token: number } {
+    const token = ++this.#nextRetryToken;
+    this.#retryOperations.set(token, { operation, running: false, completed: false });
+    return { type: "operation", token };
+  }
+
+  private pruneRetries(): void {
+    const retained = new Set(
+      this.#state.notifications.flatMap((notification) =>
+        notification.retry?.type === "operation" ? [notification.retry.token] : [],
+      ),
+    );
+    for (const token of this.#retryOperations.keys())
+      if (!retained.has(token)) this.#retryOperations.delete(token);
   }
 }
 
@@ -632,15 +873,15 @@ function selectedCreationModel(
 }
 
 function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
+  return error instanceof PaseoGatewayError
+    ? error.message
+    : redactTransportDetail(error instanceof Error ? error.message : String(error));
 }
 
 function errorDetail(error: unknown): string {
-  if (error instanceof Error) {
-    const detail = "detail" in error && typeof error.detail === "string" ? error.detail : undefined;
-    return detail ?? error.stack ?? error.message;
-  }
-  return String(error);
+  return error instanceof PaseoGatewayError
+    ? (error.detail ?? error.message)
+    : redactTransportDetail(error instanceof Error ? error.message : String(error));
 }
 
 function shortId(id: string): string {

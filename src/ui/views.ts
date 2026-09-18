@@ -19,6 +19,7 @@ import {
 import type { AppState, ModalState } from "../contracts/app-state.js";
 import type { TimelineEvent, TimelineItem } from "../contracts/domain.js";
 import { composerAvailability, selectedComposerDraft } from "../state/composer.js";
+import { activeNotification } from "../state/store.js";
 import { DeckController, type UiIntent } from "./controller.js";
 import {
   adjustTreeWidth,
@@ -65,6 +66,12 @@ export interface DeckTuiOptions {
   frameMilliseconds?: number;
   copyText?: (text: string) => Promise<void> | void;
 }
+
+const systemRenderClock: RenderClock = {
+  now: () => Date.now(),
+  setTimeout: (callback, delay) => setTimeout(callback, delay),
+  clearTimeout: (handle) => clearTimeout(handle as ReturnType<typeof setTimeout>),
+};
 
 class TreeView implements Component {
   constructor(private state: AppState) {}
@@ -380,7 +387,10 @@ class ComposerView implements Component, Focusable {
 }
 
 class StatusView implements Component {
-  constructor(private state: AppState) {}
+  constructor(
+    private state: AppState,
+    private readonly now: () => number = Date.now,
+  ) {}
   update(state: AppState): void {
     this.state = state;
   }
@@ -409,17 +419,27 @@ class StatusView implements Component {
       0,
     );
     const compact = width < 70;
-    const notification = this.state.notification
-      ? ` · ${this.state.notification.kind}: ${this.state.notification.message}${this.state.notification.detail ? " · E details" : ""}`
+    const recovery = this.state.recovery;
+    const connection =
+      this.state.connection === "reconnecting"
+        ? `reconnecting #${recovery.attempt}${recovery.since === undefined ? "" : ` · ${elapsed(recovery.since, this.now())}`}${recovery.directoryStale ? " · stale" : ""}`
+        : this.state.connection;
+    const active = activeNotification(this.state);
+    const notification = active
+      ? ` · ${active.kind}${active.failureKind ? `/${active.failureKind}` : ""}: ${active.message}${active.detail ? " · E details" : ""}${active.retry ? " · R retry" : ""}${this.state.notifications.length > 1 ? ` · ${this.state.notifications.length} notices · N review` : ""}`
       : "";
     const context = footerContext(this.state, width);
     return [
       clip(
-        `${context} · ${this.state.connection}${compact ? "" : ` · ${details} · permissions ${permissions}`}${notification}`,
+        `${context} · ${connection}${compact ? "" : ` · ${details} · permissions ${permissions}`}${notification}`,
         width,
       ),
     ];
   }
+}
+
+function elapsed(since: number, now: number): string {
+  return `${Math.max(0, Math.floor((now - since) / 1_000))}s`;
 }
 
 function footerContext(state: AppState, width: number): string {
@@ -682,6 +702,9 @@ export class DeckTui {
   private readonly composer: ComposerView;
   private readonly status: StatusView;
   private readonly renderScheduler: RenderScheduler;
+  private readonly reconnectClock: RenderClock;
+  private reconnectTicker: unknown;
+  private started = false;
   private readonly treeTranscript: ScrollView;
   private readonly transcript: TimelineScrollView;
   private readonly minimumSize: MinimumSizeView;
@@ -709,13 +732,14 @@ export class DeckTui {
     options: DeckTuiOptions = {},
   ) {
     this.state = initialState;
+    this.reconnectClock = options.renderClock ?? systemRenderClock;
     this.tui = new TuiAltScreen(terminal, undefined, undefined, {
       scrollToEndIndicator: () => this.scrollToEndIndicator(),
     });
     this.lifecycle = new TerminalLifecycle(this.tui, terminal);
     this.renderScheduler = new RenderScheduler(
       () => this.tui.requestRender(),
-      options.renderClock,
+      this.reconnectClock,
       options.frameMilliseconds,
     );
     this.copyText = options.copyText ?? ((text) => this.writeOsc52(text));
@@ -727,7 +751,7 @@ export class DeckTui {
     this.timeline.update(initialState.timeline.items);
     this.timeline.updateSelection(initialState);
     this.composer = new ComposerView(this.tui, initialState, emit);
-    this.status = new StatusView(initialState);
+    this.status = new StatusView(initialState, () => this.reconnectClock.now());
     this.minimumSize = new MinimumSizeView();
     this.treeTranscript = new ScrollView(this.tree, { follow: "none", scrollbar: "auto" });
     this.transcript = new TimelineScrollView(this.timeline, (following) => {
@@ -801,9 +825,13 @@ export class DeckTui {
   }
 
   start(): void {
+    this.started = true;
     this.lifecycle.start();
+    this.syncReconnectTicker();
   }
   async stop(): Promise<void> {
+    this.started = false;
+    this.stopReconnectTicker();
     this.renderScheduler.stop();
     await this.lifecycle.stop();
   }
@@ -818,6 +846,7 @@ export class DeckTui {
     const recoveryChanged =
       state.timeline.recoveryRevision !== this.state.timeline.recoveryRevision;
     this.state = state;
+    this.syncReconnectTicker();
     this.tree.update(state);
     this.timeline.update(state.timeline.items);
     this.timeline.updateSelection(state);
@@ -846,6 +875,30 @@ export class DeckTui {
     }
     if (timelineChanged) this.renderScheduler.request();
     else this.renderScheduler.requestImmediate();
+  }
+
+  private syncReconnectTicker(): void {
+    const shouldTick =
+      this.started &&
+      this.state.connection === "reconnecting" &&
+      this.state.recovery.since !== undefined;
+    if (!shouldTick) {
+      this.stopReconnectTicker();
+      return;
+    }
+    if (this.reconnectTicker !== undefined) return;
+    this.reconnectTicker = this.reconnectClock.setTimeout(() => {
+      this.reconnectTicker = undefined;
+      if (!this.started) return;
+      this.renderScheduler.requestImmediate();
+      this.syncReconnectTicker();
+    }, 1_000);
+  }
+
+  private stopReconnectTicker(): void {
+    if (this.reconnectTicker === undefined) return;
+    this.reconnectClock.clearTimeout(this.reconnectTicker);
+    this.reconnectTicker = undefined;
   }
   toggleTimelineItem(itemId: string): void {
     this.timeline.toggle(itemId);
@@ -1135,6 +1188,7 @@ export class DeckTui {
           "Paseo Deck keys",
           "↑↓/j k move · ←→/h l collapse/expand · g/G ends · [/] turns · {} errors · Enter open · Tab focus",
           "i compose · n new · / filter · p permissions · r refresh",
+          "N notification history · R retry selected failure",
           "o order · v archived · ! attention-only",
           "Timeline: Ctrl-F search · y copy selected source",
           `[ / ] tree width (${MIN_TREE_WIDTH}–${MAX_TREE_WIDTH})`,
@@ -1179,6 +1233,10 @@ export class DeckTui {
       );
     else if (modal.type === "permission")
       component = new Dialog(permissionDialogLines(this.state, modal), (data) =>
+        this.controller.handleKey(data),
+      );
+    else if (modal.type === "notifications")
+      component = new Dialog(notificationDialogLines(this.state, modal.index), (data) =>
         this.controller.handleKey(data),
       );
     else if (modal.type === "error-details")
@@ -1251,6 +1309,22 @@ export class DeckTui {
       visible: (columns, rows) => shellLayout(columns, rows, this.treeWidth).supported,
     });
   }
+}
+
+function notificationDialogLines(state: AppState, index: number): readonly string[] {
+  if (state.notifications.length === 0) return ["No notifications.", "Esc close"];
+  const active = state.notifications[index] ?? state.notifications.at(-1);
+  if (!active) return ["No notifications.", "Esc close"];
+  return [
+    `Notifications ${index + 1}/${state.notifications.length}`,
+    ...state.notifications.map(
+      (item, at) =>
+        `${at === index ? ">" : " "} ${item.kind}${item.failureKind ? `/${item.failureKind}` : ""}: ${item.message}`,
+    ),
+    ...(active.detail ? ["E details"] : []),
+    ...(active.retry ? ["R retry"] : []),
+    "j/k browse · Enter select · Esc close",
+  ];
 }
 
 export type CreationChoice = SelectItem & { disabled: boolean };

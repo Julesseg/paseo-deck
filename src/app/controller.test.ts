@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 import type { DirectorySnapshot, TimelineEvent } from "../contracts/domain.js";
 import type { Observation } from "../contracts/gateway.js";
+import { PaseoGatewayError } from "../paseo/errors.js";
 import { FakePaseoGateway } from "../paseo/fake-gateway.js";
 import { selectedComposerDraft } from "../state/composer.js";
+import { activeNotification } from "../state/store.js";
 import { ApplicationController } from "./controller.js";
 
 const snapshot: DirectorySnapshot = {
@@ -580,7 +582,33 @@ describe("ApplicationController", () => {
     await app.handleIntent({ type: "submit-composer", agentId: "agent-1", prompt: "Keep this" });
 
     expect(selectedComposerDraft(app.state)).toBe("Keep this");
-    expect(app.state.notification?.kind).toBe("error");
+    expect(activeNotification(app.state)?.kind).toBe("error");
+  });
+
+  it("retries an exact failed prompt through an opaque notification token", async () => {
+    const gateway = new FailingOnceSendGateway(snapshot);
+    const app = new ApplicationController(gateway);
+    await app.start();
+    await app.selectAgent("agent-1");
+    app.setComposerText("private retry prompt");
+
+    await app.handleIntent({
+      type: "submit-composer",
+      agentId: "agent-1",
+      prompt: "private retry prompt",
+    });
+
+    const notification = activeNotification(app.state);
+    expect(notification).toMatchObject({ failureKind: "command", retry: { type: "operation" } });
+    expect(JSON.stringify(notification)).not.toContain("private retry prompt");
+    if (notification?.retry?.type !== "operation") throw new Error("retry missing");
+    await app.handleIntent({ type: "retry-notification", id: notification.id });
+    await app.handleIntent({ type: "retry-notification", id: notification.id });
+    expect(gateway.commands.filter((command) => command.type === "send-prompt")).toEqual([
+      { type: "send-prompt", agentId: "agent-1", prompt: "private retry prompt" },
+      { type: "send-prompt", agentId: "agent-1", prompt: "private retry prompt" },
+    ]);
+    expect(selectedComposerDraft(app.state)).toBe("");
   });
 
   it("warns before destructive actions when the destination has an unsent draft", async () => {
@@ -678,7 +706,7 @@ describe("ApplicationController", () => {
 
     await app.handleIntent({ type: "notify", message: "Copied." });
 
-    expect(app.state.notification).toEqual({ kind: "info", message: "Copied." });
+    expect(activeNotification(app.state)).toMatchObject({ kind: "info", message: "Copied." });
   });
 
   it("ignores and releases focus operations that complete after a newer selection", async () => {
@@ -723,6 +751,95 @@ describe("ApplicationController", () => {
 
     expect(app.state.connection).toBe("connected");
     expect(app.state.directory.agents).toHaveLength(2);
+  });
+
+  it("retains drafts, selection and timeline data across a reconnect recovery", async () => {
+    const gateway = new FakePaseoGateway(snapshot);
+    const app = new ApplicationController(gateway);
+    await app.start();
+    await app.selectAgent("agent-1");
+    app.setComposerText("keep this draft");
+    gateway.emitTimeline("agent-1", { type: "event", agentId: "agent-1", event: event(8, "kept") });
+    gateway.emitDirectory({ type: "connection-changed", state: "reconnecting", attempt: 2 });
+    expect(app.state.recovery).toMatchObject({
+      attempt: 2,
+      directoryStale: true,
+      timelineStale: true,
+    });
+    gateway.emitDirectory({ type: "connection-changed", state: "connected" });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(app.state.selectedAgentId).toBe("agent-1");
+    expect(app.state.composer.drafts["agent-1"]).toBe("keep this draft");
+    expect(app.state.timeline.items.map((entry) => entry.item.id)).toContain("assistant-8");
+    expect(app.state.recovery).toMatchObject({
+      attempt: 0,
+      directoryStale: false,
+      timelineStale: false,
+    });
+  });
+
+  it("recovers directory and focused timeline stages independently without clearing local context", async () => {
+    const gateway = new RecoveryStageGateway(snapshot);
+    const app = new ApplicationController(gateway);
+    await app.start();
+    await app.selectAgent("agent-1");
+    app.setComposerText("keep recovery draft");
+    await app.handleIntent({
+      type: "set-timeline-navigation",
+      agentId: "agent-1",
+      following: false,
+      anchor: { epoch: "epoch-1", sequence: 4 },
+    });
+    gateway.emitTimeline("agent-1", { type: "event", agentId: "agent-1", event: event(4, "kept") });
+
+    gateway.failFocus = true;
+    gateway.emitDirectory({ type: "connection-changed", state: "reconnecting", attempt: 1 });
+    gateway.emitDirectory({ type: "connection-changed", state: "connected" });
+    await nextTurn();
+    expect(app.state.recovery).toMatchObject({ directoryStale: false, timelineStale: true });
+    expect(selectedComposerDraft(app.state)).toBe("keep recovery draft");
+    expect(app.state.timeline.items.map((item) => item.item.id)).toContain("assistant-4");
+    expect(app.state.timelineNavigation["agent-1"]).toMatchObject({
+      following: false,
+      unread: 1,
+      anchor: { epoch: "epoch-1", sequence: 4 },
+    });
+
+    gateway.failFocus = false;
+    const timelineFailure = activeNotification(app.state);
+    if (!timelineFailure) throw new Error("expected timeline recovery notification");
+    await app.handleIntent({ type: "retry-notification", id: timelineFailure.id });
+    await nextTurn();
+    expect(app.state.recovery).toMatchObject({ directoryStale: false, timelineStale: false });
+
+    gateway.failSnapshot = true;
+    gateway.emitDirectory({ type: "connection-changed", state: "reconnecting", attempt: 3 });
+    gateway.emitDirectory({ type: "connection-changed", state: "connected" });
+    await nextTurn();
+    expect(app.state.recovery).toMatchObject({ directoryStale: true, timelineStale: false });
+
+    gateway.failSnapshot = false;
+    const directoryFailure = activeNotification(app.state);
+    if (!directoryFailure) throw new Error("expected directory recovery notification");
+    await app.handleIntent({ type: "retry-notification", id: directoryFailure.id });
+    await nextTurn();
+    expect(app.state.recovery).toMatchObject({ directoryStale: false, timelineStale: false });
+  });
+
+  it("ignores a recovery snapshot that completes after a newer disconnect", async () => {
+    const gateway = new DeferredRecoveryGateway(snapshot);
+    const app = new ApplicationController(gateway);
+    await app.start();
+    await app.selectAgent("agent-1");
+    gateway.deferSnapshots = true;
+    gateway.emitDirectory({ type: "connection-changed", state: "reconnecting", attempt: 1 });
+    gateway.emitDirectory({ type: "connection-changed", state: "connected" });
+    await Promise.resolve();
+    gateway.emitDirectory({ type: "connection-changed", state: "reconnecting", attempt: 2 });
+    gateway.resolveSnapshot(0);
+    await nextTurn();
+
+    expect(app.state.recovery).toMatchObject({ attempt: 2, directoryStale: true });
   });
 
   it("rejects mode and thinking choices that discovery did not return", async () => {
@@ -813,6 +930,19 @@ class DeferredSendGateway extends FakePaseoGateway {
   }
 }
 
+class FailingOnceSendGateway extends FakePaseoGateway {
+  private failed = false;
+
+  override async execute(command: import("../contracts/commands.js").AgentCommand) {
+    if (command.type === "send-prompt" && !this.failed) {
+      this.failed = true;
+      this.commands.push(command);
+      throw new PaseoGatewayError("command failed", "network unavailable", "command");
+    }
+    return super.execute(command);
+  }
+}
+
 class DeferredCreateGateway extends FakePaseoGateway {
   private resolvePending:
     | ((value: import("../contracts/commands.js").CommandResult) => void)
@@ -865,4 +995,46 @@ class RecoveringSnapshotGateway extends FakePaseoGateway {
     if (this.attempts === 1) throw new Error("snapshot failed");
     return super.getDirectorySnapshot();
   }
+}
+
+class RecoveryStageGateway extends FakePaseoGateway {
+  failSnapshot = false;
+  failFocus = false;
+
+  override async getDirectorySnapshot(): Promise<DirectorySnapshot> {
+    if (this.failSnapshot) throw new Error("directory temporarily unavailable");
+    return super.getDirectorySnapshot();
+  }
+
+  override async focusAgent(
+    agentId: string,
+    listener: Parameters<FakePaseoGateway["focusAgent"]>[1],
+  ): Promise<Observation> {
+    if (this.failFocus) throw new Error("timeline temporarily unavailable");
+    return super.focusAgent(agentId, listener);
+  }
+}
+
+class DeferredRecoveryGateway extends FakePaseoGateway {
+  deferSnapshots = false;
+  private readonly pending: Array<(snapshot: DirectorySnapshot) => void> = [];
+
+  override async getDirectorySnapshot(): Promise<DirectorySnapshot> {
+    if (!this.deferSnapshots) return super.getDirectorySnapshot();
+    return new Promise((resolve) => this.pending.push(resolve));
+  }
+
+  resolveSnapshot(index: number): void {
+    const resolve = this.pending[index];
+    if (!resolve) throw new Error(`missing snapshot ${index}`);
+    void this.snapshotForTest().then(resolve);
+  }
+
+  private async snapshotForTest(): Promise<DirectorySnapshot> {
+    return super.getDirectorySnapshot();
+  }
+}
+
+async function nextTurn(): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, 0));
 }

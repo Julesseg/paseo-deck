@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
-import { ProductionPaseoGateway } from "./gateway.js";
+import type { PaseoGatewayError } from "./errors.js";
+import { connectionUpdate, ProductionPaseoGateway } from "./gateway.js";
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -16,6 +17,8 @@ function testClient(
   } = {},
 ) {
   const release = vi.fn();
+  const connectionRelease = vi.fn();
+  let connectionListener: ((status: Record<string, unknown>) => void) | undefined;
   let timelineListener: ((message: Record<string, unknown>) => void) | undefined;
   const timeline = {
     subscribe: vi.fn((listener: (message: Record<string, unknown>) => void) => {
@@ -42,6 +45,11 @@ function testClient(
     client: {
       connect: vi.fn(),
       close: vi.fn(),
+      subscribeConnectionStatus: vi.fn((listener) => {
+        connectionListener = listener;
+        listener({ status: "idle" });
+        return connectionRelease;
+      }),
       projects: {
         list: vi.fn(async () => ({
           projects: [{ projectKey: "project-1", projectName: "Project" }],
@@ -107,10 +115,45 @@ function testClient(
     emitWorkspaceDirectory: (message: Record<string, unknown>) =>
       workspaceDirectoryListener?.(message),
     emitTimeline: (message: Record<string, unknown>) => timelineListener?.(message),
+    emitConnection: (status: Record<string, unknown>) => connectionListener?.(status),
+    connectionRelease,
   };
 }
 
 describe("ProductionPaseoGateway", () => {
+  it("maps public SDK connection statuses without exposing raw reasons", () => {
+    expect(connectionUpdate({ status: "idle" })).toEqual({
+      type: "connection-changed",
+      state: "disconnected",
+    });
+    expect(connectionUpdate({ status: "connecting", attempt: 2 })).toEqual({
+      type: "connection-changed",
+      state: "reconnecting",
+      attempt: 2,
+    });
+    expect(connectionUpdate({ status: "connecting", attempt: 1 })).toEqual({
+      type: "connection-changed",
+      state: "reconnecting",
+      attempt: 1,
+    });
+    expect(connectionUpdate({ status: "disconnected", reason: "password=hunter2" })).toEqual({
+      type: "connection-changed",
+      state: "reconnecting",
+      detail: "password=[redacted]",
+    });
+  });
+
+  it("unsubscribes connection status before closing the SDK client", async () => {
+    const fixture = testClient();
+    const gateway = new ProductionPaseoGateway({
+      host: "127.0.0.1:6767",
+      createClient: () => fixture.client as never,
+    });
+    await gateway.connect();
+    await gateway.close();
+    expect(fixture.connectionRelease).toHaveBeenCalledBefore(fixture.client.close);
+  });
+
   it("cleans up a failed connection so a later connection can retry", async () => {
     const failing = testClient();
     const succeeding = testClient();
@@ -126,7 +169,22 @@ describe("ProductionPaseoGateway", () => {
     await expect(gateway.connect()).rejects.toThrow("offline");
     await expect(gateway.connect()).resolves.toBeUndefined();
     expect(failing.client.close).toHaveBeenCalledOnce();
+    expect(failing.connectionRelease).toHaveBeenCalledBefore(failing.client.close);
     expect(createClient).toHaveBeenCalledTimes(2);
+  });
+
+  it("maps SDK failures to safe closed gateway failures", async () => {
+    const fixture = testClient();
+    fixture.client.projects.list.mockRejectedValueOnce(new Error("ECONNREFUSED password=hunter2"));
+    const gateway = new ProductionPaseoGateway({
+      host: "127.0.0.1:6767",
+      createClient: () => fixture.client as never,
+    });
+    await gateway.connect();
+    await expect(gateway.getDirectorySnapshot()).rejects.toMatchObject({
+      kind: "authentication",
+      detail: expect.not.stringContaining("hunter2"),
+    } satisfies Partial<PaseoGatewayError>);
   });
 
   it("normalizes an initial snapshot from the SDK", async () => {

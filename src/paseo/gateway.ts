@@ -16,7 +16,7 @@ import type {
 } from "../contracts/domain.js";
 import type { Observation, PaseoGateway } from "../contracts/gateway.js";
 import { type CliRunner, createCliRunner, runJson } from "./cli.js";
-import { PaseoGatewayError } from "./errors.js";
+import { PaseoGatewayError, paseoFailure } from "./errors.js";
 import { type PaseoTarget, type PaseoTargetInput, targetFromDaemonStatus } from "./target.js";
 
 type UnknownRecord = Record<string, unknown>;
@@ -42,6 +42,7 @@ interface TimelineSubscription extends Releasable {
 interface ClientSurface {
   connect(): Promise<void>;
   close(): Promise<void>;
+  subscribeConnectionStatus(listener: (status: UnknownRecord) => void): () => void;
   projects: {
     list(): Promise<UnknownRecord>;
     subscribe(listener: Listener<UnknownRecord>): () => void;
@@ -85,6 +86,8 @@ export class ProductionPaseoGateway implements PaseoGateway {
   private target: PaseoTarget | undefined;
   private focused: Observation | undefined;
   private focusGeneration = 0;
+  private connectionRelease: (() => void) | undefined;
+  private readonly directoryConnectionListeners = new Set<Listener<DirectoryUpdate>>();
 
   public constructor(private readonly options: PaseoGatewayOptions = {}) {
     this.cliRunner = options.cliRunner ?? createCliRunner();
@@ -114,8 +117,14 @@ export class ProductionPaseoGateway implements PaseoGateway {
     this.target = targetFromDaemonStatus(targetInput, status);
     this.client = this.createClient(this.target);
     try {
+      this.connectionRelease = this.client.subscribeConnectionStatus((status) => {
+        const update = connectionUpdate(status);
+        for (const listener of this.directoryConnectionListeners) listener(update);
+      });
       await this.client.connect();
     } catch (error) {
+      this.connectionRelease?.();
+      this.connectionRelease = undefined;
       try {
         await this.client.close();
       } catch {
@@ -123,7 +132,7 @@ export class ProductionPaseoGateway implements PaseoGateway {
       }
       this.client = undefined;
       this.target = undefined;
-      throw error;
+      throw paseoFailure(error, "daemon-unavailable");
     }
   }
 
@@ -131,24 +140,39 @@ export class ProductionPaseoGateway implements PaseoGateway {
     this.focusGeneration += 1;
     await this.focused?.release();
     this.focused = undefined;
+    this.connectionRelease?.();
+    this.connectionRelease = undefined;
+    this.directoryConnectionListeners.clear();
     if (this.client !== undefined) await this.client.close();
     this.client = undefined;
   }
 
   public async getDirectorySnapshot(): Promise<DirectorySnapshot> {
-    const client = this.requireClient();
-    const [projects, workspaces, agents, providers] = await Promise.all([
-      client.projects.list(),
-      client.workspaces.list(),
-      client.agents.list(),
-      client.providers.waitForReady(),
-    ]);
-    return directorySnapshot(client, projects, workspaces, agents, providers);
+    try {
+      const client = this.requireClient();
+      const [projects, workspaces, agents, providers] = await Promise.all([
+        client.projects.list(),
+        client.workspaces.list(),
+        client.agents.list(),
+        client.providers.waitForReady(),
+      ]);
+      return directorySnapshot(client, projects, workspaces, agents, providers);
+    } catch (error) {
+      throw paseoFailure(error, "protocol");
+    }
   }
 
   public async observeDirectory(listener: Listener<DirectoryUpdate>): Promise<Observation> {
     const client = this.requireClient();
     const releases: Array<() => Promise<void> | void> = [];
+    this.directoryConnectionListeners.add(listener);
+    releases.push(() => {
+      this.directoryConnectionListeners.delete(listener);
+    });
+    // `connect()` has already settled before a directory observation exists;
+    // ApplicationController establishes its initial connected state after the
+    // snapshot. Forward only later transitions so startup does not refetch the
+    // directory a second time.
     // Stable 0.8.0 exposes the server-issued subscriptionId but no public release
     // handle. Local listeners below are released here; server demand ends on close().
     releases.push(client.agents.subscribe((message) => emitDirectoryMessage(message, listener)));
@@ -160,14 +184,14 @@ export class ProductionPaseoGateway implements PaseoGateway {
       );
     } catch (error) {
       await releaseAll(releases);
-      throw error;
+      throw paseoFailure(error, "subscription");
     }
     let workspaceDirectory: UnknownRecord;
     try {
       workspaceDirectory = await client.workspaces.list({ subscribe: {} });
     } catch (error) {
       await releaseAll(releases);
-      throw error;
+      throw paseoFailure(error, "subscription");
     }
     const agentSubscription = getSubscription(agentDirectory);
     const workspaceSubscription = getSubscription(workspaceDirectory);
@@ -342,55 +366,59 @@ export class ProductionPaseoGateway implements PaseoGateway {
   }
 
   public async execute(command: AgentCommand): Promise<CommandResult> {
-    const client = this.requireClient();
-    switch (command.type) {
-      case "send-prompt":
-        await client.agents.ref(command.agentId).send(command.prompt);
-        return { type: "ok" };
-      case "create-agent": {
-        const agent = await client.workspaces.ref(command.workspaceId).agents.create({
-          title: command.title,
-          prompt: command.prompt,
-          config: {
-            provider: `${command.providerId}/${command.modelId}`,
-            ...(command.modeId === undefined ? {} : { modeId: command.modeId }),
-            ...(command.thinkingLevel === undefined
-              ? {}
-              : { thinkingOptionId: command.thinkingLevel }),
-          },
-        });
-        return { type: "agent-created", agentId: agent.id };
+    try {
+      const client = this.requireClient();
+      switch (command.type) {
+        case "send-prompt":
+          await client.agents.ref(command.agentId).send(command.prompt);
+          return { type: "ok" };
+        case "create-agent": {
+          const agent = await client.workspaces.ref(command.workspaceId).agents.create({
+            title: command.title,
+            prompt: command.prompt,
+            config: {
+              provider: `${command.providerId}/${command.modelId}`,
+              ...(command.modeId === undefined ? {} : { modeId: command.modeId }),
+              ...(command.thinkingLevel === undefined
+                ? {}
+                : { thinkingOptionId: command.thinkingLevel }),
+            },
+          });
+          return { type: "agent-created", agentId: agent.id };
+        }
+        case "respond-permission":
+          await client.agents.ref(command.agentId).respondToPermission({
+            requestId: command.requestId,
+            response: command.allow ? { behavior: "allow" } : { behavior: "deny" },
+          });
+          return { type: "permission-resolved", requestId: command.requestId };
+        case "archive-agent":
+          await client.agents.ref(command.agentId).archive();
+          return { type: "ok" };
+        case "detach-agent":
+          await client.agents.ref(command.agentId).detach();
+          return { type: "ok" };
+        case "stop-agent":
+          await this.runFallback(["stop", command.agentId]);
+          return { type: "ok" };
+        case "rename-agent":
+          await this.runFallback(["agent", "update", command.agentId, "--name", command.name]);
+          return { type: "ok" };
+        case "set-thinking-level":
+          await this.runFallback([
+            "agent",
+            "update",
+            command.agentId,
+            "--thinking",
+            command.thinkingLevel,
+          ]);
+          return { type: "ok" };
+        case "set-agent-mode":
+          await this.runFallback(["agent", "mode", command.agentId, command.modeId]);
+          return { type: "ok" };
       }
-      case "respond-permission":
-        await client.agents.ref(command.agentId).respondToPermission({
-          requestId: command.requestId,
-          response: command.allow ? { behavior: "allow" } : { behavior: "deny" },
-        });
-        return { type: "permission-resolved", requestId: command.requestId };
-      case "archive-agent":
-        await client.agents.ref(command.agentId).archive();
-        return { type: "ok" };
-      case "detach-agent":
-        await client.agents.ref(command.agentId).detach();
-        return { type: "ok" };
-      case "stop-agent":
-        await this.runFallback(["stop", command.agentId]);
-        return { type: "ok" };
-      case "rename-agent":
-        await this.runFallback(["agent", "update", command.agentId, "--name", command.name]);
-        return { type: "ok" };
-      case "set-thinking-level":
-        await this.runFallback([
-          "agent",
-          "update",
-          command.agentId,
-          "--thinking",
-          command.thinkingLevel,
-        ]);
-        return { type: "ok" };
-      case "set-agent-mode":
-        await this.runFallback(["agent", "mode", command.agentId, command.modeId]);
-        return { type: "ok" };
+    } catch (error) {
+      throw paseoFailure(error, "command");
     }
   }
 
@@ -415,6 +443,33 @@ export class ProductionPaseoGateway implements PaseoGateway {
     if (this.client === undefined) throw new PaseoGatewayError("Paseo Deck is not connected.");
     return this.client;
   }
+}
+
+export function connectionUpdate(
+  status: UnknownRecord,
+): Extract<DirectoryUpdate, { type: "connection-changed" }> {
+  const state = stringValue(status.status);
+  const attempt = numberValue(status.attempt);
+  const detail = stringValue(status.reason);
+  if (state === "connected") return { type: "connection-changed", state: "connected" };
+  if (state === "connecting")
+    return {
+      type: "connection-changed",
+      state: attempt !== undefined && attempt > 0 ? "reconnecting" : "connecting",
+      ...(attempt === undefined ? {} : { attempt }),
+    };
+  if (state === "disconnected")
+    return {
+      type: "connection-changed",
+      state: "reconnecting",
+      ...(attempt === undefined ? {} : { attempt }),
+      ...(detail === undefined ? {} : { detail: errorDetail(detail) }),
+    };
+  return {
+    type: "connection-changed",
+    state: "disconnected",
+    ...(detail === undefined ? {} : { detail: errorDetail(detail) }),
+  };
 }
 
 function syntheticControlSequence(
@@ -1180,7 +1235,7 @@ function numberValue(value: unknown): number | undefined {
   return typeof value === "number" ? value : undefined;
 }
 function errorDetail(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
+  return paseoFailure(error, "protocol").detail ?? paseoFailure(error, "protocol").message;
 }
 function status(value: unknown): AgentRecord["status"] {
   return value === "initializing"

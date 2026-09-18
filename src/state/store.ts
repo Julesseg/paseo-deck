@@ -53,7 +53,16 @@ export type AppAction =
   | { type: "permission-submitting"; agentId: string; requestId: string; allow: "allow" | "deny" }
   | { type: "permission-failed"; agentId: string; requestId: string; error: string }
   | { type: "permission-resolved"; agentId: string; requestId: string; allow?: boolean }
-  | { type: "notify"; message: string; detail?: string; kind?: "info" | "error" }
+  | {
+      type: "notify";
+      message: string;
+      detail?: string;
+      kind?: "info" | "error";
+      retry?: AppState["notifications"][number]["retry"];
+      failureKind?: AppState["notifications"][number]["failureKind"];
+    }
+  | { type: "select-notification"; id: number }
+  | { type: "recovery-stage-succeeded"; stage: "directory" | "timeline" }
   | { type: "clear-notification" };
 
 const consumedCursors = Symbol("paseo-deck.consumed-cursors");
@@ -66,6 +75,7 @@ type InternalTimelineState = AppState["timeline"] & {
 export function createInitialState(): AppState {
   return {
     connection: "disconnected",
+    recovery: { attempt: 0, directoryStale: false, timelineStale: false },
     directory: emptyDirectory(),
     expandedIds: new Set(),
     filter: "",
@@ -78,6 +88,29 @@ export function createInitialState(): AppState {
     timelineNavigation: {},
     composer: createComposerState(),
     creationDefaults: {},
+    notifications: [],
+  };
+}
+
+const MAX_NOTIFICATIONS = 20;
+
+function nextRecovery(
+  state: AppState,
+  update: Extract<DirectoryUpdate, { type: "connection-changed" }>,
+): AppState["recovery"] {
+  const recovery = state.recovery;
+  // A transport connection is not recovery completion. Individual directory
+  // and timeline stages clear their own stale markers after succeeding.
+  if (update.state === "connected") return recovery;
+  if (update.state === "connecting") return recovery;
+  const since = recovery.since ?? update.at;
+  return {
+    attempt:
+      update.attempt ?? (update.state === "reconnecting" ? recovery.attempt + 1 : recovery.attempt),
+    ...(since === undefined ? {} : { since }),
+    ...(update.detail === undefined ? {} : { detail: update.detail }),
+    directoryStale: true,
+    timelineStale: state.timeline.agentId !== undefined,
   };
 }
 
@@ -404,6 +437,13 @@ function timelineNavigation(state: AppState, agentId: string): TimelineNavigatio
   return state.timelineNavigation[agentId] ?? { following: true, unread: 0 };
 }
 
+function timelineRecovery(state: AppState, timelineStale: boolean): AppState["recovery"] {
+  return {
+    ...state.recovery,
+    timelineStale,
+  };
+}
+
 function withUnreadForNewEntries(
   state: AppState,
   agentId: string,
@@ -441,6 +481,7 @@ function applyTimeline(state: AppState, update: TimelineUpdate): AppState {
     return withUnreadForNewEntries(
       {
         ...state,
+        recovery: timelineRecovery(state, false),
         timeline: timelineWith(
           state.timeline,
           {
@@ -465,6 +506,7 @@ function applyTimeline(state: AppState, update: TimelineUpdate): AppState {
     return withUnreadForNewEntries(
       {
         ...state,
+        recovery: timelineRecovery(state, false),
         timeline: timelineWith(
           state.timeline,
           {
@@ -493,6 +535,7 @@ function applyTimeline(state: AppState, update: TimelineUpdate): AppState {
     return withUnreadForNewEntries(
       {
         ...state,
+        recovery: timelineRecovery(state, false),
         timeline: timelineWith(
           state.timeline,
           {
@@ -519,12 +562,8 @@ function applyTimeline(state: AppState, update: TimelineUpdate): AppState {
   if (update.type === "error" && focusMatches(state, update.agentId)) {
     return {
       ...state,
+      recovery: timelineRecovery(state, true),
       timeline: timelineWith(state.timeline, { error: update.message, loading: false }),
-      notification: {
-        kind: "error",
-        message: update.message,
-        ...(update.detail ? { detail: update.detail } : {}),
-      },
     };
   }
   return state;
@@ -611,6 +650,10 @@ export function reduceApp(state: AppState, action: AppAction): AppState {
       const directory = directoryUpdate(state.directory, action.update);
       const connection: ConnectionState =
         action.update.type === "connection-changed" ? action.update.state : state.connection;
+      const recovery =
+        action.update.type === "connection-changed"
+          ? nextRecovery(state, action.update)
+          : state.recovery;
       const selected = reconcileSelection(state, directory);
       const permissionsReconciled = reconcilePermissionRemovals(state, directory);
       return {
@@ -621,6 +664,20 @@ export function reduceApp(state: AppState, action: AppAction): AppState {
             ? permissionsReconciled.timeline
             : selected.timeline,
         connection,
+        recovery,
+      };
+    }
+    case "recovery-stage-succeeded": {
+      const recovery =
+        action.stage === "directory"
+          ? { ...state.recovery, directoryStale: false }
+          : { ...state.recovery, timelineStale: false };
+      return {
+        ...state,
+        recovery:
+          !recovery.directoryStale && !recovery.timelineStale
+            ? { attempt: 0, directoryStale: false, timelineStale: false }
+            : recovery,
       };
     }
     case "select-agent": {
@@ -841,21 +898,37 @@ export function reduceApp(state: AppState, action: AppAction): AppState {
         modal: permissionModalAfterResolution(state, directory, action.agentId, action.requestId),
       };
     }
-    case "notify":
+    case "notify": {
+      const record = {
+        id: (state.notifications.at(-1)?.id ?? 0) + 1,
+        message: action.message,
+        kind: action.kind ?? "info",
+        ...(action.detail ? { detail: action.detail } : {}),
+        ...(action.retry ? { retry: action.retry } : {}),
+        ...(action.failureKind ? { failureKind: action.failureKind } : {}),
+      };
       return {
         ...state,
-        notification: {
-          message: action.message,
-          kind: action.kind ?? "info",
-          ...(action.detail ? { detail: action.detail } : {}),
-        },
+        notifications: [...state.notifications, record].slice(-MAX_NOTIFICATIONS),
+        activeNotificationId: record.id,
       };
+    }
+    case "select-notification": {
+      const notification = state.notifications.find((item) => item.id === action.id);
+      if (notification === undefined) return state;
+      return { ...state, activeNotificationId: action.id };
+    }
     case "clear-notification": {
       const next = { ...state };
-      delete next.notification;
+      delete next.activeNotificationId;
       return next;
     }
   }
+}
+
+export function activeNotification(state: AppState): AppState["notifications"][number] | undefined {
+  const id = state.activeNotificationId ?? state.notifications.at(-1)?.id;
+  return id === undefined ? undefined : state.notifications.find((item) => item.id === id);
 }
 
 export function pendingPermissions(state: AppState): readonly PermissionRequest[] {

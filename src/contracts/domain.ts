@@ -103,7 +103,16 @@ export type DirectoryUpdate =
   | { type: "agent-upserted"; agent: AgentRecord }
   | { type: "agent-removed"; agentId: string }
   | { type: "providers-replaced"; providers: readonly ProviderOption[] }
-  | { type: "connection-changed"; state: ConnectionState; detail?: string };
+  | {
+      type: "connection-changed";
+      state: ConnectionState;
+      /** Retry ordinal supplied by a transport, when it has one. */
+      attempt?: number;
+      /** Local observation time, supplied by the application rather than a reducer. */
+      at?: number;
+      /** Safe, user-displayable reason only. */
+      detail?: string;
+    };
 
 export interface TimelineCursor {
   epoch: string;

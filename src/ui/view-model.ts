@@ -1,6 +1,7 @@
 import type { AppState } from "../contracts/app-state.js";
 import type { AgentRecord, TimelineEvent, TimelineItem } from "../contracts/domain.js";
 import { selectedComposerDraft } from "../state/composer.js";
+import { activeNotification } from "../state/store.js";
 import { clipTerminalLine, sanitizeTerminalText, wrapTerminalText } from "./text-safety.js";
 
 export type TreeRowKind = "project" | "workspace" | "agent";
@@ -307,6 +308,7 @@ export function renderDashboard(
       : "";
   const timelineLines = [
     `Selected agent timeline${selected ? ` · ${selected.title} [${shortAgentId(selected.id)}]` : ""}`,
+    ...(state.recovery?.timelineStale ? ["Timeline is stale while Paseo reconnects…"] : []),
     ...(detail ? [detail] : []),
     ...timelineDisplay(state.timeline.items, rightWidth, expandedTimelineItems),
   ];
@@ -321,9 +323,10 @@ export function renderDashboard(
     (total, agent) => total + agent.pendingPermissions.length,
     0,
   );
+  const notification = activeNotification(state);
   lines.push(
     clip(
-      `${state.connection}${width >= 70 ? ` · ${detail || "no agent selected"} · permissions ${permissionCount}` : ""}${state.notification ? ` · ${state.notification.kind}: ${state.notification.message}${state.notification.detail ? " · E details" : ""}` : ""}`,
+      `${state.connection === "reconnecting" ? `reconnecting #${state.recovery.attempt}${state.recovery.directoryStale ? " · stale" : ""}` : state.connection}${width >= 70 ? ` · ${detail || "no agent selected"} · permissions ${permissionCount}` : ""}${notification ? ` · ${notification.kind}${notification.failureKind ? `/${notification.failureKind}` : ""}: ${notification.message}${notification.detail ? " · E details" : ""}${notification.retry ? " · R retry" : ""}${state.notifications.length > 1 ? ` · ${state.notifications.length} notices` : ""}` : ""}`,
       width,
     ),
   );

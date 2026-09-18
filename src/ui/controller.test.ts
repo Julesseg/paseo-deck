@@ -7,6 +7,8 @@ import { DeckController } from "./controller.js";
 function makeState(): AppState {
   return {
     connection: "connected",
+    recovery: { attempt: 0, directoryStale: false, timelineStale: false },
+    notifications: [],
     directory: {
       ...emptyDirectory(),
       workspaces: [{ id: "w", title: "Workspace", directory: "/w", archived: false }],
@@ -425,7 +427,8 @@ describe("DeckController keyboard seam", () => {
     const controller = new DeckController(
       () => ({
         ...makeState(),
-        notification: { kind: "error", message: "Disconnected", detail: "socket closed" },
+        notifications: [{ id: 1, kind: "error", message: "Disconnected", detail: "socket closed" }],
+        activeNotificationId: 1,
       }),
       (intent) => intents.push(intent),
     );
@@ -436,6 +439,63 @@ describe("DeckController keyboard seam", () => {
       type: "open-error-details",
       message: "Disconnected",
       detail: "socket closed",
+    });
+  });
+
+  it("retries the selected recoverable notification without leaking a global key", () => {
+    const intents: unknown[] = [];
+    const controller = new DeckController(
+      () => ({
+        ...makeState(),
+        activeNotificationId: 4,
+        notifications: [{ id: 4, kind: "error", message: "Offline", retry: { type: "reconnect" } }],
+      }),
+      (intent) => intents.push(intent),
+    );
+
+    expect(controller.handleKey("R")).toBe(true);
+    expect(intents).toEqual([{ type: "retry-notification", id: 4 }]);
+  });
+
+  it("browses notification history and routes selection, details, and retry contextually", () => {
+    const intents: unknown[] = [];
+    let current: AppState = {
+      ...makeState(),
+      notifications: [
+        { id: 1, kind: "error", failureKind: "protocol", message: "Old", detail: "old detail" },
+        {
+          id: 2,
+          kind: "error",
+          failureKind: "command",
+          message: "New",
+          retry: { type: "operation", token: 8 },
+        },
+      ],
+      activeNotificationId: 1,
+      modal: { type: "notifications", index: 0 },
+    };
+    const controller = new DeckController(
+      () => current,
+      (intent) => {
+        intents.push(intent);
+        if (intent.type === "move-notification")
+          current = { ...current, activeNotificationId: intent.direction > 0 ? 2 : 1 };
+      },
+    );
+
+    controller.handleKey("j");
+    controller.handleKey("R");
+    controller.handleKey("\r");
+    current = { ...current, activeNotificationId: 1, modal: { type: "notifications", index: 0 } };
+    controller.handleKey("E");
+
+    expect(intents).toContainEqual({ type: "move-notification", direction: 1 });
+    expect(intents).toContainEqual({ type: "retry-notification", id: 2 });
+    expect(intents).toContainEqual({ type: "select-notification", id: 2 });
+    expect(intents).toContainEqual({
+      type: "open-error-details",
+      message: "Old",
+      detail: "old detail",
     });
   });
 });

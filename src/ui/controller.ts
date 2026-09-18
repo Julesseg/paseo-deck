@@ -1,5 +1,6 @@
 import type { AppState, FocusArea, ModalState } from "../contracts/app-state.js";
 import type { AgentCommand } from "../contracts/commands.js";
+import { activeNotification } from "../state/store.js";
 
 export type UiIntent =
   | { type: "select-next"; direction: -1 | 1 }
@@ -20,9 +21,13 @@ export type UiIntent =
   | { type: "open-mode"; agentId: string }
   | { type: "open-thinking"; agentId: string }
   | { type: "open-error-details"; message: string; detail: string }
+  | { type: "open-notifications" }
+  | { type: "move-notification"; direction: -1 | 1 }
+  | { type: "select-notification"; id: number }
   | { type: "open-permissions" }
   | { type: "move-permission"; direction: -1 | 1 }
   | { type: "retry-permission"; agentId: string; requestId: string; allow: boolean }
+  | { type: "retry-notification"; id: number }
   | { type: "refresh" }
   | { type: "quit" }
   | { type: "close-modal" }
@@ -88,6 +93,29 @@ export class DeckController {
           requestId,
           allow: state.modal.lastDecision === "allow",
         });
+      else return false;
+      return true;
+    }
+    if (state.modal.type === "notifications") {
+      if (data === "j" || data === "\u001b[B")
+        this.emit({ type: "move-notification", direction: 1 });
+      else if (data === "k" || data === "\u001b[A")
+        this.emit({ type: "move-notification", direction: -1 });
+      else if (data === "\r") {
+        const notification = activeNotification(state);
+        if (notification) this.emit({ type: "select-notification", id: notification.id });
+      } else if (data === "E") {
+        const notification = activeNotification(state);
+        if (notification?.detail)
+          this.emit({
+            type: "open-error-details",
+            message: notification.message,
+            detail: notification.detail,
+          });
+      } else if (data === "R") {
+        const notification = activeNotification(state);
+        if (notification?.retry) this.emit({ type: "retry-notification", id: notification.id });
+      } else if (data === "\u001b") this.emit({ type: "close-modal" });
       else return false;
       return true;
     }
@@ -162,14 +190,18 @@ export class DeckController {
     if (data === "[") return this.send({ type: "adjust-tree-width", delta: -2 });
     if (data === "]") return this.send({ type: "adjust-tree-width", delta: 2 });
     if (data === "p") return this.send({ type: "open-permissions" });
+    if (data === "N") return this.send({ type: "open-notifications" });
     if (data === "r") return this.send({ type: "refresh" });
     if (data === "?") return this.send({ type: "open-help" });
-    if (data === "E" && state.notification?.detail)
+    const notification = activeNotification(state);
+    if (data === "E" && notification?.detail)
       return this.send({
         type: "open-error-details",
-        message: state.notification.message,
-        detail: state.notification.detail,
+        message: notification.message,
+        detail: notification.detail,
       });
+    if (data === "R" && notification?.retry)
+      return this.send({ type: "retry-notification", id: notification.id });
     if (data === "q") return this.send({ type: "quit" });
     if (!state.selectedAgentId) return false;
     if (data === "x")

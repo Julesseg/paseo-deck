@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { DirectorySnapshot, TimelineEvent } from "../contracts/domain.js";
-import { createInitialState, reduceApp } from "./store.js";
+import { activeNotification, createInitialState, reduceApp } from "./store.js";
 import { deriveTree } from "./tree.js";
 
 const directory: DirectorySnapshot = {
@@ -51,6 +51,94 @@ describe("deriveTree", () => {
 });
 
 describe("application store", () => {
+  it("keeps displayed data while recovery state marks each observation stale", () => {
+    let state = reduceApp(createInitialState(), {
+      type: "directory",
+      update: { type: "snapshot", snapshot: directory },
+    });
+    state = reduceApp(state, { type: "select-agent", agentId: "agent-a" });
+    state = reduceApp(state, {
+      type: "directory",
+      update: { type: "connection-changed", state: "reconnecting", detail: "offline" },
+    });
+    expect(state.directory.agents).toHaveLength(2);
+    expect(state.timeline.agentId).toBe("agent-a");
+    expect(state.recovery).toMatchObject({
+      attempt: 1,
+      detail: "offline",
+      directoryStale: true,
+      timelineStale: true,
+    });
+    state = reduceApp(state, {
+      type: "directory",
+      update: { type: "connection-changed", state: "connecting", attempt: 1 },
+    });
+    expect(state.recovery).toMatchObject({ directoryStale: true, timelineStale: true });
+    state = reduceApp(state, {
+      type: "directory",
+      update: { type: "connection-changed", state: "connected" },
+    });
+    expect(state.recovery).toMatchObject({ directoryStale: true, timelineStale: true });
+    state = reduceApp(state, { type: "recovery-stage-succeeded", stage: "directory" });
+    expect(state.recovery).toMatchObject({ directoryStale: false, timelineStale: true });
+    state = reduceApp(state, { type: "recovery-stage-succeeded", stage: "timeline" });
+    expect(state.recovery).toMatchObject({ directoryStale: false, timelineStale: false });
+  });
+
+  it("keeps a bounded selectable notification history with typed retries", () => {
+    let state = createInitialState();
+    for (let index = 0; index < 22; index += 1)
+      state = reduceApp(state, {
+        type: "notify",
+        message: `notice ${index}`,
+        ...(index === 0 ? { retry: { type: "reconnect" as const } } : {}),
+      });
+    expect(state.notifications).toHaveLength(20);
+    expect(state.notifications[0]?.message).toBe("notice 2");
+    const oldest = state.notifications[0];
+    if (!oldest) throw new Error("expected a notification");
+    state = reduceApp(state, { type: "select-notification", id: oldest.id });
+    expect(activeNotification(state)?.message).toBe("notice 2");
+  });
+
+  it("recovers the directory independently when a focused timeline cannot recover", () => {
+    let state = reduceApp(createInitialState(), {
+      type: "directory",
+      update: { type: "snapshot", snapshot: directory },
+    });
+    state = reduceApp(state, { type: "select-agent", agentId: "agent-a" });
+    state = reduceApp(state, {
+      type: "directory",
+      update: { type: "connection-changed", state: "connected" },
+    });
+    state = reduceApp(state, {
+      type: "timeline",
+      update: { type: "error", agentId: "agent-a", message: "timeline failed" },
+    });
+    expect(state.directory.agents.map((agent) => agent.id)).toEqual(["agent-a", "agent-b"]);
+    expect(state.recovery).toMatchObject({ directoryStale: false, timelineStale: true });
+  });
+
+  it("starts a new recovery clock after a fully recovered later outage", () => {
+    let state = reduceApp(createInitialState(), {
+      type: "directory",
+      update: { type: "snapshot", snapshot: directory },
+    });
+    state = reduceApp(state, { type: "select-agent", agentId: "agent-a" });
+    state = reduceApp(state, {
+      type: "directory",
+      update: { type: "connection-changed", state: "reconnecting", at: 100 },
+    });
+    state = reduceApp(state, { type: "recovery-stage-succeeded", stage: "directory" });
+    state = reduceApp(state, { type: "recovery-stage-succeeded", stage: "timeline" });
+    expect(state.recovery).toEqual({ attempt: 0, directoryStale: false, timelineStale: false });
+    state = reduceApp(state, {
+      type: "directory",
+      update: { type: "connection-changed", state: "reconnecting", at: 900 },
+    });
+    expect(state.recovery).toMatchObject({ since: 900, directoryStale: true, timelineStale: true });
+  });
+
   it("clears an agent focus when selecting its workspace or project", () => {
     let state = reduceApp(createInitialState(), {
       type: "directory",
