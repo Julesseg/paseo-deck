@@ -1,0 +1,45 @@
+{
+  "name": "paseo-deck",
+  "version": "0.1.0",
+  "description": "A keyboard-first multi-session terminal client for Paseo",
+  "type": "module",
+  "license": "MIT",
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "bin": {
+    "paseo-deck": "dist/cli.js",
+    "pdeck": "dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "dev": "tsx src/cli.ts",
+    "build": "tsc -p tsconfig.build.json",
+    "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
+    "smoke:package": "npm run build --silent && tsx scripts/smoke-package.ts",
+    "smoke:daemon": "tsx scripts/smoke-daemon.ts",
+    "typecheck": "tsc --noEmit",
+    "lint": "biome lint .",
+    "format": "biome format --write .",
+    "check": "biome check . && npm run typecheck && npm run test:coverage && npm run smoke:package"
+  },
+  "dependencies": {
+    "@earendil-works/pi-tui": "0.85.1",
+    "@getpaseo/client": "0.8.0",
+    "@getpaseo/protocol": "0.8.0",
+    "@xterm/headless": "5.5.0"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.5.14",
+    "@types/node": "26.6.1",
+    "@vitest/coverage-v8": "5.0.1",
+    "tsx": "4.23.13",
+    "typescript": "7.0.2",
+    "vitest": "5.0.1"
+  }
+}

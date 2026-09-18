@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="500" height="388" viewBox="0 0 500 388">
+  <title>Paseo Deck narrow layout</title>
+  <rect width="500" height="388" rx="12" fill="#1c1917"/>
+  <rect width="500" height="32" rx="12" fill="#292524"/>
+  <rect y="20" width="500" height="12" fill="#292524"/>
+  <circle cx="18" cy="16" r="5" fill="#ef4444"/>
+  <circle cx="36" cy="16" r="5" fill="#f59e0b"/>
+  <circle cx="54" cy="16" r="5" fill="#22c55e"/>
+  <g fill="#f5f5f4" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="14" xml:space="preserve">
+<text x="16" y="62">Projects / workspaces             executable        </text>
+<text x="16" y="80"> ▾ Deck Labs                      aliases.          </text>
+<text x="16" y="98">   ▾ Main                       Tool completed: npm </text>
+<text x="16" y="116">&gt;    • Atlas [agent-at] runni…    71 tests passed;  </text>
+<text x="16" y="134">     • Harbor [agent-ha] ✓ ! …    typecheck and     </text>
+<text x="16" y="152">   ▾ Theme polish                 build succeeded.  </text>
+<text x="16" y="170">     • Lumen [agent-lu] idle    Assistant           </text>
+<text x="16" y="188">                                  The release       </text>
+<text x="16" y="206">                                  build is clean.   </text>
+<text x="16" y="224">                                  Both executable   </text>
+<text x="16" y="242">                                  aliases are       </text>
+<text x="16" y="260">                                  ready.            </text>
+<text x="16" y="278">                                Turn completed      </text>
+<text x="16" y="296">Prompt</text>
+<text x="16" y="314">────────────────────────────────────────────────────</text>
+<text x="16" y="332">                                                    </text>
+<text x="16" y="350">────────────────────────────────────────────────────</text>
+<text x="16" y="368">connected</text>
+  </g>
+</svg>
