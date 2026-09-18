@@ -20,10 +20,13 @@
     "dev": "tsx src/cli.ts",
     "build": "tsc -p tsconfig.build.json",
     "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
+    "smoke:package": "npm run build --silent && tsx scripts/smoke-package.ts",
+    "smoke:daemon": "tsx scripts/smoke-daemon.ts",
     "typecheck": "tsc --noEmit",
     "lint": "biome lint .",
     "format": "biome format --write .",
-    "check": "biome check . && npm run typecheck && npm test && npm run build"
+    "check": "biome check . && npm run typecheck && npm run test:coverage && npm run smoke:package"
   },
   "dependencies": {
     "@earendil-works/pi-tui": "0.85.1",
@@ -34,6 +37,7 @@
   "devDependencies": {
     "@biomejs/biome": "2.5.14",
     "@types/node": "26.6.1",
+    "@vitest/coverage-v8": "5.0.1",
     "tsx": "4.23.13",
     "typescript": "7.0.2",
     "vitest": "5.0.1"

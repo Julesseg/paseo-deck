@@ -40,13 +40,20 @@ Set `PASEO_PASSWORD` in the environment when the target daemon requires a passwo
 npm run dev        # run from TypeScript
 npm run build      # build dist/
 npm test           # run Vitest
+npm run test:coverage # run tests and enforce the coverage baseline
+npm run smoke:package # install the packed tarball and test both executable names
 npm run typecheck  # check strict TypeScript
 npm run lint       # run Biome lint rules
 npm run format     # format the project
-npm run check      # formatting, lint, types, tests, and build
+npm run check      # formatting, lint, types, coverage, packed executables, and build
 ```
 
-CI runs `npm ci` and `npm run check` on Node.js 22.
+CI enforces one required `check` result backed by:
+
+- formatting, lint, strict type checking, tests, coverage thresholds, and a production build on Node.js 22;
+- tests and packed executable smoke checks on Node.js 24, macOS, and Windows;
+- an isolated Paseo 0.8.0 daemon smoke test through the production gateway; and
+- an uploaded HTML and LCOV coverage report for each run.
 
 ## Keymap
 

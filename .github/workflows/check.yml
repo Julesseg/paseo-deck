@@ -8,9 +8,14 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: check-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  check:
+  quality:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -19,3 +24,78 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run check
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-node-22
+          path: coverage/
+          if-no-files-found: error
+
+  compatibility:
+    name: compatibility (${{ matrix.os }}, Node ${{ matrix.node }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            node: 24
+          - os: macos-latest
+            node: 22.19.0
+          - os: windows-latest
+            node: 22.19.0
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      - run: npm run smoke:package
+
+  daemon-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.19.0
+          cache: npm
+      - run: npm ci
+      - name: Install compatible Paseo CLI
+        run: npm install --global @getpaseo/cli@0.8.0
+      - name: Connect through the production gateway
+        shell: bash
+        run: |
+          daemon_home="$(mktemp -d)"
+          cleanup() {
+            paseo daemon stop --home "$daemon_home" >/dev/null 2>&1 || true
+            find "$daemon_home" -depth -delete 2>/dev/null || true
+          }
+          trap cleanup EXIT
+          paseo daemon start \
+            --listen 127.0.0.1:17677 \
+            --no-relay \
+            --no-web-ui \
+            --no-mcp \
+            --home "$daemon_home"
+          npm run smoke:daemon -- --home "$daemon_home"
+
+  check:
+    if: always()
+    needs: [quality, compatibility, daemon-smoke]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require every quality job
+        env:
+          QUALITY_RESULT: ${{ needs.quality.result }}
+          COMPATIBILITY_RESULT: ${{ needs.compatibility.result }}
+          DAEMON_SMOKE_RESULT: ${{ needs.daemon-smoke.result }}
+        run: |
+          test "$QUALITY_RESULT" = success
+          test "$COMPATIBILITY_RESULT" = success
+          test "$DAEMON_SMOKE_RESULT" = success
