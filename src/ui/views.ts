@@ -515,6 +515,37 @@ class InputDialog implements Component, Focusable {
   }
 }
 
+class CreationPromptDialog implements Component, Focusable {
+  focused = false;
+  private readonly editor: Editor;
+  constructor(
+    tui: TUI,
+    private readonly workspace: string,
+    initial: string,
+    private readonly submit: (value: string) => void,
+    private readonly back: () => void,
+  ) {
+    this.editor = new Editor(tui, { borderColor: plain, selectList: selectTheme }, { paddingX: 1 });
+    this.editor.setText(initial);
+    this.editor.onSubmit = (value) => this.submit(value);
+  }
+  invalidate(): void {
+    this.editor.invalidate();
+  }
+  render(width: number): string[] {
+    this.editor.focused = this.focused;
+    return [
+      clip(`Initial prompt · ${this.workspace}`, width),
+      ...this.editor.render(width),
+      "Enter submits · Esc back",
+    ];
+  }
+  handleInput(data: string): void {
+    if (matchesKey(data, "escape")) this.back();
+    else this.editor.handleInput(data);
+  }
+}
+
 class SearchDialog implements Component, Focusable {
   focused = false;
   private readonly input = new Input();
@@ -582,6 +613,62 @@ class ChoiceDialog implements Component {
   }
   handleInput(data: string): void {
     this.list.handleInput(data);
+  }
+}
+
+class SearchableChoiceDialog implements Component, Focusable {
+  focused = false;
+  private readonly query = new Input();
+  private selected = 0;
+  constructor(
+    private readonly title: string,
+    private readonly items: readonly CreationChoice[],
+    private readonly choose: (value: string) => void,
+    private readonly back: () => void,
+    preferredValue?: string,
+  ) {
+    const index =
+      preferredValue === undefined ? -1 : items.findIndex((item) => item.value === preferredValue);
+    if (index >= 0) this.selected = index;
+  }
+  invalidate(): void {
+    this.query.invalidate();
+  }
+  render(width: number): string[] {
+    this.query.focused = this.focused;
+    const matches = this.matches();
+    return [
+      this.title,
+      ...this.query.render(width),
+      ...matches
+        .slice(0, 8)
+        .map(
+          (item, index) =>
+            `${index === this.selected ? "> " : "  "}${item.label}${item.description ? ` — ${item.description}` : ""}`,
+        ),
+      "Type to filter · ↑↓ select · Enter choose · Esc back",
+    ].map((line) => clip(line, width));
+  }
+  handleInput(data: string): void {
+    if (matchesKey(data, "escape")) {
+      this.back();
+      return;
+    }
+    const matches = this.matches();
+    if (matchesKey(data, "up")) this.selected = Math.max(0, this.selected - 1);
+    else if (matchesKey(data, "down"))
+      this.selected = Math.min(Math.max(0, matches.length - 1), this.selected + 1);
+    else if (matchesKey(data, "enter")) {
+      const item = matches[this.selected];
+      if (item && !item.disabled) this.choose(item.value);
+    } else {
+      this.query.handleInput(data);
+      this.selected = 0;
+    }
+  }
+  private matches(): readonly CreationChoice[] {
+    const query = this.query.getValue().toLocaleLowerCase();
+    return this.items.filter((item) => item.label.toLocaleLowerCase().includes(query));
   }
 }
 
@@ -1100,23 +1187,61 @@ export class DeckTui {
         return true;
       });
     else if (modal.type === "create-agent" && modal.step === "prompt")
-      component = new InputDialog(
-        "Initial prompt",
-        "",
+      component = new CreationPromptDialog(
+        this.tui,
+        this.state.directory.workspaces.find((workspace) => workspace.id === modal.workspaceId)
+          ?.title ?? modal.workspaceId,
+        modal.prompt ?? "",
         (prompt) => this.emit({ type: "create-choice", choice: prompt }),
-        close,
+        () => this.emit({ type: "creation-back" }),
+      );
+    else if (modal.type === "create-agent" && modal.step === "confirm")
+      component = new Dialog(
+        [
+          `Create in ${this.state.directory.workspaces.find((workspace) => workspace.id === modal.workspaceId)?.title ?? modal.workspaceId}`,
+          `${modal.providerId ?? ""}/${modal.modelId ?? ""}${modal.modeId ? ` · ${modal.modeId}` : ""}${modal.thinkingLevel ? ` · ${modal.thinkingLevel}` : ""}`,
+          ...(modal.error ? [`Retryable error: ${modal.error}`] : []),
+          modal.submitting ? "Creating…" : "Enter confirms · Esc cancels",
+        ],
+        (data) => {
+          if (matchesKey(data, "enter") && !modal.submitting)
+            this.emit({ type: "create-choice", choice: "__confirm__" });
+          else if (matchesKey(data, "escape") && !modal.submitting)
+            this.emit({ type: "creation-back" });
+          return true;
+        },
       );
     else {
-      const choices =
-        modal.type === "create-agent"
-          ? creationChoices(this.state, modal)
-          : agentChoices(this.state, modal.type);
-      component = new ChoiceDialog(
-        titleForModal(modal.type === "create-agent" ? modal.step : modal.type),
-        choices,
-        (choice) => this.emit({ type: "create-choice", choice }),
-        close,
-      );
+      if (modal.type === "create-agent") {
+        const choices = creationChoices(this.state, modal);
+        component = new SearchableChoiceDialog(
+          `${titleForModal(modal.step)} · ${this.state.directory.workspaces.find((workspace) => workspace.id === modal.workspaceId)?.title ?? modal.workspaceId}`,
+          choices,
+          (choice) => this.emit({ type: "create-choice", choice }),
+          () => this.emit({ type: "creation-back" }),
+          modal.step === "provider"
+            ? modal.providerId
+            : modal.step === "model"
+              ? (modal.modelId ??
+                this.state.directory.providers.find((item) => item.id === modal.providerId)
+                  ?.defaultModelId)
+              : modal.step === "mode"
+                ? (modal.modeId ??
+                  this.state.directory.providers.find((item) => item.id === modal.providerId)
+                    ?.defaultModeId)
+                : modal.step === "thinking"
+                  ? (modal.thinkingLevel ??
+                    selectedCreationModel(this.state, modal)?.defaultThinkingLevel)
+                  : undefined,
+        );
+      } else {
+        component = new ChoiceDialog(
+          titleForModal(modal.type),
+          agentChoices(this.state, modal.type),
+          (choice) => this.emit({ type: "create-choice", choice }),
+          close,
+        );
+      }
     }
     this.overlay = this.tui.showOverlay(component, {
       width: "70%",
@@ -1128,24 +1253,46 @@ export class DeckTui {
   }
 }
 
+export type CreationChoice = SelectItem & { disabled: boolean };
+
+function selectedCreationModel(
+  state: AppState,
+  modal: Extract<ModalState, { type: "create-agent" }>,
+) {
+  return state.directory.providers
+    .find((provider) => provider.id === modal.providerId)
+    ?.models.find((model) => model.id === modal.modelId);
+}
+
 export function creationChoices(
   state: AppState,
   modal: Extract<ModalState, { type: "create-agent" }>,
-): SelectItem[] {
+): CreationChoice[] {
   const type = modal.step;
   if (type === "provider")
-    return state.directory.providers
-      .filter((provider) => provider.ready)
-      .map((provider) => ({ value: provider.id, label: provider.name }));
+    return state.directory.providers.map((provider) => ({
+      value: provider.id,
+      label: `${provider.name}${state.creationDefaults[modal.workspaceId]?.providerId === provider.id ? " (default)" : ""}`,
+      disabled: !provider.ready,
+      ...(provider.ready
+        ? {}
+        : { description: `unavailable: ${provider.unavailableReason ?? "not ready"}` }),
+    }));
   const provider = state.directory.providers.find((candidate) => candidate.id === modal.providerId);
   if (type === "model")
-    return (provider?.models ?? [])
-      .filter((model) => model.selectable)
-      .map((model) => ({ value: model.id, label: model.name }));
-  if (type === "mode") return (provider?.modeIds ?? []).map((value) => ({ value, label: value }));
+    return (provider?.models ?? []).map((model) => ({
+      value: model.id,
+      label: `${model.name}${state.creationDefaults[modal.workspaceId]?.modelId === model.id ? " (default)" : ""}`,
+      disabled: !model.selectable,
+      ...(model.selectable
+        ? {}
+        : { description: `unavailable: ${model.unavailableReason ?? "not selectable"}` }),
+    }));
+  if (type === "mode")
+    return (provider?.modeIds ?? []).map((value) => ({ value, label: value, disabled: false }));
   if (type === "thinking") {
     const model = provider?.models.find((candidate) => candidate.id === modal.modelId);
-    return (model?.thinkingLevels ?? []).map((value) => ({ value, label: value }));
+    return (model?.thinkingLevels ?? []).map((value) => ({ value, label: value, disabled: false }));
   }
   return [];
 }

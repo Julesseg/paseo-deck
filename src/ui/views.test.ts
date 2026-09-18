@@ -14,6 +14,7 @@ function state(): AppState {
     connection: "connected",
     directory: {
       ...emptyDirectory(),
+      workspaces: [{ id: "w", title: "Workspace label", directory: "/workspace", archived: false }],
       providers: [
         {
           id: "ready",
@@ -43,6 +44,7 @@ function state(): AppState {
     modal: { type: "none" },
     timeline: { recoveryRevision: 0, items: [], loading: false },
     timelineNavigation: {},
+    creationDefaults: {},
     composer: {
       drafts: {},
       histories: {},
@@ -84,7 +86,15 @@ describe("creation picker choices", () => {
   it("limits every creation step to the selected provider and model", () => {
     expect(
       creationChoices(state(), { type: "create-agent", workspaceId: "w", step: "provider" }),
-    ).toEqual([{ value: "ready", label: "Ready" }]);
+    ).toEqual([
+      { value: "ready", label: "Ready", disabled: false },
+      {
+        value: "not-ready",
+        label: "Not ready",
+        disabled: true,
+        description: "unavailable: not ready",
+      },
+    ]);
     expect(
       creationChoices(state(), {
         type: "create-agent",
@@ -92,7 +102,15 @@ describe("creation picker choices", () => {
         step: "model",
         providerId: "ready",
       }),
-    ).toEqual([{ value: "one", label: "One" }]);
+    ).toEqual([
+      { value: "one", label: "One", disabled: false },
+      {
+        value: "hidden",
+        label: "Hidden",
+        disabled: true,
+        description: "unavailable: not selectable",
+      },
+    ]);
     expect(
       creationChoices(state(), {
         type: "create-agent",
@@ -101,7 +119,7 @@ describe("creation picker choices", () => {
         providerId: "ready",
         modelId: "one",
       }),
-    ).toEqual([{ value: "plan", label: "plan" }]);
+    ).toEqual([{ value: "plan", label: "plan", disabled: false }]);
     expect(
       creationChoices(state(), {
         type: "create-agent",
@@ -110,7 +128,18 @@ describe("creation picker choices", () => {
         providerId: "ready",
         modelId: "one",
       }),
-    ).toEqual([{ value: "low", label: "low" }]);
+    ).toEqual([{ value: "low", label: "low", disabled: false }]);
+  });
+
+  it("marks unavailable choices explicitly instead of deriving disabled state from prose", () => {
+    const choices = creationChoices(state(), {
+      type: "create-agent",
+      workspaceId: "w",
+      step: "provider",
+    });
+
+    expect(choices).toContainEqual(expect.objectContaining({ value: "not-ready", disabled: true }));
+    expect(choices).toContainEqual(expect.objectContaining({ value: "ready", disabled: false }));
   });
 
   it("falls back to provider discovery for an existing agent's mutable choices", () => {
@@ -175,6 +204,195 @@ describe("creation prompt", () => {
     await deck.stop();
 
     expect(intents).toContainEqual({ type: "create-choice", choice: "Reply READY" });
+  });
+
+  it("accepts a multiline prompt from the editor and renders preserved prompt text", async () => {
+    const terminal = new RecordingTerminal();
+    const intents: unknown[] = [];
+    const promptModal = {
+      type: "create-agent" as const,
+      workspaceId: "w",
+      step: "prompt" as const,
+      providerId: "ready",
+      modelId: "one",
+    };
+    const uiState = { ...state(), modal: promptModal };
+    const deck = new DeckTui(terminal, uiState, (intent) => intents.push(intent));
+    deck.update(uiState);
+    deck.start();
+    terminal.sendInput("First line");
+    terminal.sendInput("\n");
+    terminal.sendInput("Second line");
+    terminal.sendInput("\r");
+    await deck.stop();
+
+    expect(intents).toContainEqual({ type: "create-choice", choice: "First line\nSecond line" });
+
+    const restoredTerminal = new RecordingTerminal();
+    const restoredState = {
+      ...state(),
+      modal: { ...promptModal, prompt: "First line\nSecond line" },
+    };
+    const restoredDeck = new DeckTui(restoredTerminal, restoredState, () => undefined);
+    restoredDeck.update(restoredState);
+    restoredDeck.start();
+    await restoredTerminal.waitForRender();
+    expect(restoredTerminal.viewport().join("\n")).toContain("First line");
+    expect(restoredTerminal.viewport().join("\n")).toContain("Second line");
+    await restoredDeck.stop();
+  });
+
+  it.each([
+    { step: "provider" as const },
+    { step: "model" as const, providerId: "ready" },
+    { step: "mode" as const, providerId: "ready", modelId: "one" },
+    { step: "thinking" as const, providerId: "ready", modelId: "one" },
+    { step: "prompt" as const, providerId: "ready", modelId: "one" },
+    {
+      step: "confirm" as const,
+      providerId: "ready",
+      modelId: "one",
+      prompt: "Create this agent",
+    },
+  ])("shows the workspace title at the $step step", async (form) => {
+    const terminal = new RecordingTerminal();
+    const uiState = {
+      ...state(),
+      modal: { type: "create-agent" as const, workspaceId: "w", ...form },
+    };
+    const deck = new DeckTui(terminal, uiState, () => undefined);
+    deck.update(uiState);
+    deck.start();
+    await terminal.waitForRender();
+    expect(terminal.viewport().join("\n")).toContain("Workspace label");
+    await deck.stop();
+  });
+
+  it.each([
+    { step: "provider" as const },
+    { step: "model" as const, providerId: "ready" },
+    { step: "mode" as const, providerId: "ready", modelId: "one" },
+    { step: "thinking" as const, providerId: "ready", modelId: "one" },
+    { step: "prompt" as const, providerId: "ready", modelId: "one" },
+    {
+      step: "confirm" as const,
+      providerId: "ready",
+      modelId: "one",
+      prompt: "Create this agent",
+    },
+  ])("uses Esc to go back from the $step step", async (form) => {
+    const terminal = new RecordingTerminal();
+    const intents: unknown[] = [];
+    const uiState = {
+      ...state(),
+      modal: { type: "create-agent" as const, workspaceId: "w", ...form },
+    };
+    const deck = new DeckTui(terminal, uiState, (intent) => intents.push(intent));
+    deck.update(uiState);
+    deck.start();
+    terminal.sendInput("\u001b");
+    await deck.stop();
+    expect(intents).toContainEqual({ type: "creation-back" });
+  });
+
+  it("keeps confirmation controls inert while creation is submitting", async () => {
+    const terminal = new RecordingTerminal();
+    const intents: unknown[] = [];
+    const uiState: AppState = {
+      ...state(),
+      modal: {
+        type: "create-agent",
+        workspaceId: "w",
+        step: "confirm",
+        providerId: "ready",
+        modelId: "one",
+        prompt: "Create this agent",
+        submitting: true,
+      },
+    };
+    const deck = new DeckTui(terminal, uiState, (intent) => intents.push(intent));
+    deck.update(uiState);
+    deck.start();
+    terminal.sendInput("\r");
+    terminal.sendInput("\u001b");
+    await deck.stop();
+
+    expect(intents).toEqual([]);
+  });
+
+  it.each([
+    { step: "provider" as const, expected: "> Ready (default)" },
+    {
+      step: "model" as const,
+      providerId: "ready",
+      modelId: "one",
+      expected: "> One (default)",
+    },
+    {
+      step: "mode" as const,
+      providerId: "ready",
+      modelId: "one",
+      modeId: "plan",
+      expected: "> plan",
+    },
+    {
+      step: "thinking" as const,
+      providerId: "ready",
+      modelId: "one",
+      thinkingLevel: "low",
+      expected: "> low",
+    },
+  ])("preselects the workspace default at the $step step", async (form) => {
+    const terminal = new RecordingTerminal();
+    const uiState: AppState = {
+      ...state(),
+      creationDefaults: {
+        w: { providerId: "ready", modelId: "one", modeId: "plan", thinkingLevel: "low" },
+      },
+      modal: { type: "create-agent", workspaceId: "w", ...form },
+    };
+    const deck = new DeckTui(terminal, uiState, () => undefined);
+    deck.update(uiState);
+    deck.start();
+    await terminal.waitForRender();
+    expect(terminal.viewport().join("\n")).toContain(form.expected);
+    await deck.stop();
+  });
+
+  it("searches choices from the keyboard and leaves unavailable matches inert", async () => {
+    const terminal = new RecordingTerminal();
+    const intents: unknown[] = [];
+    const deck = new DeckTui(terminal, state(), (intent) => intents.push(intent));
+    deck.update({
+      ...state(),
+      modal: { type: "create-agent", workspaceId: "w", step: "provider" },
+    });
+    deck.start();
+
+    terminal.sendInput("not ready");
+    await terminal.waitForRender();
+    expect(terminal.viewport().join("\n")).toContain("unavailable: not ready");
+    terminal.sendInput("\r");
+    expect(intents).toEqual([]);
+
+    await deck.stop();
+    expect(intents).toEqual([]);
+
+    const selectableTerminal = new RecordingTerminal();
+    const selectableIntents: unknown[] = [];
+    const selectableDeck = new DeckTui(selectableTerminal, state(), (intent) =>
+      selectableIntents.push(intent),
+    );
+    selectableDeck.update({
+      ...state(),
+      modal: { type: "create-agent", workspaceId: "w", step: "provider" },
+    });
+    selectableDeck.start();
+    selectableTerminal.sendInput("ready");
+    selectableTerminal.sendInput("\r");
+    await selectableDeck.stop();
+
+    expect(selectableIntents).toContainEqual({ type: "create-choice", choice: "ready" });
   });
 });
 

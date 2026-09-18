@@ -658,6 +658,69 @@ describe("ProductionPaseoGateway", () => {
     });
   });
 
+  it("uses documented discovery errors and default thinking metadata without projecting model internals", async () => {
+    const fixture = testClient();
+    fixture.client.providers.listModels.mockResolvedValueOnce({
+      models: [
+        {
+          id: "blocked",
+          label: "Blocked",
+          isSelectable: false,
+          reason: "internal daemon detail",
+        },
+        {
+          id: "gpt-5",
+          label: "GPT-5",
+          isSelectable: true,
+          defaultThinkingOptionId: "high",
+          thinkingOptions: [{ id: "low" }, { id: "high" }],
+        },
+      ],
+    } as never);
+    const gateway = new ProductionPaseoGateway({
+      host: "127.0.0.1:6767",
+      createClient: () => fixture.client as never,
+    });
+    await gateway.connect();
+
+    const directory = await gateway.getDirectorySnapshot();
+    expect(directory.providers[0]?.models).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "blocked",
+          selectable: false,
+          unavailableReason: "not selectable",
+        }),
+        expect.objectContaining({ id: "gpt-5", defaultThinkingLevel: "high" }),
+      ]),
+    );
+    expect(JSON.stringify(directory)).not.toContain("internal daemon detail");
+  });
+
+  it("projects a resolved provider-list error as an unavailable provider", async () => {
+    const fixture = testClient();
+    fixture.client.providers.listModels.mockResolvedValueOnce({
+      error: "models unavailable",
+    } as never);
+    const gateway = new ProductionPaseoGateway({
+      host: "127.0.0.1:6767",
+      createClient: () => fixture.client as never,
+    });
+    await gateway.connect();
+
+    await expect(gateway.getDirectorySnapshot()).resolves.toMatchObject({
+      providers: [
+        {
+          id: "codex",
+          ready: false,
+          unavailableReason: "models unavailable",
+          models: [],
+          modeIds: [],
+        },
+      ],
+    });
+  });
+
   it("attaches the local agent listener before awaiting its server demand", async () => {
     const demand = deferred<Record<string, unknown>>();
     const fixture = testClient();

@@ -34,6 +34,11 @@ export type AppAction =
   | { type: "set-composer-sending"; agentId: string; sending: boolean }
   | { type: "composer-sent"; agentId: string; prompt: string }
   | { type: "composer-detached"; agentId: string }
+  | {
+      type: "set-creation-default";
+      workspaceId: string;
+      value: AppState["creationDefaults"][string];
+    }
   | { type: "open-modal"; modal: Exclude<ModalState, { type: "none" }> }
   | { type: "close-modal" }
   | { type: "toggle-expanded"; id: string }
@@ -72,6 +77,7 @@ export function createInitialState(): AppState {
     timeline: { items: [], loading: false, recoveryRevision: 0 },
     timelineNavigation: {},
     composer: createComposerState(),
+    creationDefaults: {},
   };
 }
 
@@ -754,6 +760,11 @@ export function reduceApp(state: AppState, action: AppAction): AppState {
       detachedAgentIds.add(action.agentId);
       return { ...state, composer: { ...state.composer, detachedAgentIds } };
     }
+    case "set-creation-default":
+      return {
+        ...state,
+        creationDefaults: { ...state.creationDefaults, [action.workspaceId]: action.value },
+      };
     case "open-modal":
       return { ...state, modal: action.modal };
     case "close-modal":

@@ -72,6 +72,8 @@ export interface ModelOption {
   name: string;
   selectable: boolean;
   thinkingLevels: readonly string[];
+  unavailableReason?: string;
+  defaultThinkingLevel?: string;
 }
 
 export interface ProviderOption {
@@ -82,6 +84,7 @@ export interface ProviderOption {
   modeIds: readonly string[];
   defaultModelId?: string;
   defaultModeId?: string;
+  unavailableReason?: string;
 }
 
 export interface DirectorySnapshot {

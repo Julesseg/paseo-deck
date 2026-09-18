@@ -370,6 +370,10 @@ describe("ApplicationController", () => {
     expect(gateway.commands).toEqual([]);
     await app.handleIntent({ type: "create-choice", choice: "Start here" });
 
+    expect(app.state.modal).toMatchObject({ type: "create-agent", step: "confirm" });
+    expect(gateway.commands).toEqual([]);
+    await app.handleIntent({ type: "create-choice", choice: "__confirm__" });
+
     expect(gateway.commands).toContainEqual({
       type: "create-agent",
       workspaceId: "workspace-1",
@@ -381,6 +385,188 @@ describe("ApplicationController", () => {
     });
     expect(app.state.selectedAgentId).toBe("fake-agent-1");
     expect(app.state.expandedIds).toEqual(new Set(["workspace-1", "project-1"]));
+    expect(app.state.creationDefaults).toEqual({
+      "workspace-1": {
+        providerId: "codex",
+        modelId: "gpt-5.6",
+        modeId: "default",
+        thinkingLevel: "medium",
+      },
+    });
+  });
+
+  it("keeps the complete creation form through back navigation and closes from provider", async () => {
+    const app = new ApplicationController(new FakePaseoGateway(snapshot));
+    await app.start();
+    await app.handleIntent({
+      type: "open-create-agent",
+      workspaceId: "workspace-1",
+      step: "provider",
+    });
+    await app.handleIntent({ type: "create-choice", choice: "codex" });
+    await app.handleIntent({ type: "create-choice", choice: "gpt-5.6" });
+    await app.handleIntent({ type: "create-choice", choice: "default" });
+    await app.handleIntent({ type: "create-choice", choice: "medium" });
+    await app.handleIntent({ type: "create-choice", choice: "First line\nSecond line" });
+    await app.handleIntent({ type: "creation-back" });
+    await app.handleIntent({ type: "creation-back" });
+    await app.handleIntent({ type: "creation-back" });
+    await app.handleIntent({ type: "creation-back" });
+    await app.handleIntent({ type: "creation-back" });
+
+    expect(app.state.modal).toMatchObject({
+      type: "create-agent",
+      step: "provider",
+      providerId: "codex",
+      modelId: "gpt-5.6",
+      modeId: "default",
+      thinkingLevel: "medium",
+      prompt: "First line\nSecond line",
+    });
+    await app.handleIntent({ type: "creation-back" });
+    expect(app.state.modal).toEqual({ type: "none" });
+  });
+
+  it("invalidates only dependent creation choices when provider or model changes", async () => {
+    const initialProvider = snapshot.providers[0];
+    if (!initialProvider) throw new Error("fixture requires a provider");
+    const alternate: DirectorySnapshot = {
+      ...snapshot,
+      providers: [
+        initialProvider,
+        {
+          id: "other",
+          name: "Other",
+          ready: true,
+          modeIds: ["safe"],
+          models: [
+            { id: "first", name: "First", selectable: true, thinkingLevels: ["low"] },
+            { id: "second", name: "Second", selectable: true, thinkingLevels: ["high"] },
+          ],
+        },
+      ],
+    };
+    const app = new ApplicationController(new FakePaseoGateway(alternate));
+    await app.start();
+    await app.handleIntent({
+      type: "open-create-agent",
+      workspaceId: "workspace-1",
+      step: "provider",
+    });
+    await app.handleIntent({ type: "create-choice", choice: "other" });
+    await app.handleIntent({ type: "create-choice", choice: "first" });
+    await app.handleIntent({ type: "create-choice", choice: "safe" });
+    await app.handleIntent({ type: "create-choice", choice: "low" });
+    await app.handleIntent({ type: "creation-back" });
+    await app.handleIntent({ type: "creation-back" });
+    await app.handleIntent({ type: "creation-back" });
+    await app.handleIntent({ type: "create-choice", choice: "second" });
+    expect(app.state.modal).toMatchObject({
+      type: "create-agent",
+      step: "mode",
+      providerId: "other",
+      modelId: "second",
+      modeId: "safe",
+    });
+    expect(app.state.modal).not.toHaveProperty("thinkingLevel");
+    await app.handleIntent({ type: "creation-back" });
+    await app.handleIntent({ type: "creation-back" });
+    await app.handleIntent({ type: "create-choice", choice: "codex" });
+    expect(app.state.modal).toMatchObject({
+      type: "create-agent",
+      providerId: "codex",
+      step: "model",
+    });
+    expect(app.state.modal).not.toHaveProperty("modelId");
+    expect(app.state.modal).not.toHaveProperty("modeId");
+  });
+
+  it("keeps a failed confirmation intact and retries the exact command", async () => {
+    const gateway = new DeferredCreateGateway(snapshot);
+    const app = new ApplicationController(gateway);
+    await app.start();
+    await app.handleIntent({
+      type: "open-create-agent",
+      workspaceId: "workspace-1",
+      step: "provider",
+    });
+    await app.handleIntent({ type: "create-choice", choice: "codex" });
+    await app.handleIntent({ type: "create-choice", choice: "gpt-5.6" });
+    await app.handleIntent({ type: "create-choice", choice: "default" });
+    await app.handleIntent({ type: "create-choice", choice: "medium" });
+    await app.handleIntent({ type: "create-choice", choice: "line one\nline two" });
+
+    const first = app.handleIntent({ type: "create-choice", choice: "__confirm__" });
+    expect(app.state.modal).toMatchObject({
+      type: "create-agent",
+      step: "confirm",
+      submitting: true,
+    });
+    await app.handleIntent({ type: "creation-back" });
+    await app.handleIntent({ type: "create-choice", choice: "__confirm__" });
+    expect(gateway.commands).toHaveLength(1);
+    gateway.rejectCreate(new Error("daemon unavailable"));
+    await first;
+
+    expect(app.state.modal).toMatchObject({
+      type: "create-agent",
+      step: "confirm",
+      prompt: "line one\nline two",
+      providerId: "codex",
+      modelId: "gpt-5.6",
+      modeId: "default",
+      thinkingLevel: "medium",
+      submitting: false,
+      error: expect.stringContaining("daemon unavailable"),
+    });
+    expect(app.state.creationDefaults).toEqual({});
+    const retry = app.handleIntent({ type: "create-choice", choice: "__confirm__" });
+    expect(gateway.commands).toHaveLength(2);
+    expect(gateway.commands[1]).toEqual(gateway.commands[0]);
+    gateway.resolveCreate("created-after-retry");
+    await retry;
+    expect(app.state.selectedAgentId).toBe("created-after-retry");
+  });
+
+  it("keeps successful creation defaults isolated by workspace", async () => {
+    const twoWorkspaces: DirectorySnapshot = {
+      ...snapshot,
+      workspaces: [
+        ...snapshot.workspaces,
+        {
+          id: "workspace-2",
+          projectId: "project-1",
+          title: "Second workspace",
+          directory: "/deck-second",
+          archived: false,
+        },
+      ],
+    };
+    const app = new ApplicationController(new FakePaseoGateway(twoWorkspaces));
+    await app.start();
+
+    await chooseCreation(app, "workspace-1", "first workspace prompt");
+    expect(app.state.creationDefaults["workspace-1"]).toMatchObject({
+      providerId: "codex",
+      modelId: "gpt-5.6",
+      modeId: "default",
+      thinkingLevel: "medium",
+    });
+
+    await app.handleIntent({
+      type: "open-create-agent",
+      workspaceId: "workspace-2",
+      step: "provider",
+    });
+    expect(app.state.modal).toMatchObject({ type: "create-agent", workspaceId: "workspace-2" });
+    expect(app.state.modal).not.toHaveProperty("providerId");
+    await app.handleIntent({ type: "creation-back" });
+
+    await chooseCreation(app, "workspace-2", "second workspace prompt");
+    expect(app.state.creationDefaults).toMatchObject({
+      "workspace-1": expect.objectContaining({ providerId: "codex" }),
+      "workspace-2": expect.objectContaining({ providerId: "codex" }),
+    });
   });
 
   it("preserves composer text when sending a prompt fails", async () => {
@@ -625,6 +811,44 @@ class DeferredSendGateway extends FakePaseoGateway {
   resolveAll(): void {
     for (const resolve of this.successes.splice(0)) resolve({ type: "ok" });
   }
+}
+
+class DeferredCreateGateway extends FakePaseoGateway {
+  private resolvePending:
+    | ((value: import("../contracts/commands.js").CommandResult) => void)
+    | undefined;
+  private rejectPending: ((error: Error) => void) | undefined;
+
+  override async execute(command: import("../contracts/commands.js").AgentCommand) {
+    if (command.type !== "create-agent") return super.execute(command);
+    this.commands.push(command);
+    return new Promise<import("../contracts/commands.js").CommandResult>((resolve, reject) => {
+      this.resolvePending = resolve;
+      this.rejectPending = reject;
+    });
+  }
+
+  rejectCreate(error: Error): void {
+    this.rejectPending?.(error);
+  }
+
+  resolveCreate(agentId: string): void {
+    this.resolvePending?.({ type: "agent-created", agentId });
+  }
+}
+
+async function chooseCreation(
+  app: ApplicationController,
+  workspaceId: string,
+  prompt: string,
+): Promise<void> {
+  await app.handleIntent({ type: "open-create-agent", workspaceId, step: "provider" });
+  await app.handleIntent({ type: "create-choice", choice: "codex" });
+  await app.handleIntent({ type: "create-choice", choice: "gpt-5.6" });
+  await app.handleIntent({ type: "create-choice", choice: "default" });
+  await app.handleIntent({ type: "create-choice", choice: "medium" });
+  await app.handleIntent({ type: "create-choice", choice: prompt });
+  await app.handleIntent({ type: "create-choice", choice: "__confirm__" });
 }
 
 class SnapshotFailureGateway extends FakePaseoGateway {

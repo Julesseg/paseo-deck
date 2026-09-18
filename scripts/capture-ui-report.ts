@@ -237,6 +237,7 @@ function syntheticState(): AppState {
       ],
     },
     timelineNavigation: {},
+    creationDefaults: {},
     composer: {
       drafts: {},
       histories: {},

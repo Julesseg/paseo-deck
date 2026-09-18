@@ -32,11 +32,14 @@ export type ModalState =
   | {
       type: "create-agent";
       workspaceId: string;
-      step: "provider" | "model" | "mode" | "thinking" | "prompt";
+      step: "provider" | "model" | "mode" | "thinking" | "prompt" | "confirm";
       providerId?: string;
       modelId?: string;
       modeId?: string;
       thinkingLevel?: string;
+      prompt?: string;
+      error?: string;
+      submitting?: boolean;
     }
   | { type: "rename"; agentId: string; value: string }
   | { type: "mode"; agentId: string }
@@ -77,6 +80,13 @@ export interface ComposerState {
   detachedAgentIds: ReadonlySet<string>;
 }
 
+export interface CreationDefaults {
+  providerId: string;
+  modelId: string;
+  modeId?: string;
+  thinkingLevel?: string;
+}
+
 export interface AppState {
   connection: ConnectionState;
   directory: DirectorySnapshot;
@@ -93,6 +103,8 @@ export interface AppState {
   timeline: FocusedTimelineState;
   timelineNavigation: Readonly<Record<string, TimelineNavigationState>>;
   composer: ComposerState;
+  /** Successful creation choices, isolated by workspace for the current run. */
+  creationDefaults: Readonly<Record<string, CreationDefaults>>;
   notification?: NotificationState;
 }
 

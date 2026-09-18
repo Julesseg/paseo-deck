@@ -718,7 +718,8 @@ async function providerRecords(
   return Promise.all(
     recordEntries(value).map(async (entry) => {
       const provider = String(entry.provider ?? entry.id);
-      const ready = entry.status === "ready" && entry.enabled !== false;
+      const entryError = stringValue(entry.error);
+      const ready = entry.status === "ready" && entry.enabled !== false && entryError === undefined;
       if (!ready)
         return {
           id: provider,
@@ -726,6 +727,11 @@ async function providerRecords(
           ready: false,
           models: [],
           modeIds: [],
+          unavailableReason:
+            entryError ??
+            (entry.enabled === false
+              ? "disabled by daemon"
+              : `status: ${String(entry.status ?? "unknown")}`),
         };
       let modelsResponse: UnknownRecord;
       let modesResponse: UnknownRecord;
@@ -734,24 +740,49 @@ async function providerRecords(
           client.providers.listModels(provider),
           client.providers.listModes(provider),
         ]);
-      } catch {
+        const discoveryError =
+          stringValue(modelsResponse.error) ?? stringValue(modesResponse.error);
+        if (discoveryError)
+          return {
+            id: provider,
+            name: String(entry.label ?? provider),
+            ready: false,
+            models: [],
+            modeIds: [],
+            unavailableReason: discoveryError,
+          };
+      } catch (error) {
         return {
           id: provider,
           name: String(entry.label ?? provider),
           ready: false,
           models: [],
           modeIds: [],
+          unavailableReason: error instanceof Error ? error.message : "discovery failed",
         };
       }
       const modelEntries = arrayRecords(modelsResponse.models);
-      const models = modelEntries.map((record) => ({
-        id: String(record.id),
-        name: String(record.label ?? record.id),
-        selectable: record.isSelectable !== false,
-        thinkingLevels: Array.isArray(record.thinkingOptions)
-          ? record.thinkingOptions.map((option) => String(asRecord(option)?.id ?? option))
-          : [],
-      }));
+      const models = modelEntries.map((record) => {
+        const defaultThinking =
+          stringValue(record.defaultThinkingOptionId) ??
+          (Array.isArray(record.thinkingOptions)
+            ? record.thinkingOptions
+                .map((option) => asRecord(option))
+                .find((option) => option?.isDefault === true)?.id
+            : undefined);
+        return {
+          id: String(record.id),
+          name: String(record.label ?? record.id),
+          selectable: record.isSelectable !== false,
+          thinkingLevels: Array.isArray(record.thinkingOptions)
+            ? record.thinkingOptions.map((option) => String(asRecord(option)?.id ?? option))
+            : [],
+          ...(record.isSelectable === false ? { unavailableReason: "not selectable" } : {}),
+          ...(defaultThinking === undefined
+            ? {}
+            : { defaultThinkingLevel: String(defaultThinking) }),
+        };
+      });
       const modes = arrayRecords(modesResponse.modes).map((mode) => String(mode.id));
       const defaultModel = modelEntries.find((model) => model.isDefault === true)?.id;
       return {

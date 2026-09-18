@@ -48,6 +48,7 @@ function state(): AppState {
     modal: { type: "none" },
     timeline: { recoveryRevision: 0, items: [], loading: false },
     timelineNavigation: {},
+    creationDefaults: {},
     composer: {
       drafts: {},
       histories: {},

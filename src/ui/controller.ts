@@ -14,6 +14,7 @@ export type UiIntent =
   | { type: "toggle-attention-only" }
   | { type: "adjust-tree-width"; delta: -2 | 2 }
   | { type: "open-create-agent"; workspaceId: string; step: "provider" }
+  | { type: "creation-back" }
   | { type: "open-confirmation"; action: "stop" | "archive" | "detach"; agentId: string }
   | { type: "open-rename"; agentId: string }
   | { type: "open-mode"; agentId: string }

@@ -23,6 +23,7 @@ export class ApplicationController {
   #timelineObservation: Observation | undefined;
   #focusGeneration = 0;
   #permissionFocusGeneration = 0;
+  #creationGeneration = 0;
 
   constructor(
     private readonly gateway: PaseoGateway,
@@ -150,11 +151,20 @@ export class ApplicationController {
         return;
       case "open-create-agent":
         if (this.activeWorkspace(intent.workspaceId)) {
+          const defaults = this.#state.creationDefaults[intent.workspaceId];
           this.apply({
             type: "open-modal",
-            modal: { type: "create-agent", workspaceId: intent.workspaceId, step: "provider" },
+            modal: {
+              type: "create-agent",
+              workspaceId: intent.workspaceId,
+              step: "provider",
+              ...(defaults ?? {}),
+            },
           });
         }
+        return;
+      case "creation-back":
+        this.moveCreationBack();
         return;
       case "open-confirmation":
         {
@@ -466,12 +476,18 @@ export class ApplicationController {
     modal: Extract<ModalState, { type: "create-agent" }>,
     choice: string,
   ): Promise<void> {
+    if (modal.submitting) return;
     if (modal.step === "provider") {
       const provider = this.#state.directory.providers.find(
         (item) => item.id === choice && item.ready,
       );
       if (!provider) return;
-      this.setCreationModal({ ...modal, providerId: provider.id, step: "model" });
+      if (modal.providerId === provider.id) {
+        this.setCreationModal({ ...modal, step: "model" });
+        return;
+      }
+      const { modelId: _modelId, modeId: _modeId, thinkingLevel: _thinkingLevel, ...form } = modal;
+      this.setCreationModal({ ...form, providerId: provider.id, step: "model" });
       return;
     }
     if (modal.step === "model") {
@@ -484,7 +500,15 @@ export class ApplicationController {
           : model.thinkingLevels.length > 0
             ? "thinking"
             : "prompt";
-      this.setCreationModal({ ...modal, modelId: model.id, step: next });
+      const { thinkingLevel: _thinkingLevel, ...form } = modal;
+      this.setCreationModal({
+        ...form,
+        modelId: model.id,
+        ...(model.thinkingLevels.includes(modal.thinkingLevel ?? "")
+          ? { thinkingLevel: modal.thinkingLevel }
+          : {}),
+        step: next,
+      });
       return;
     }
     if (modal.step === "mode") {
@@ -504,31 +528,80 @@ export class ApplicationController {
       this.setCreationModal({ ...modal, thinkingLevel: choice, step: "prompt" });
       return;
     }
-    const prompt = choice.trim();
-    if (!prompt || !modal.providerId || !modal.modelId) return;
+    if (modal.step === "prompt") {
+      const prompt = choice.trim();
+      if (!prompt) return;
+      const { error: _error, ...form } = modal;
+      this.setCreationModal({ ...form, prompt: choice, step: "confirm" });
+      return;
+    }
+    if (modal.step !== "confirm" || !modal.prompt?.trim() || !modal.providerId || !modal.modelId)
+      return;
+    const generation = ++this.#creationGeneration;
     try {
+      const { error: _error, ...form } = modal;
+      this.setCreationModal({ ...form, submitting: true });
       const result = await this.gateway.execute({
         type: "create-agent",
         workspaceId: modal.workspaceId,
         providerId: modal.providerId,
         modelId: modal.modelId,
-        prompt,
+        prompt: modal.prompt,
         ...(modal.modeId ? { modeId: modal.modeId } : {}),
         ...(modal.thinkingLevel ? { thinkingLevel: modal.thinkingLevel } : {}),
       });
+      if (generation !== this.#creationGeneration) return;
       if (result.type !== "agent-created")
         throw new Error("Paseo did not return the created agent.");
       this.apply({ type: "close-modal" });
+      this.apply({
+        type: "set-creation-default",
+        workspaceId: modal.workspaceId,
+        value: {
+          providerId: modal.providerId,
+          modelId: modal.modelId,
+          ...(modal.modeId ? { modeId: modal.modeId } : {}),
+          ...(modal.thinkingLevel ? { thinkingLevel: modal.thinkingLevel } : {}),
+        },
+      });
       this.apply({ type: "reveal-workspace", workspaceId: modal.workspaceId });
       await this.selectAgent(result.agentId);
       this.apply({ type: "notify", message: `Created agent ${shortId(result.agentId)}.` });
     } catch (error) {
-      this.reportError("Could not create the agent.", error);
+      if (generation !== this.#creationGeneration) return;
+      this.setCreationModal({ ...modal, submitting: false, error: errorDetail(error) });
     }
   }
 
   private setCreationModal(modal: Extract<ModalState, { type: "create-agent" }>): void {
     this.apply({ type: "open-modal", modal });
+  }
+
+  private moveCreationBack(): void {
+    const modal = this.#state.modal;
+    if (modal.type !== "create-agent" || modal.submitting) return;
+    this.#creationGeneration += 1;
+    const provider = this.#state.directory.providers.find((item) => item.id === modal.providerId);
+    const step =
+      modal.step === "confirm"
+        ? "prompt"
+        : modal.step === "prompt"
+          ? modal.thinkingLevel
+            ? "thinking"
+            : modal.modeId
+              ? "mode"
+              : "model"
+          : modal.step === "thinking"
+            ? provider?.modeIds.length
+              ? "mode"
+              : "model"
+            : modal.step === "mode"
+              ? "model"
+              : modal.step === "model"
+                ? "provider"
+                : undefined;
+    if (step) this.setCreationModal({ ...modal, step });
+    else if (modal.step === "provider") this.apply({ type: "close-modal" });
   }
 
   private reportError(message: string, error: unknown): void {
