@@ -45,7 +45,9 @@ export type AppAction =
       anchor?: TimelineCursor;
     }
   | { type: "timeline"; update: TimelineUpdate }
-  | { type: "permission-resolved"; agentId: string; requestId: string; allow: boolean }
+  | { type: "permission-submitting"; agentId: string; requestId: string; allow: "allow" | "deny" }
+  | { type: "permission-failed"; agentId: string; requestId: string; error: string }
+  | { type: "permission-resolved"; agentId: string; requestId: string; allow?: boolean }
   | { type: "notify"; message: string; detail?: string; kind?: "info" | "error" }
   | { type: "clear-notification" };
 
@@ -529,6 +531,10 @@ function resolvePermission(agent: AgentRecord, requestId: string): AgentRecord {
   };
 }
 
+function permissionKey(agentId: string, requestId: string): string {
+  return `${agentId}\u0000${requestId}`;
+}
+
 function resolveTimelinePermission(
   items: readonly TimelineEvent[],
   requestId: string,
@@ -539,13 +545,77 @@ function resolveTimelinePermission(
   });
 }
 
+function permissionModalAfterResolution(
+  state: AppState,
+  directory: DirectorySnapshot,
+  resolvedAgentId: string,
+  resolvedRequestId: string,
+): AppState["modal"] {
+  if (
+    state.modal.type !== "permission" ||
+    state.modal.agentId !== resolvedAgentId ||
+    state.modal.requestId !== resolvedRequestId
+  )
+    return state.modal;
+  const queue = pendingPermissions({ ...state, directory });
+  if (queue.length === 0) return { type: "none" };
+  const index = Math.min(state.modal.queueIndex ?? 0, queue.length - 1);
+  const request = queue[index];
+  if (!request) return { type: "none" };
+  return {
+    type: "permission",
+    agentId: request.agentId,
+    requestId: request.id,
+    queueIndex: index,
+    submitting: false,
+  };
+}
+
+function reconcilePermissionRemovals(state: AppState, directory: DirectorySnapshot): AppState {
+  const previous = pendingPermissions(state);
+  const current = new Set(
+    pendingPermissions({ ...state, directory }).map((request) =>
+      permissionKey(request.agentId, request.id),
+    ),
+  );
+  const removed = previous.filter(
+    (request) => !current.has(permissionKey(request.agentId, request.id)),
+  );
+  if (removed.length === 0) return { ...state, directory };
+  let next: AppState = { ...state, directory };
+  for (const request of removed) {
+    const timeline =
+      next.timeline.agentId === request.agentId
+        ? timelineWith(next.timeline, {
+            items: resolveTimelinePermission(next.timeline.items, request.id),
+          })
+        : next.timeline;
+    next = {
+      ...next,
+      timeline,
+      modal: permissionModalAfterResolution(next, next.directory, request.agentId, request.id),
+    };
+  }
+  return next;
+}
+
 export function reduceApp(state: AppState, action: AppAction): AppState {
   switch (action.type) {
     case "directory": {
       const directory = directoryUpdate(state.directory, action.update);
       const connection: ConnectionState =
         action.update.type === "connection-changed" ? action.update.state : state.connection;
-      return { ...reconcileSelection(state, directory), connection };
+      const selected = reconcileSelection(state, directory);
+      const permissionsReconciled = reconcilePermissionRemovals(state, directory);
+      return {
+        ...selected,
+        modal: permissionsReconciled.modal,
+        timeline:
+          selected.timeline.agentId === permissionsReconciled.timeline.agentId
+            ? permissionsReconciled.timeline
+            : selected.timeline,
+        connection,
+      };
     }
     case "select-agent": {
       const agent = state.directory.agents.find((candidate) => candidate.id === action.agentId);
@@ -711,8 +781,35 @@ export function reduceApp(state: AppState, action: AppAction): AppState {
         },
       };
     }
-    case "timeline":
-      return applyTimeline(state, action.update);
+    case "timeline": {
+      const next = applyTimeline(state, action.update);
+      if (
+        action.update.type === "event" &&
+        action.update.event.item.type === "permission" &&
+        action.update.event.item.resolved
+      )
+        return reduceApp(next, {
+          type: "permission-resolved",
+          agentId: action.update.agentId,
+          requestId: action.update.event.item.request.id,
+        });
+      return next;
+    }
+    case "permission-submitting":
+      return state.modal.type === "permission" &&
+        state.modal.agentId === action.agentId &&
+        state.modal.requestId === action.requestId
+        ? {
+            ...state,
+            modal: { ...state.modal, submitting: true, lastDecision: action.allow },
+          }
+        : state;
+    case "permission-failed":
+      return state.modal.type === "permission" &&
+        state.modal.agentId === action.agentId &&
+        state.modal.requestId === action.requestId
+        ? { ...state, modal: { ...state.modal, submitting: false, error: action.error } }
+        : state;
     case "permission-resolved": {
       const directory = {
         ...state.directory,
@@ -730,10 +827,7 @@ export function reduceApp(state: AppState, action: AppAction): AppState {
         ...state,
         directory,
         timeline,
-        modal:
-          state.modal.type === "permission" && state.modal.request.id === action.requestId
-            ? { type: "none" }
-            : state.modal,
+        modal: permissionModalAfterResolution(state, directory, action.agentId, action.requestId),
       };
     }
     case "notify":
@@ -754,5 +848,10 @@ export function reduceApp(state: AppState, action: AppAction): AppState {
 }
 
 export function pendingPermissions(state: AppState): readonly PermissionRequest[] {
-  return state.directory.agents.flatMap((agent) => agent.pendingPermissions);
+  return state.directory.agents
+    .slice()
+    .sort((left, right) => left.id.localeCompare(right.id))
+    .flatMap((agent) =>
+      agent.pendingPermissions.slice().sort((left, right) => left.id.localeCompare(right.id)),
+    );
 }

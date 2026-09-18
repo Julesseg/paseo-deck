@@ -38,12 +38,10 @@ const shots: Array<{
       ...baseState,
       modal: {
         type: "permission",
-        request: {
-          id: "permission-demo",
-          agentId: "agent-harbor",
-          title: "Run the verification command",
-          description: "Allow this disposable session to run npm test?",
-        },
+        agentId: "agent-harbor-5678",
+        requestId: "permission-demo",
+        queueIndex: 0,
+        submitting: false,
       },
     },
   },

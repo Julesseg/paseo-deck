@@ -20,6 +20,8 @@ export type UiIntent =
   | { type: "open-thinking"; agentId: string }
   | { type: "open-error-details"; message: string; detail: string }
   | { type: "open-permissions" }
+  | { type: "move-permission"; direction: -1 | 1 }
+  | { type: "retry-permission"; agentId: string; requestId: string; allow: boolean }
   | { type: "refresh" }
   | { type: "quit" }
   | { type: "close-modal" }
@@ -57,21 +59,34 @@ export class DeckController {
     // editor or modal owns the keyboard.
     if (data === "\u0003") return this.send({ type: "quit" });
     if (state.modal.type === "permission") {
+      if (state.modal.submitting) return true;
+      const { agentId, requestId } = state.modal;
       if (data === "a")
         this.emit({
           type: "respond-permission",
-          agentId: state.modal.request.agentId,
-          requestId: state.modal.request.id,
+          agentId,
+          requestId,
           allow: true,
         });
       else if (data === "d")
         this.emit({
           type: "respond-permission",
-          agentId: state.modal.request.agentId,
-          requestId: state.modal.request.id,
+          agentId,
+          requestId,
           allow: false,
         });
       else if (data === "\u001b") this.emit({ type: "close-modal" });
+      else if (data === "h" || data === "\u001b[D")
+        this.emit({ type: "move-permission", direction: -1 });
+      else if (data === "l" || data === "\u001b[C")
+        this.emit({ type: "move-permission", direction: 1 });
+      else if (data === "r" && state.modal.error && state.modal.lastDecision)
+        this.emit({
+          type: "retry-permission",
+          agentId,
+          requestId,
+          allow: state.modal.lastDecision === "allow",
+        });
       else return false;
       return true;
     }

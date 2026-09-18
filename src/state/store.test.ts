@@ -612,6 +612,101 @@ describe("application store", () => {
     expect(state.timeline.items.find((entry) => entry.item.type === "turn")).toBeUndefined();
   });
 
+  it("moves an open permission queue to the next request when a directory confirmation removes it", () => {
+    const first = { id: "p1", agentId: "agent-a", title: "First" };
+    const second = { id: "p2", agentId: "agent-b", title: "Second" };
+    const agentA = directory.agents[0];
+    const agentB = directory.agents[1];
+    if (!agentA || !agentB) throw new Error("fixture requires two agents");
+    let state = reduceApp(createInitialState(), {
+      type: "directory",
+      update: {
+        type: "snapshot",
+        snapshot: {
+          ...directory,
+          agents: [
+            { ...agentA, pendingPermissions: [first] },
+            { ...agentB, pendingPermissions: [second] },
+          ],
+        },
+      },
+    });
+    state = reduceApp(state, { type: "select-agent", agentId: "agent-a" });
+    state = reduceApp(state, {
+      type: "timeline",
+      update: {
+        type: "event",
+        agentId: "agent-a",
+        event: event(1, { id: "permission:p1", type: "permission", request: first }),
+      },
+    });
+    state = reduceApp(state, {
+      type: "open-modal",
+      modal: {
+        type: "permission",
+        agentId: "agent-a",
+        requestId: "p1",
+        queueIndex: 0,
+        submitting: false,
+      },
+    });
+    state = reduceApp(state, {
+      type: "directory",
+      update: {
+        type: "agent-upserted",
+        agent: { ...agentA, pendingPermissions: [] },
+      },
+    });
+
+    expect(state.modal).toMatchObject({
+      type: "permission",
+      agentId: "agent-b",
+      requestId: "p2",
+      queueIndex: 0,
+    });
+    expect(state.timeline.items[0]?.item).toMatchObject({ type: "permission", resolved: true });
+  });
+
+  it("uses the agent and request ID together when reconciling identical permission IDs", () => {
+    const first = { id: "shared", agentId: "agent-a", title: "First" };
+    const second = { id: "shared", agentId: "agent-b", title: "Second" };
+    const agentA = directory.agents[0];
+    const agentB = directory.agents[1];
+    if (!agentA || !agentB) throw new Error("fixture requires two agents");
+    let state = reduceApp(createInitialState(), {
+      type: "directory",
+      update: {
+        type: "snapshot",
+        snapshot: {
+          ...directory,
+          agents: [
+            { ...agentA, pendingPermissions: [first] },
+            { ...agentB, pendingPermissions: [second] },
+          ],
+        },
+      },
+    });
+    state = reduceApp(state, {
+      type: "open-modal",
+      modal: {
+        type: "permission",
+        agentId: "agent-a",
+        requestId: "shared",
+        queueIndex: 0,
+        submitting: false,
+      },
+    });
+    state = reduceApp(state, {
+      type: "directory",
+      update: { type: "agent-upserted", agent: { ...agentA, pendingPermissions: [] } },
+    });
+
+    expect(
+      state.directory.agents.find((agent) => agent.id === "agent-b")?.pendingPermissions,
+    ).toEqual([second]);
+    expect(state.modal).toMatchObject({ agentId: "agent-b", requestId: "shared" });
+  });
+
   it("prunes agents and clears the focused timeline when their workspace is removed", () => {
     let state = reduceApp(createInitialState(), {
       type: "directory",

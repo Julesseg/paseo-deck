@@ -22,6 +22,7 @@ export class ApplicationController {
   #directoryObservation: Observation | undefined;
   #timelineObservation: Observation | undefined;
   #focusGeneration = 0;
+  #permissionFocusGeneration = 0;
 
   constructor(
     private readonly gateway: PaseoGateway,
@@ -194,8 +195,21 @@ export class ApplicationController {
         return;
       case "open-permissions": {
         const request = pendingPermissions(this.#state)[0];
-        if (request) this.apply({ type: "open-modal", modal: { type: "permission", request } });
-        else this.apply({ type: "notify", message: "No permission requests are pending." });
+        if (request) {
+          await this.openPermission(request, 0);
+        } else this.apply({ type: "notify", message: "No permission requests are pending." });
+        return;
+      }
+      case "move-permission": {
+        const queue = pendingPermissions(this.#state);
+        const modal = this.#state.modal;
+        if (modal.type !== "permission" || queue.length === 0) return;
+        const current = queue.findIndex(
+          (request) => request.id === modal.requestId && request.agentId === modal.agentId,
+        );
+        const index = (Math.max(0, current) + intent.direction + queue.length) % queue.length;
+        const request = queue[index];
+        if (request) await this.openPermission(request, index);
         return;
       }
       case "refresh":
@@ -231,12 +245,10 @@ export class ApplicationController {
         });
         return;
       case "respond-permission":
-        await this.runCommand({
-          type: "respond-permission",
-          agentId: intent.agentId,
-          requestId: intent.requestId,
-          allow: intent.allow,
-        });
+        await this.respondPermission(intent.agentId, intent.requestId, intent.allow);
+        return;
+      case "retry-permission":
+        await this.respondPermission(intent.agentId, intent.requestId, intent.allow);
         return;
       case "command":
         await this.runCommand(intent.command);
@@ -257,8 +269,41 @@ export class ApplicationController {
   }
 
   private apply(action: AppAction): void {
+    const previousModal = this.#state.modal;
     this.#state = reduceApp(this.#state, action);
     for (const listener of this.#listeners) listener(this.#state);
+    const modal = this.#state.modal;
+    if (
+      previousModal.type === "permission" &&
+      modal.type === "permission" &&
+      (previousModal.requestId !== modal.requestId || previousModal.agentId !== modal.agentId)
+    )
+      void this.focusPermissionModal(modal);
+  }
+
+  private async openPermission(
+    request: { id: string; agentId: string },
+    queueIndex: number,
+  ): Promise<void> {
+    this.apply({
+      type: "open-modal",
+      modal: {
+        type: "permission",
+        agentId: request.agentId,
+        requestId: request.id,
+        queueIndex,
+        submitting: false,
+      },
+    });
+    await this.focusPermissionModal(this.#state.modal);
+  }
+
+  private async focusPermissionModal(modal: AppState["modal"]): Promise<void> {
+    if (modal.type !== "permission" || !modal.agentId || !modal.requestId) return;
+    const generation = ++this.#permissionFocusGeneration;
+    await this.selectAgent(modal.agentId);
+    if (generation !== this.#permissionFocusGeneration) return;
+    this.apply({ type: "set-focus", focus: "timeline" });
   }
 
   private async moveSelection(direction: -1 | 1): Promise<void> {
@@ -363,14 +408,6 @@ export class ApplicationController {
   private async runCommand(command: AgentCommand): Promise<void> {
     try {
       const result = await this.gateway.execute(command);
-      if (command.type === "respond-permission") {
-        this.apply({
-          type: "permission-resolved",
-          agentId: command.agentId,
-          requestId: command.requestId,
-          allow: command.allow,
-        });
-      }
       if (command.type === "detach-agent")
         this.apply({ type: "composer-detached", agentId: command.agentId });
       this.apply({ type: "close-modal" });
@@ -381,6 +418,24 @@ export class ApplicationController {
       });
     } catch (error) {
       this.reportError("The Paseo command failed.", error);
+    }
+  }
+
+  private async respondPermission(
+    agentId: string,
+    requestId: string,
+    allow: boolean,
+  ): Promise<void> {
+    this.apply({
+      type: "permission-submitting",
+      agentId,
+      requestId,
+      allow: allow ? "allow" : "deny",
+    });
+    try {
+      await this.gateway.execute({ type: "respond-permission", agentId, requestId, allow });
+    } catch (error) {
+      this.apply({ type: "permission-failed", agentId, requestId, error: errorDetail(error) });
     }
   }
 

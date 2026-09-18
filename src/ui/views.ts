@@ -224,6 +224,13 @@ class TimelineView implements Component {
     }
     return true;
   }
+  selectPermission(requestId: string): boolean {
+    const event = this.events.find(
+      (candidate) =>
+        candidate.item.type === "permission" && candidate.item.request.id === requestId,
+    );
+    return event ? this.selectEvent(event.item.id) : false;
+  }
   selectedItem(): TimelineItem | undefined {
     return this.events[this.selectedIndex]?.item;
   }
@@ -435,6 +442,37 @@ function footerContext(state: AppState, width: number): string {
     case "composer":
       return "Composer: Esc Ctrl-P/N Enter";
   }
+}
+
+function permissionDialogLines(
+  state: AppState,
+  modal: Extract<ModalState, { type: "permission" }>,
+): readonly string[] {
+  const request = state.directory.agents
+    .find((agent) => agent.id === modal.agentId)
+    ?.pendingPermissions.find((item) => item.id === modal.requestId);
+  if (!request) return ["Permission request is no longer pending.", "Esc close"];
+  const queue = pendingPermissionCount(state);
+  const ordinal = `${(modal.queueIndex ?? 0) + 1}/${queue}`;
+  return [
+    `Permission ${ordinal}: ${request.operation ?? request.title}`,
+    ...(request.workingDirectory ? [`cwd: ${request.workingDirectory}`] : []),
+    ...(request.arguments ?? []),
+    ...(request.description ? [request.description] : []),
+    ...(modal.error ? [`Retryable error: ${modal.error}`] : []),
+    modal.submitting
+      ? `Submitting ${modal.lastDecision ?? "decision"}; awaiting confirmation…`
+      : modal.error && modal.lastDecision
+        ? "a allow · d deny · r retry last decision · h/l previous/next · Esc cancel"
+        : "a allow · d deny · h/l previous/next · Esc cancel",
+  ];
+}
+
+function pendingPermissionCount(state: AppState): number {
+  return state.directory.agents.reduce(
+    (total, agent) => total + agent.pendingPermissions.length,
+    0,
+  );
 }
 
 class Dialog implements Component, Focusable {
@@ -700,6 +738,13 @@ export class DeckTui {
     this.status.update(state);
     this.tui.setFocus(state.focus === "composer" ? this.composer : null);
     this.syncModal();
+    if (
+      state.modal.type === "permission" &&
+      state.modal.agentId === state.selectedAgentId &&
+      state.modal.requestId &&
+      this.timeline.selectPermission(state.modal.requestId)
+    )
+      this.revealTimelineSelection();
     if (timelineChanged && this.modalKey === "__timeline-search")
       this.refreshTimelineSearchResults();
     const restoredPaused =
@@ -1046,13 +1091,8 @@ export class DeckTui {
         },
       );
     else if (modal.type === "permission")
-      component = new Dialog(
-        [
-          `Permission: ${modal.request.title}`,
-          modal.request.description ?? "",
-          "a allow · d deny · Esc cancel",
-        ],
-        (data) => this.controller.handleKey(data),
+      component = new Dialog(permissionDialogLines(this.state, modal), (data) =>
+        this.controller.handleKey(data),
       );
     else if (modal.type === "error-details")
       component = new Dialog([`Error: ${modal.message}`, modal.detail, "Esc close"], (data) => {

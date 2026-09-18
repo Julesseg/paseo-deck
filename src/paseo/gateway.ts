@@ -952,18 +952,114 @@ function timestamped(item: TimelineItem, timestamp: string | undefined): Timelin
 }
 
 function permissionRequest(value: UnknownRecord, agentId: string): PermissionRequest {
+  const operation =
+    safePermissionText(value.operation) ??
+    safePermissionText(value.name) ??
+    safePermissionText(value.title);
+  const workingDirectory =
+    safePermissionText(value.workingDirectory) ?? safePermissionText(value.cwd);
+  const argumentsValue = asRecord(value.arguments) ?? asRecord(value.args);
+  const argumentsSafe = argumentsValue
+    ? Object.entries(argumentsValue)
+        .filter(
+          ([key]) =>
+            !/(token|secret|password|credential|authorization|cookie|api[-_]?key)/i.test(key),
+        )
+        .flatMap(([key, item]) => {
+          if (typeof item !== "string" && typeof item !== "number" && typeof item !== "boolean")
+            return [];
+          return [
+            `${scrubPermissionText(key)}: ${scrubPermissionText(String(item)).slice(0, 160)}`,
+          ];
+        })
+    : undefined;
+  const detail = asRecord(value.detail);
+  const detailType = safePermissionText(detail?.type);
+  const shell = asRecord(detail?.shell) ?? detail;
+  const command = safePermissionText(shell?.command);
+  const filePath = safePermissionText(detail?.filePath) ?? safePermissionText(detail?.path);
+  const scrubbedCommand = command === undefined ? undefined : scrubPermissionText(command);
+  const actionItems = Array.isArray(value.actions)
+    ? value.actions.map((action) => {
+        const record = asRecord(action);
+        return {
+          // IDs are opaque protocol operands, never terminal display text.
+          id: String(record?.id ?? record?.value ?? action),
+          label: scrubPermissionText(String(record?.label ?? action)),
+          ...(safePermissionText(record?.behavior)
+            ? { behavior: safePermissionText(record?.behavior) as string }
+            : {}),
+        };
+      })
+    : undefined;
   return {
+    // Preserve the daemon's opaque request identity exactly for the response API.
     id: String(value.id ?? "unknown-permission"),
     agentId,
-    title: String(value.title ?? value.name ?? "Permission requested"),
-    ...(stringValue(value.description) === undefined
-      ? {}
-      : { description: stringValue(value.description) as string }),
-    ...(Array.isArray(value.actions)
-      ? { choices: value.actions.map((action) => String(asRecord(action)?.label ?? action)) }
+    title: scrubPermissionText(String(value.title ?? value.name ?? "Permission requested")),
+    ...(operation === undefined ? {} : { operation }),
+    ...(safePermissionText(value.provider)
+      ? { provider: safePermissionText(value.provider) as string }
       : {}),
-    raw: value,
+    ...(safePermissionText(value.name) ? { name: safePermissionText(value.name) as string } : {}),
+    ...(safePermissionText(value.kind) ? { kind: safePermissionText(value.kind) as string } : {}),
+    ...(workingDirectory === undefined ? {} : { workingDirectory }),
+    ...(argumentsSafe === undefined || argumentsSafe.length === 0
+      ? {}
+      : { arguments: argumentsSafe }),
+    ...(actionItems === undefined ? {} : { actions: actionItems }),
+    ...(detailType === undefined
+      ? {}
+      : {
+          description: [
+            safePermissionText(value.description) === undefined
+              ? undefined
+              : safePermissionText(value.description),
+            `operation: ${detailType}`,
+            ...(scrubbedCommand ? [`command: ${scrubbedCommand}`] : []),
+            ...(filePath ? [`file: ${filePath}`] : []),
+          ]
+            .filter(Boolean)
+            .join("\n"),
+        }),
+    ...(detailType === undefined && safePermissionText(value.description) !== undefined
+      ? { description: safePermissionText(value.description) as string }
+      : {}),
+    ...(Array.isArray(value.actions)
+      ? {
+          choices: value.actions.map((action) =>
+            scrubPermissionText(String(asRecord(action)?.label ?? action)),
+          ),
+        }
+      : {}),
   };
+}
+
+function safePermissionText(value: unknown): string | undefined {
+  return typeof value === "string" && value.length > 0 ? scrubPermissionText(value) : undefined;
+}
+
+/**
+ * Permission text crosses from daemon-owned protocol data into the terminal.
+ * Preserve useful command context while redacting common credential encodings
+ * before it can reach state, logs, tests, or rendering.
+ */
+function scrubPermissionText(value: string): string {
+  return value
+    .replace(/\b(bearer|basic)\s+[A-Za-z0-9._~+/=-]+/gi, "$1 [redacted]")
+    .replace(
+      /((?:--?[\w-]*)?(?:token|secret|password|credential|authorization|cookie|api[-_]?key)[\w-]*(?:=|\s+))[^\s,;]+/gi,
+      "$1[redacted]",
+    )
+    .replace(
+      /([?&](?:token|secret|password|credential|authorization|cookie|api[-_]?key)=[^&#\s]*)/gi,
+      (match) => `${match.slice(0, match.indexOf("=") + 1)}[redacted]`,
+    )
+    .replace(
+      /(["'](?:token|secret|password|credential|authorization|cookie|api[-_]?key)["']\s*:\s*["'])[^"']*(["'])/gi,
+      "$1[redacted]$2",
+    )
+    .replace(/(https?:\/\/)[^\s/@]+:[^\s/@]+@/gi, "$1[redacted]@");
 }
 
 function pageCursor(page: UnknownRecord): TimelineCursor | undefined {

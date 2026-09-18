@@ -212,6 +212,21 @@ describe("ApplicationController", () => {
       requestId: "permission-1",
       allow: false,
     });
+    expect(app.state.directory.agents[0]?.pendingPermissions).toEqual([request]);
+    gateway.emitTimeline("agent-1", {
+      type: "event",
+      agentId: "agent-1",
+      event: {
+        epoch: "epoch-1",
+        sequence: 3,
+        item: {
+          id: "permission:permission-1",
+          type: "permission",
+          request,
+          resolved: true,
+        },
+      },
+    });
     expect(app.state.directory.agents[0]?.pendingPermissions).toEqual([]);
 
     await app.selectAgent("agent-2");
@@ -226,6 +241,96 @@ describe("ApplicationController", () => {
 
     await app.releaseObservations();
     expect(gateway.releaseCount).toBe(3);
+  });
+
+  it("keeps permission decisions pending, navigates requests, and advances only on daemon confirmation", async () => {
+    const first = { id: "p1", agentId: "agent-1", title: "First request" };
+    const second = { id: "p2", agentId: "agent-2", title: "Second request" };
+    const firstAgent = snapshot.agents[0];
+    const secondAgent = snapshot.agents[1];
+    if (!firstAgent || !secondAgent) throw new Error("fixture requires two agents");
+    const fixture: DirectorySnapshot = {
+      ...snapshot,
+      agents: [
+        { ...firstAgent, pendingPermissions: [first] },
+        { ...secondAgent, pendingPermissions: [second] },
+      ],
+    };
+    const gateway = new FakePaseoGateway(fixture);
+    const app = new ApplicationController(gateway);
+    await app.start();
+
+    await app.handleIntent({ type: "open-permissions" });
+    expect(app.state.selectedAgentId).toBe("agent-1");
+    expect(app.state.modal).toMatchObject({ requestId: "p1", queueIndex: 0 });
+    await app.handleIntent({ type: "move-permission", direction: 1 });
+    expect(app.state.selectedAgentId).toBe("agent-2");
+    expect(app.state.modal).toMatchObject({ requestId: "p2", queueIndex: 1 });
+
+    await app.handleIntent({
+      type: "respond-permission",
+      agentId: "agent-2",
+      requestId: "p2",
+      allow: true,
+    });
+    expect(app.state.modal).toMatchObject({ submitting: true, requestId: "p2" });
+    expect(app.state.directory.agents[1]?.pendingPermissions).toEqual([second]);
+
+    gateway.emitTimeline("agent-2", {
+      type: "event",
+      agentId: "agent-2",
+      event: {
+        epoch: "epoch-1",
+        sequence: 1,
+        item: { id: "permission:p2", type: "permission", request: second, resolved: true },
+      },
+    });
+    await Promise.resolve();
+    expect(app.state.directory.agents[1]?.pendingPermissions).toEqual([]);
+    expect(app.state.modal).toMatchObject({ requestId: "p1", queueIndex: 0 });
+    expect(app.state.selectedAgentId).toBe("agent-1");
+  });
+
+  it("keeps a failed permission available for an explicit retry using the same decision", async () => {
+    const request = { id: "p1", agentId: "agent-1", title: "Review" };
+    const agent = snapshot.agents[0];
+    if (!agent) throw new Error("fixture requires an agent");
+    const gateway = new FailingPermissionGateway({
+      ...snapshot,
+      agents: [{ ...agent, pendingPermissions: [request] }, ...snapshot.agents.slice(1)],
+    });
+    const app = new ApplicationController(gateway);
+    await app.start();
+    await app.handleIntent({ type: "open-permissions" });
+    await app.handleIntent({
+      type: "respond-permission",
+      agentId: "agent-1",
+      requestId: "p1",
+      allow: false,
+    });
+
+    expect(app.state.modal).toMatchObject({
+      type: "permission",
+      requestId: "p1",
+      submitting: false,
+      lastDecision: "deny",
+      error: expect.stringContaining("response failed"),
+    });
+    expect(app.state.directory.agents[0]?.pendingPermissions).toEqual([request]);
+    gateway.shouldFail = false;
+    await app.handleIntent({
+      type: "retry-permission",
+      agentId: "agent-1",
+      requestId: "p1",
+      allow: false,
+    });
+    expect(gateway.commands.at(-1)).toEqual({
+      type: "respond-permission",
+      agentId: "agent-1",
+      requestId: "p1",
+      allow: false,
+    });
+    expect(app.state.directory.agents[0]?.pendingPermissions).toEqual([request]);
   });
 
   it("preserves selected tree context through refresh and reconnect snapshots", async () => {
@@ -450,6 +555,18 @@ describe("ApplicationController", () => {
     expect(gateway.commands).toEqual([]);
   });
 });
+
+class FailingPermissionGateway extends FakePaseoGateway {
+  shouldFail = true;
+
+  override async execute(command: import("../contracts/commands.js").AgentCommand) {
+    if (command.type === "respond-permission" && this.shouldFail) {
+      this.commands.push(command);
+      throw new Error("response failed");
+    }
+    return super.execute(command);
+  }
+}
 
 class DeferredFocusGateway extends FakePaseoGateway {
   readonly focusReleases: string[] = [];

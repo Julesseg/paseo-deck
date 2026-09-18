@@ -1234,6 +1234,57 @@ describe("DeckTui viewport and focus", () => {
     await deck.stop();
   });
 
+  it("renders only the display-safe permission context supplied to the UI", async () => {
+    const terminal = new RecordingTerminal(100, 16);
+    const base = state();
+    const permissionState: AppState = {
+      ...base,
+      directory: {
+        ...base.directory,
+        agents: [
+          {
+            id: "agent",
+            workspaceId: "workspace",
+            title: "Review",
+            status: "running",
+            availableModeIds: [],
+            availableThinkingLevels: [],
+            pendingPermissions: [
+              {
+                id: "permission-token=secret-request-id",
+                agentId: "agent",
+                title: "Run command",
+                operation: "shell",
+                arguments: ["command: curl -H Authorization: Bearer [redacted]"],
+                description: "password=[redacted]",
+              },
+            ],
+            needsAttention: true,
+            archived: false,
+          },
+        ],
+      },
+      selectedAgentId: "agent",
+      modal: {
+        type: "permission",
+        agentId: "agent",
+        requestId: "permission-token=secret-request-id",
+        queueIndex: 0,
+        submitting: false,
+      },
+    };
+    const deck = new DeckTui(terminal, base, () => undefined);
+
+    deck.start();
+    deck.update(permissionState);
+    await terminal.waitForRender();
+    const rendered = terminal.viewport().join("\n");
+    expect(rendered).toContain("[redacted]");
+    expect(rendered).not.toContain("secret-password");
+    expect(rendered).not.toContain("secret-request-id");
+    await deck.stop();
+  });
+
   it("batches streamed redraws while rendering the latest delta and focus change promptly", async () => {
     const terminal = new RecordingTerminal(80, 16);
     const clock = new FakeRenderClock();

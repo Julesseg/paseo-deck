@@ -75,13 +75,15 @@ describe("DeckController keyboard seam", () => {
 
   it("emits explicit allow and deny permission intents", () => {
     const intents: unknown[] = [];
-    const permission = { id: "permission", agentId: "a", title: "Read file" };
     const controller = new DeckController(
       () => ({
         ...makeState(),
         modal: {
           type: "permission",
-          request: permission,
+          agentId: "a",
+          requestId: "permission",
+          queueIndex: 0,
+          submitting: false,
         },
       }),
       (intent) => intents.push(intent),
@@ -102,6 +104,56 @@ describe("DeckController keyboard seam", () => {
       requestId: "permission",
       allow: false,
     });
+  });
+
+  it("navigates a permission queue and retries only an explicit failed decision", () => {
+    const intents: unknown[] = [];
+    const controller = new DeckController(
+      () => ({
+        ...makeState(),
+        modal: {
+          type: "permission",
+          agentId: "a",
+          requestId: "permission",
+          queueIndex: 0,
+          submitting: false,
+          error: "offline",
+          lastDecision: "deny",
+        },
+      }),
+      (intent) => intents.push(intent),
+    );
+
+    controller.handleKey("h");
+    controller.handleKey("l");
+    controller.handleKey("r");
+
+    expect(intents).toEqual([
+      { type: "move-permission", direction: -1 },
+      { type: "move-permission", direction: 1 },
+      { type: "retry-permission", agentId: "a", requestId: "permission", allow: false },
+    ]);
+  });
+
+  it("cancels a permission dialog without sending a decision", () => {
+    const intents: unknown[] = [];
+    const controller = new DeckController(
+      () => ({
+        ...makeState(),
+        modal: {
+          type: "permission",
+          agentId: "a",
+          requestId: "permission",
+          queueIndex: 0,
+          submitting: false,
+        },
+      }),
+      (intent) => intents.push(intent),
+    );
+
+    controller.handleKey("\u001b");
+
+    expect(intents).toEqual([{ type: "close-modal" }]);
   });
 
   it("starts provider/model creation only for a selected workspace", () => {

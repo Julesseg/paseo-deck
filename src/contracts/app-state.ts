@@ -2,7 +2,6 @@ import type {
   AgentRecord,
   ConnectionState,
   DirectorySnapshot,
-  PermissionRequest,
   TimelineCursor,
   TimelineEvent,
   UsageSummary,
@@ -21,7 +20,15 @@ export type ModalState =
       agentId: string;
       draftWarning?: boolean;
     }
-  | { type: "permission"; request: PermissionRequest }
+  | {
+      type: "permission";
+      agentId: string;
+      requestId: string;
+      queueIndex: number;
+      submitting: boolean;
+      lastDecision?: "allow" | "deny";
+      error?: string;
+    }
   | {
       type: "create-agent";
       workspaceId: string;

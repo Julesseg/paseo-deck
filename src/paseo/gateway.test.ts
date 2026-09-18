@@ -328,6 +328,116 @@ describe("ProductionPaseoGateway", () => {
     ]);
   });
 
+  it("projects permission requests through a narrow display-safe boundary", async () => {
+    const fixture = testClient();
+    const gateway = new ProductionPaseoGateway({
+      host: "127.0.0.1:6767",
+      createClient: () => fixture.client as never,
+    });
+    await gateway.connect();
+    const seen: unknown[] = [];
+    await gateway.focusAgent("agent-1", (update) => seen.push(update));
+
+    fixture.emitTimeline({
+      epoch: "epoch-1",
+      seq: 2,
+      event: {
+        type: "permission_requested",
+        request: {
+          id: "permission-token=secret-request-id",
+          title: "Run Bearer secret-title",
+          operation: "shell --token secret-operation",
+          name: "name?apiKey=secret-name",
+          provider: "Bearer secret-provider",
+          kind: "kind password=secret-kind",
+          cwd: "/safe/workspace?token=secret-cwd",
+          arguments: {
+            command:
+              "curl -H 'Authorization: Bearer secret-header' https://user:secret-url@example.test/?token=secret-query",
+            token: "never-project-this",
+            metadata: { token: "nested-secret" },
+          },
+          description: 'payload {"apiKey":"secret-json"} password=secret-inline',
+          detail: {
+            type: "shell authorization secret-detail",
+            filePath: "/tmp?token=secret-path",
+            shell: { command: "echo --secret secret-command" },
+          },
+          actions: [
+            {
+              id: "action-token=secret-action-id",
+              label: "Bearer secret-action-label",
+              behavior: "password=secret-action-behavior",
+            },
+          ],
+          raw: { input: "private prompt", metadata: { token: "secret" } },
+          input: "private input",
+          content: "private content",
+          log: "private log",
+          token: "private token",
+        },
+      },
+    });
+
+    expect(seen).toContainEqual({
+      type: "event",
+      agentId: "agent-1",
+      event: expect.objectContaining({
+        item: expect.objectContaining({
+          type: "permission",
+          request: expect.objectContaining({
+            id: "permission-token=secret-request-id",
+            operation: "shell --token [redacted]",
+            workingDirectory: "/safe/workspace?token=[redacted]",
+            arguments: [
+              "command: curl -H 'Authorization: Bearer [redacted]' https://[redacted]@example.test/?token=[redacted]",
+            ],
+          }),
+        }),
+      }),
+    });
+    const projectedRequest = (
+      seen.at(-1) as {
+        event: { item: { request: { id: string; actions?: readonly { id: string }[] } } };
+      }
+    ).event.item.request;
+    expect(projectedRequest.id).toBe("permission-token=secret-request-id");
+    expect(projectedRequest.actions?.[0]?.id).toBe("action-token=secret-action-id");
+    await gateway.execute({
+      type: "respond-permission",
+      agentId: "agent-1",
+      requestId: projectedRequest.id,
+      allow: true,
+    });
+    expect(fixture.agent.respondToPermission).toHaveBeenCalledWith({
+      requestId: "permission-token=secret-request-id",
+      response: { behavior: "allow" },
+    });
+    const serialized = JSON.stringify({ ...projectedRequest, id: undefined, actions: undefined });
+    expect(serialized).not.toContain("private prompt");
+    expect(serialized).not.toContain("private input");
+    expect(serialized).not.toContain("private content");
+    expect(serialized).not.toContain("private log");
+    expect(serialized).not.toContain("private token");
+    expect(serialized).not.toContain("never-project-this");
+    expect(serialized).not.toContain("secret-header");
+    expect(serialized).not.toContain("secret-url");
+    expect(serialized).not.toContain("secret-query");
+    expect(serialized).not.toContain("secret-json");
+    expect(serialized).not.toContain("secret-inline");
+    expect(serialized).not.toContain("secret-title");
+    expect(serialized).not.toContain("secret-operation");
+    expect(serialized).not.toContain("secret-name");
+    expect(serialized).not.toContain("secret-provider");
+    expect(serialized).not.toContain("secret-kind");
+    expect(serialized).not.toContain("secret-cwd");
+    expect(serialized).not.toContain("secret-detail");
+    expect(serialized).not.toContain("secret-path");
+    expect(serialized).not.toContain("secret-command");
+    expect(serialized).not.toContain("secret-action-label");
+    expect(serialized).not.toContain("secret-action-behavior");
+  });
+
   it("recovers after the newest buffered cursor instead of replaying it on restoration", async () => {
     const fixture = testClient();
     fixture.timeline.refetch

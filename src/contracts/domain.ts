@@ -34,10 +34,17 @@ export type AgentStatus =
 export interface PermissionRequest {
   id: string;
   agentId: string;
+  provider?: string;
+  name?: string;
+  kind?: string;
   title: string;
+  /** Display-safe operation name derived at the gateway boundary. */
+  operation?: string;
+  workingDirectory?: string;
+  arguments?: readonly string[];
+  actions?: readonly { id: string; label: string; behavior?: string }[];
   description?: string;
   choices?: readonly string[];
-  raw?: unknown;
 }
 
 export interface AgentRecord {
