@@ -207,7 +207,14 @@ function mergeItem(current: TimelineItem, incoming: TimelineItem): TimelineItem 
     incoming.type === "assistant-message" &&
     current.messageId === incoming.messageId
   ) {
-    return { ...incoming, text: mergeText(current.text, incoming.text) };
+    return {
+      ...current,
+      ...incoming,
+      text: mergeText(current.text, incoming.text),
+      ...(incoming.streaming === undefined && current.streaming !== undefined
+        ? { streaming: current.streaming }
+        : {}),
+    };
   }
   if (current.type === "tool" && incoming.type === "tool" && current.callId === incoming.callId) {
     const output = incoming.output ?? current.output;
@@ -219,7 +226,33 @@ function mergeItem(current: TimelineItem, incoming: TimelineItem): TimelineItem 
       ...(summary !== undefined ? { summary } : {}),
     };
   }
+  if (current.type === "turn" && incoming.type === "turn" && current.id === incoming.id) {
+    const startedAt = current.startedAt ?? incoming.startedAt;
+    const completedAt = incoming.completedAt ?? current.completedAt;
+    const durationMs =
+      durationBetween(startedAt, completedAt) ?? incoming.durationMs ?? current.durationMs;
+    return {
+      ...current,
+      ...incoming,
+      ...(startedAt === undefined ? {} : { startedAt }),
+      ...(completedAt === undefined ? {} : { completedAt }),
+      ...(durationMs === undefined ? {} : { durationMs }),
+      ...(incoming.detail === undefined && current.detail !== undefined
+        ? { detail: current.detail }
+        : {}),
+    };
+  }
   return undefined;
+}
+
+function durationBetween(
+  startedAt: string | undefined,
+  completedAt: string | undefined,
+): number | undefined {
+  if (startedAt === undefined || completedAt === undefined) return undefined;
+  const start = Date.parse(startedAt);
+  const end = Date.parse(completedAt);
+  return Number.isNaN(start) || Number.isNaN(end) || end < start ? undefined : end - start;
 }
 
 function appendTimeline(
@@ -228,17 +261,42 @@ function appendTimeline(
   consumed: ReadonlySet<string>,
 ): readonly TimelineEvent[] {
   if (consumed.has(eventKey(event))) return items;
-  const mergeAt = items.findIndex((current) => mergeItem(current.item, event.item) !== undefined);
+  const cleared = terminalTurn(event.item)
+    ? items.map((current) =>
+        current.item.type === "assistant-message" && current.item.turnId === event.item.id
+          ? { ...current, item: { ...current.item, streaming: false } }
+          : current,
+      )
+    : items;
+  const associated = associateAssistant(cleared, event);
+  const mergeAt = cleared.findIndex(
+    (current) => mergeItem(current.item, associated.item) !== undefined,
+  );
   if (mergeAt !== -1) {
-    const current = items.at(mergeAt);
-    const merged = current ? mergeItem(current.item, event.item) : undefined;
+    const current = cleared.at(mergeAt);
+    const merged = current ? mergeItem(current.item, associated.item) : undefined;
     if (current && merged) {
-      return items.map((item, index) => (index === mergeAt ? { ...current, item: merged } : item));
+      return cleared.map((item, index) =>
+        index === mergeAt ? { ...current, item: merged } : item,
+      );
     }
   }
-  return [...items, event].sort(
+  return [...cleared, associated].sort(
     (left, right) => left.epoch.localeCompare(right.epoch) || left.sequence - right.sequence,
   );
+}
+
+function terminalTurn(item: TimelineItem): item is Extract<TimelineItem, { type: "turn" }> {
+  return item.type === "turn" && item.status !== "started";
+}
+
+function associateAssistant(items: readonly TimelineEvent[], event: TimelineEvent): TimelineEvent {
+  if (event.item.type !== "assistant-message") return event;
+  const open = [...items]
+    .reverse()
+    .find((candidate) => candidate.item.type === "turn" && candidate.item.status === "started");
+  if (open?.item.type !== "turn") return event;
+  return { ...event, item: { ...event.item, turnId: open.item.id, streaming: true } };
 }
 
 function consumedOf(timeline: AppState["timeline"]): ReadonlySet<string> {

@@ -218,11 +218,17 @@ export function timelineItemDisplay(
   const body = (value: string): string[] =>
     wrapTerminalText(value, bodyWidth).map((line) => clipTerminalLine(`  ${line}`, width));
   const heading = (value: string): string => clipTerminalLine(sanitizeTerminalText(value), width);
+  const stamp = item.timestamp ? ` · ${item.timestamp.slice(11, 16)}` : "";
+  const duration = (value: number | undefined): string =>
+    value === undefined ? "" : ` · ${(value / 1000).toFixed(1)}s`;
   switch (item.type) {
     case "user-message":
-      return [heading("You"), ...body(item.text)];
+      return [heading(`You${stamp}`), ...body(item.text)];
     case "assistant-message":
-      return [heading("Assistant"), ...body(item.text)];
+      return [
+        heading(`Assistant${item.streaming ? " · streaming…" : ""}${stamp}`),
+        ...body(item.text),
+      ];
     case "reasoning": {
       const collapsed = item.collapsed ?? item.text.length > 180;
       if (collapsed && !expanded)
@@ -230,26 +236,43 @@ export function timelineItemDisplay(
           heading("Reasoning (collapsed)  [Enter to expand]"),
           ...body(item.text.replaceAll("\n", " ")).slice(0, 1),
         ];
-      return [heading("Reasoning"), ...body(item.text)];
+      return [heading(`Reasoning${stamp}`), ...body(item.text)];
     }
     case "tool": {
-      const summary = item.summary ?? item.output ?? "";
-      if (!expanded && summary.length > 180)
+      const output = item.output ?? item.summary ?? "";
+      const summary = item.summary ?? output.split("\n")[0] ?? "";
+      if (!expanded && output.length > 180)
         return [
-          heading(`Tool ${item.status}: ${item.name}  [Enter to expand]`),
-          ...body(summary).slice(0, 1),
+          heading(
+            `Tool ${item.status}: ${item.name}${duration(item.durationMs)}${item.failureSummary ? ` · ${item.failureSummary}` : ""}  [Enter to expand]`,
+          ),
+          ...body(summary || "No output").slice(0, 1),
         ];
-      return [heading(`Tool ${item.status}: ${item.name}`), ...body(summary || "No output")];
+      return [
+        heading(
+          `Tool ${item.status}: ${item.name}${duration(item.durationMs)}${item.failureSummary ? ` · ${item.failureSummary}` : ""}`,
+        ),
+        ...body(output || "No output"),
+      ];
     }
     case "error":
-      return [heading(`Error: ${item.message}`), ...(item.detail ? body(item.detail) : [])];
+      return [
+        heading(
+          `Error: ${item.message}${item.detail && !expanded ? "  [Enter to expand]" : ""}${stamp}`,
+        ),
+        ...(item.detail ? (expanded ? body(item.detail) : body(item.detail).slice(0, 1)) : []),
+      ];
     case "permission":
       return [
         heading(`Permission ${item.resolved ? "resolved" : "needed"}: ${item.request.title}`),
         ...(item.request.description ? body(item.request.description) : []),
       ];
     case "turn":
-      return [heading(`Turn ${item.status}${item.detail ? `: ${item.detail}` : ""}`)];
+      return [
+        heading(
+          `── Turn ${item.status}${duration(item.durationMs)}${(item.completedAt ?? item.startedAt) ? ` · ${(item.completedAt ?? item.startedAt)?.slice(11, 16)}` : ""}${item.detail ? `: ${item.detail}` : ""} ──`,
+        ),
+      ];
     case "unknown":
       return [heading(`Unknown ${item.sourceType}: ${item.summary}`)];
   }

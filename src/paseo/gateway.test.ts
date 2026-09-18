@@ -410,6 +410,71 @@ describe("ProductionPaseoGateway", () => {
     });
   });
 
+  it("projects only source-provided timeline timing, tool failure, and streaming fields", async () => {
+    const fixture = testClient();
+    const gateway = new ProductionPaseoGateway({
+      host: "127.0.0.1:6767",
+      createClient: () => fixture.client as never,
+    });
+    await gateway.connect();
+    const updates: Array<Record<string, unknown>> = [];
+    await gateway.focusAgent("agent-1", (update) => updates.push(update as never));
+
+    fixture.emitTimeline({
+      epoch: "epoch-1",
+      seq: 1,
+      timestamp: "2026-09-18T10:00:00Z",
+      event: {
+        type: "timeline",
+        item: {
+          type: "assistant_message",
+          messageId: "m1",
+          text: "partial",
+        },
+      },
+    });
+    fixture.emitTimeline({
+      epoch: "epoch-1",
+      seq: 2,
+      timestamp: "2026-09-18T10:00:01Z",
+      event: {
+        type: "timeline",
+        item: {
+          type: "tool_call",
+          callId: "call-1",
+          name: "git",
+          status: "failed",
+          error: "permission denied",
+          detail: { type: "fetch", url: "https://example.test", result: "bad", durationMs: 1200 },
+        },
+      },
+    });
+    fixture.emitTimeline({
+      event: {
+        type: "turn_completed",
+        turnId: "turn-1",
+      },
+      timestamp: "2026-09-18T10:00:03Z",
+    });
+
+    const items = updates
+      .filter((update) => update.type === "event")
+      .map((update) => (update.event as { item: unknown }).item);
+    expect(items).toContainEqual(
+      expect.objectContaining({ type: "assistant-message", timestamp: "2026-09-18T10:00:00Z" }),
+    );
+    expect(items).toContainEqual(
+      expect.objectContaining({
+        type: "tool",
+        durationMs: 1200,
+        failureSummary: "permission denied",
+      }),
+    );
+    expect(items).toContainEqual(
+      expect.objectContaining({ type: "turn", completedAt: "2026-09-18T10:00:03Z" }),
+    );
+  });
+
   it("does not deliver late hydration after closing the focused observation", async () => {
     const page = deferred<Record<string, unknown>>();
     const fixture = testClient({ page: page.promise });

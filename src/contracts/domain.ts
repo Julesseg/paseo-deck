@@ -102,12 +102,19 @@ export interface TimelineCursor {
 
 interface TimelineBase {
   id: string;
+  timestamp?: string;
   raw?: unknown;
 }
 
 export type TimelineItem =
   | (TimelineBase & { type: "user-message"; text: string })
-  | (TimelineBase & { type: "assistant-message"; messageId: string; text: string })
+  | (TimelineBase & {
+      type: "assistant-message";
+      messageId: string;
+      text: string;
+      streaming?: boolean;
+      turnId?: string;
+    })
   | (TimelineBase & { type: "reasoning"; text: string; collapsed?: boolean })
   | (TimelineBase & {
       type: "tool";
@@ -116,6 +123,8 @@ export type TimelineItem =
       status: "running" | "completed" | "failed" | "canceled";
       summary?: string;
       output?: string;
+      durationMs?: number;
+      failureSummary?: string;
     })
   | (TimelineBase & { type: "error"; message: string; detail?: string })
   | (TimelineBase & { type: "permission"; request: PermissionRequest; resolved?: boolean })
@@ -123,6 +132,9 @@ export type TimelineItem =
       type: "turn";
       status: "started" | "completed" | "failed" | "canceled";
       detail?: string;
+      startedAt?: string;
+      completedAt?: string;
+      durationMs?: number;
     })
   | (TimelineBase & { type: "unknown"; sourceType: string; summary: string });
 

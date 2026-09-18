@@ -152,7 +152,12 @@ class TimelineItemView implements Component {
       (this.item.type === "user-message" || this.item.type === "assistant-message")
     )
       return [
-        clipTerminalLine(this.item.type === "user-message" ? "You" : "Assistant", width),
+        clipTerminalLine(
+          this.item.type === "user-message"
+            ? `You${this.item.timestamp ? ` · ${this.item.timestamp.slice(11, 16)}` : ""}`
+            : `Assistant${this.item.streaming ? " · streaming…" : ""}${this.item.timestamp ? ` · ${this.item.timestamp.slice(11, 16)}` : ""}`,
+          width,
+        ),
         ...this.markdown.render(width).map((line) => clipTerminalLine(line, width)),
       ];
     return timelineItemDisplay(this.item, width, this.expanded);

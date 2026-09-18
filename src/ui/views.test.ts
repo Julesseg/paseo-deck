@@ -176,6 +176,73 @@ describe("creation prompt", () => {
 });
 
 describe("DeckTui viewport and focus", () => {
+  it("renders Markdown assistant streaming and timestamp metadata", async () => {
+    const terminal = new RecordingTerminal(80, 14);
+    const deck = new DeckTui(
+      terminal,
+      {
+        ...state(),
+        timeline: {
+          loading: false,
+          items: [
+            {
+              epoch: "e",
+              sequence: 1,
+              item: {
+                id: "assistant",
+                type: "assistant-message",
+                messageId: "m",
+                text: "**partial**",
+                streaming: true,
+                timestamp: "2026-09-18T10:01:00Z",
+              },
+            },
+          ],
+        },
+      },
+      () => undefined,
+    );
+    deck.start();
+    await terminal.waitForRender();
+    await deck.stop();
+    expect(terminal.viewport().join("\n")).toContain("Assistant · streaming… · 10:01");
+  });
+
+  it("renders fenced assistant code through the terminal while preserving its whitespace", async () => {
+    const terminal = new RecordingTerminal(80, 14);
+    const deck = new DeckTui(
+      terminal,
+      {
+        ...state(),
+        timeline: {
+          loading: false,
+          items: [
+            {
+              epoch: "e",
+              sequence: 1,
+              item: {
+                id: "assistant-code",
+                type: "assistant-message",
+                messageId: "m",
+                text: "```ts\n  const answer = 1;\n  return answer;\n```",
+                timestamp: "2026-09-18T10:01:00Z",
+              },
+            },
+          ],
+        },
+      },
+      () => undefined,
+    );
+    deck.start();
+    await terminal.waitForRender();
+    await deck.stop();
+
+    const viewport = terminal.viewport().join("\n");
+    expect(viewport).toContain("Assistant · 10:01");
+    expect(viewport).toContain("  const answer = 1;");
+    expect(viewport).toContain("  return answer;");
+  });
+
   it("keeps a streaming timeline following its newest content", async () => {
     const terminal = new RecordingTerminal(80, 12);
     const deck = new DeckTui(terminal, { ...state(), focus: "timeline" }, () => undefined);

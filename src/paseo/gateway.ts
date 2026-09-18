@@ -279,7 +279,7 @@ export class ProductionPaseoGateway implements PaseoGateway {
       const epoch = stringValue(message.epoch) ?? activeEpoch ?? "live";
       const wireSequence = numberValue(message.seq);
       const sequence = wireSequence ?? syntheticControlSequence(epoch, cursor, ++syntheticSequence);
-      const event = timelineEvent(epoch, sequence, stream, agentId);
+      const event = timelineEvent(epoch, sequence, stream, agentId, sourceTimestamp(message));
       if (event === undefined) return;
       activeEpoch = epoch;
       // Control events such as turn_started and turn_completed intentionally
@@ -773,7 +773,9 @@ function timelineEntries(page: UnknownRecord, epoch: string, agentId: string): T
   return recordEntries(page).flatMap((entry) => {
     const item = timelineItem(asRecord(entry.item) ?? {}, agentId);
     const sequence = numberValue(entry.seqEnd) ?? numberValue(entry.seqStart);
-    return item === undefined || sequence === undefined ? [] : [{ epoch, sequence, item }];
+    return item === undefined || sequence === undefined
+      ? []
+      : [{ epoch, sequence, item: timestamped(item, sourceTimestamp(entry)) }];
   });
 }
 
@@ -782,27 +784,34 @@ function timelineEvent(
   sequence: number,
   stream: UnknownRecord,
   agentId: string,
+  timestamp?: string,
 ): TimelineEvent | undefined {
   const item =
     stream.type === "timeline"
       ? timelineItem(asRecord(stream.item) ?? {}, agentId)
-      : streamItem(stream, agentId);
-  return item === undefined ? undefined : { epoch, sequence, item };
+      : streamItem(stream, agentId, timestamp);
+  return item === undefined ? undefined : { epoch, sequence, item: timestamped(item, timestamp) };
 }
 
-function streamItem(stream: UnknownRecord, agentId: string): TimelineItem | undefined {
+function streamItem(
+  stream: UnknownRecord,
+  agentId: string,
+  timestamp: string | undefined,
+): TimelineItem | undefined {
   switch (stream.type) {
     case "turn_started":
       return {
         id: `turn:${agentId}:${stringValue(stream.turnId) ?? "current"}`,
         type: "turn",
         status: "started",
+        ...(timestamp === undefined ? {} : { startedAt: timestamp }),
       };
     case "turn_completed":
       return {
         id: `turn:${agentId}:${stringValue(stream.turnId) ?? "current"}`,
         type: "turn",
         status: "completed",
+        ...(timestamp === undefined ? {} : { completedAt: timestamp }),
       };
     case "turn_failed":
       return {
@@ -810,6 +819,7 @@ function streamItem(stream: UnknownRecord, agentId: string): TimelineItem | unde
         type: "turn",
         status: "failed",
         detail: String(stream.error ?? ""),
+        ...(timestamp === undefined ? {} : { completedAt: timestamp }),
       };
     case "turn_canceled":
       return {
@@ -817,6 +827,7 @@ function streamItem(stream: UnknownRecord, agentId: string): TimelineItem | unde
         type: "turn",
         status: "canceled",
         detail: String(stream.reason ?? ""),
+        ...(timestamp === undefined ? {} : { completedAt: timestamp }),
       };
     case "permission_requested":
       return {
@@ -858,22 +869,15 @@ function timelineItem(value: UnknownRecord, agentId: string): TimelineItem | und
       text: String(value.text ?? ""),
       collapsed: true,
     };
-  if (type === "tool_call")
-    return {
-      id: `tool:${String(value.callId)}`,
-      type: "tool",
-      callId: String(value.callId),
-      name: String(value.name ?? "tool"),
-      status: toolStatus(value.status),
-      ...(stringValue(asRecord(value.detail)?.output) === undefined
-        ? {}
-        : { output: stringValue(asRecord(value.detail)?.output) as string }),
-    };
+  if (type === "tool_call") return toolTimelineItem(value);
   if (type === "error")
     return {
       id: `error:${String(value.message)}`,
       type: "error",
       message: String(value.message ?? "Unknown error"),
+      ...(stringValue(value.detail ?? value.error) === undefined
+        ? {}
+        : { detail: stringValue(value.detail ?? value.error) as string }),
     };
   if (type === "permission")
     return {
@@ -888,6 +892,63 @@ function timelineItem(value: UnknownRecord, agentId: string): TimelineItem | und
     summary: String(value.message ?? value.text ?? type),
     raw: value,
   };
+}
+
+function toolTimelineItem(value: UnknownRecord): TimelineItem {
+  const detail = asRecord(value.detail) ?? {};
+  const type = stringValue(detail.type);
+  const output =
+    type === "shell"
+      ? stringValue(detail.output)
+      : type === "read" || type === "edit" || type === "write"
+        ? stringValue(detail.content ?? detail.unifiedDiff)
+        : type === "search"
+          ? stringValue(detail.content)
+          : type === "fetch"
+            ? stringValue(detail.result)
+            : type === "worktree_setup" || type === "sub_agent"
+              ? stringValue(detail.log)
+              : type === "plain_text" || type === "plan"
+                ? stringValue(detail.text)
+                : type === "unknown"
+                  ? stringValue(detail.output)
+                  : undefined;
+  const durationMs =
+    type === "search" || type === "fetch" ? numberValue(detail.durationMs) : undefined;
+  const summary =
+    type === "shell"
+      ? stringValue(detail.command)
+      : type === "read" || type === "edit" || type === "write"
+        ? stringValue(detail.filePath)
+        : type === "search"
+          ? stringValue(detail.query)
+          : type === "fetch"
+            ? stringValue(detail.url)
+            : type === "sub_agent"
+              ? stringValue(detail.description)
+              : type === "plain_text"
+                ? stringValue(detail.label)
+                : undefined;
+  const failureSummary = stringValue(value.error);
+  return {
+    id: `tool:${String(value.callId)}`,
+    type: "tool",
+    callId: String(value.callId),
+    name: String(value.name ?? "tool"),
+    status: toolStatus(value.status),
+    ...(summary === undefined ? {} : { summary }),
+    ...(output === undefined ? {} : { output }),
+    ...(durationMs === undefined ? {} : { durationMs }),
+    ...(failureSummary === undefined ? {} : { failureSummary }),
+  };
+}
+
+function sourceTimestamp(value: UnknownRecord): string | undefined {
+  return stringValue(value.timestamp);
+}
+
+function timestamped(item: TimelineItem, timestamp: string | undefined): TimelineItem {
+  return timestamp === undefined ? item : { ...item, timestamp };
 }
 
 function permissionRequest(value: UnknownRecord, agentId: string): PermissionRequest {

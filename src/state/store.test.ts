@@ -314,6 +314,65 @@ describe("application store", () => {
     expect(state.timeline.cursor).toEqual({ epoch: "epoch-1", sequence: 4 });
   });
 
+  it("merges stable turn updates without losing trusted start timing", () => {
+    let state = reduceApp(createInitialState(), { type: "select-agent", agentId: "agent-a" });
+    state = reduceApp(state, {
+      type: "timeline",
+      update: {
+        type: "event",
+        agentId: "agent-a",
+        event: event(1, {
+          type: "turn",
+          id: "turn:agent-a:turn-1",
+          status: "started",
+          startedAt: "2026-09-18T10:00:00Z",
+        }),
+      },
+    });
+    state = reduceApp(state, {
+      type: "timeline",
+      update: {
+        type: "event",
+        agentId: "agent-a",
+        event: event(2, {
+          type: "turn",
+          id: "turn:agent-a:turn-1",
+          status: "completed",
+          completedAt: "2026-09-18T10:00:03Z",
+        }),
+      },
+    });
+
+    expect(state.timeline.items).toEqual([
+      expect.objectContaining({
+        item: expect.objectContaining({
+          status: "completed",
+          startedAt: "2026-09-18T10:00:00Z",
+          completedAt: "2026-09-18T10:00:03Z",
+          durationMs: 3000,
+        }),
+      }),
+    ]);
+  });
+
+  it("marks only assistants in an open turn as streaming and clears them on its terminal event", () => {
+    let state = reduceApp(createInitialState(), { type: "select-agent", agentId: "agent-a" });
+    const send = (sequence: number, item: TimelineEvent["item"]) => {
+      state = reduceApp(state, {
+        type: "timeline",
+        update: { type: "event", agentId: "agent-a", event: event(sequence, item) },
+      });
+    };
+    send(1, { id: "turn:agent-a:one", type: "turn", status: "started" });
+    send(2, { id: "assistant", type: "assistant-message", messageId: "m1", text: "partial" });
+    expect(state.timeline.items[1]?.item).toMatchObject({
+      streaming: true,
+      turnId: "turn:agent-a:one",
+    });
+    send(3, { id: "turn:agent-a:one", type: "turn", status: "completed" });
+    expect(state.timeline.items[1]?.item).toMatchObject({ streaming: false });
+  });
+
   it("does not replay a consumed cursor after assistant and tool coalescing", () => {
     let state = reduceApp(createInitialState(), { type: "select-agent", agentId: "agent-a" });
     const update = (sequence: number, item: TimelineEvent["item"]) =>

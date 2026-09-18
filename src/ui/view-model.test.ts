@@ -3,7 +3,12 @@ import { describe, expect, it } from "vitest";
 import type { AppState } from "../contracts/app-state.js";
 import { emptyDirectory } from "../contracts/app-state.js";
 import { terminalDisplayWidth } from "./text-safety.js";
-import { deriveTreeRows, renderDashboard, timelineDisplay } from "./view-model.js";
+import {
+  deriveTreeRows,
+  renderDashboard,
+  timelineDisplay,
+  timelineItemDisplay,
+} from "./view-model.js";
 
 function state(): AppState {
   return {
@@ -255,6 +260,62 @@ describe("tree view model", () => {
 });
 
 describe("timeline display", () => {
+  it.each([
+    [
+      { id: "user", type: "user-message", text: "hello", timestamp: "2026-09-18T10:00:00Z" },
+      "You · 10:00",
+    ],
+    [
+      {
+        id: "assistant",
+        type: "assistant-message",
+        messageId: "m",
+        text: "partial",
+        streaming: true,
+        timestamp: "2026-09-18T10:01:00Z",
+      },
+      "streaming…",
+    ],
+    [{ id: "reason", type: "reasoning", text: "x".repeat(200) }, "collapsed"],
+    [
+      {
+        id: "tool",
+        type: "tool",
+        callId: "c",
+        name: "git",
+        status: "failed",
+        durationMs: 1200,
+        failureSummary: "denied",
+        output: "line one\n  line two",
+      },
+      "git · 1.2s · denied",
+    ],
+    [{ id: "error", type: "error", message: "bad", detail: "details" }, "Enter to expand"],
+    [
+      { id: "permission", type: "permission", request: { id: "p", agentId: "a", title: "Read" } },
+      "Permission needed",
+    ],
+    [
+      {
+        id: "turn",
+        type: "turn",
+        status: "completed",
+        startedAt: "2026-09-18T10:00:00Z",
+        completedAt: "2026-09-18T10:00:03Z",
+        durationMs: 3000,
+      },
+      "Turn completed · 3.0s · 10:00",
+    ],
+    [
+      { id: "unknown", type: "unknown", sourceType: "new", summary: "payload" },
+      "Unknown new: payload",
+    ],
+  ] as const)("renders %s safely", (item, expected) => {
+    expect(
+      timelineDisplay([{ epoch: "e", sequence: 1, item }], 80, new Set()).join("\n"),
+    ).toContain(expected);
+  });
+
   it("renders unknown events safely and collapses long reasoning by default", () => {
     const lines = timelineDisplay(
       [
@@ -271,6 +332,39 @@ describe("timeline display", () => {
 
     expect(lines.join("\n")).toContain("Unknown new: payload");
     expect(lines.join("\n")).toContain("Reasoning (collapsed)");
+  });
+
+  it("expands long reasoning, tool output, and error details without losing useful content", () => {
+    const longReasoning = timelineItemDisplay(
+      { id: "reason", type: "reasoning", text: "thinking ".repeat(40) },
+      80,
+      true,
+    ).join("\n");
+    const longTool = {
+      id: "tool",
+      type: "tool" as const,
+      callId: "call",
+      name: "shell",
+      status: "completed" as const,
+      summary: "short summary",
+      output: `first line\n  ${"indented output ".repeat(20)}\n  final indented line`,
+    };
+    const collapsedTool = timelineItemDisplay(longTool, 80, false).join("\n");
+    const expandedTool = timelineItemDisplay(longTool, 80, true).join("\n");
+    const expandedError = timelineItemDisplay(
+      { id: "error", type: "error", message: "failed", detail: "first line\n  final detail" },
+      80,
+      true,
+    ).join("\n");
+
+    expect(longReasoning).toContain("thinking");
+    expect(longReasoning).not.toContain("collapsed");
+    expect(collapsedTool).toContain("short summary");
+    expect(collapsedTool).toContain("[Enter to expand]");
+    expect(expandedTool).toContain("indented output");
+    expect(expandedTool).toContain("final indented line");
+    expect(expandedError).toContain("final detail");
+    expect(expandedError).not.toContain("[Enter to expand]");
   });
 
   it("keeps unsafe wide tool output inside a narrow timeline pane", () => {
