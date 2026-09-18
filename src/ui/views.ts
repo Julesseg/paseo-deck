@@ -20,6 +20,14 @@ import type { AppState, ModalState } from "../contracts/app-state.js";
 import type { TimelineEvent, TimelineItem } from "../contracts/domain.js";
 import { composerAvailability, selectedComposerDraft } from "../state/composer.js";
 import { DeckController, type UiIntent } from "./controller.js";
+import {
+  adjustTreeWidth,
+  MAX_TREE_WIDTH,
+  MIN_TERMINAL_COLUMNS,
+  MIN_TERMINAL_ROWS,
+  MIN_TREE_WIDTH,
+  shellLayout,
+} from "./layout.js";
 import { type RenderClock, RenderScheduler } from "./render-scheduler.js";
 import { TerminalLifecycle } from "./terminal.js";
 import { clipTerminalLine, sanitizeTerminalText } from "./text-safety.js";
@@ -72,17 +80,30 @@ class TreeView implements Component {
           row.kind === "agent"
             ? `${row.permissionCount ? " ✓" : ""}${row.attention ? " !" : ""}${row.status ? ` ${row.status}` : ""}`
             : "";
-        const secondary = row.kind === "agent" || width < 30 ? "" : treeSecondary(row);
+        const secondary = row.kind === "agent" || width < 34 ? "" : treeSecondary(row);
         const primary = clip(
           `${selected}${"  ".repeat(row.depth)}${branch} ${row.label}${flags}${secondary}`,
           width,
         );
-        if (row.kind !== "agent" || width < 30) return [primary];
+        if (row.kind !== "agent" || width < 34) return [primary];
         const metadata = [row.providerModel, row.activityLabel].filter(Boolean).join(" · ");
         return metadata
           ? [primary, clip(`${"  ".repeat(row.depth + 1)}${metadata}`, width)]
           : [primary];
       }),
+    ];
+  }
+}
+
+class MinimumSizeView implements Component {
+  invalidate(): void {}
+  render(width: number): string[] {
+    return [
+      clip("Terminal too small", width),
+      clip(
+        `Resize to at least ${MIN_TERMINAL_COLUMNS} columns × ${MIN_TERMINAL_ROWS} rows.`,
+        width,
+      ),
     ];
   }
 }
@@ -350,6 +371,9 @@ export class DeckTui {
   private readonly composer: ComposerView;
   private readonly status: StatusView;
   private readonly renderScheduler: RenderScheduler;
+  private readonly transcript: ScrollView;
+  private readonly minimumSize: MinimumSizeView;
+  private treeWidth = 34;
   private overlay: OverlayHandle | undefined;
   private modalKey = "";
   private state: AppState;
@@ -379,31 +403,45 @@ export class DeckTui {
     this.timeline.updateSelection(initialState);
     this.composer = new ComposerView(this.tui, initialState, emit);
     this.status = new StatusView(initialState);
-    const transcript = new ScrollView(this.timeline, {
+    this.minimumSize = new MinimumSizeView();
+    this.transcript = new ScrollView(this.timeline, {
       follow: "end",
       primary: true,
       scrollbar: "auto",
     });
+    this.setShellLayout();
+    this.tui.addInputListener((data) =>
+      this.controller.handleKey(data) ? { consume: true } : undefined,
+    );
+  }
+
+  private setShellLayout(): void {
+    const supported = (viewport: { width: number; height: number }): boolean =>
+      shellLayout(viewport.width, viewport.height, this.treeWidth).supported;
     this.tui.setLayoutRoot(
       new VStack([
         {
           component: new HStack(
             [
-              { component: this.tree, basis: 30, shrink: 1, minSize: 18 },
-              { component: transcript, basis: 0, grow: 1, minSize: 12 },
+              { component: this.tree, basis: this.treeWidth, shrink: 1, minSize: MIN_TREE_WIDTH },
+              { component: this.transcript, basis: 0, grow: 1, minSize: 10 },
             ],
             { gap: 2 },
           ),
           basis: 0,
           grow: 1,
-          minSize: 3,
+          minSize: 8,
+          visible: supported,
         },
-        { component: this.composer, basis: "auto", minSize: 3 },
-        { component: this.status, basis: 1, minSize: 1 },
+        { component: this.composer, basis: "auto", minSize: 3, visible: supported },
+        { component: this.status, basis: 1, minSize: 1, visible: supported },
+        {
+          component: this.minimumSize,
+          basis: 0,
+          grow: 1,
+          visible: (viewport) => !supported(viewport),
+        },
       ]),
-    );
-    this.tui.addInputListener((data) =>
-      this.controller.handleKey(data) ? { consume: true } : undefined,
     );
   }
 
@@ -444,6 +482,12 @@ export class DeckTui {
       this.renderScheduler.requestImmediate();
       return;
     }
+    if (intent.type === "adjust-tree-width") {
+      this.treeWidth = adjustTreeWidth(this.treeWidth, intent.delta);
+      this.setShellLayout();
+      this.renderScheduler.requestImmediate();
+      return;
+    }
     this.emit(intent);
   }
 
@@ -465,6 +509,7 @@ export class DeckTui {
           "j/k move · h/l collapse/expand · Enter open · Tab focus",
           "i compose · n new · / filter · p permissions · r refresh",
           "o order · v archived · ! attention-only",
+          `[ / ] tree width (${MIN_TREE_WIDTH}–${MAX_TREE_WIDTH})`,
           "x stop · A archive · d detach · e rename · m mode · t thinking",
           "? help · E error details · q quit · Esc cancel",
         ],
@@ -542,6 +587,7 @@ export class DeckTui {
       minWidth: 28,
       maxHeight: "70%",
       margin: 1,
+      visible: (columns, rows) => shellLayout(columns, rows, this.treeWidth).supported,
     });
   }
 }

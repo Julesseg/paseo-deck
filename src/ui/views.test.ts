@@ -176,6 +176,125 @@ describe("creation prompt", () => {
 });
 
 describe("DeckTui viewport and focus", () => {
+  it("recovers the exact session shell after repeated minimum-size resize cycles", async () => {
+    const terminal = new RecordingTerminal(80, 16);
+    const base = state();
+    const preserved: AppState = {
+      ...base,
+      selectedAgentId: "agent",
+      expandedIds: new Set(["project", "workspace"]),
+      focus: "composer",
+      composer: { ...base.composer, drafts: { agent: "Keep this draft" } },
+      timeline: {
+        loading: false,
+        items: Array.from({ length: 20 }, (_, sequence) => ({
+          epoch: "resize",
+          sequence,
+          item: {
+            id: `event-${sequence}`,
+            type: "user-message" as const,
+            text: `Event ${sequence}`,
+          },
+        })),
+      },
+      directory: {
+        ...base.directory,
+        projects: [{ id: "project", name: "Deck" }],
+        workspaces: [
+          {
+            id: "workspace",
+            projectId: "project",
+            title: "Main",
+            directory: "/deck",
+            archived: false,
+          },
+        ],
+        agents: [
+          {
+            id: "agent",
+            workspaceId: "workspace",
+            title: "Selected",
+            status: "idle",
+            availableModeIds: [],
+            availableThinkingLevels: [],
+            pendingPermissions: [],
+            needsAttention: false,
+            archived: false,
+          },
+        ],
+      },
+    };
+    const intents: unknown[] = [];
+    const deck = new DeckTui(terminal, preserved, (intent) => intents.push(intent));
+
+    deck.update(preserved);
+    deck.start();
+    await terminal.waitForRender();
+    deck.tui.scrollBy(-3);
+    await terminal.waitForRender();
+    const scrollTop = deck.tui.viewportTop;
+    for (const [columns, rows] of [
+      [29, 12],
+      [30, 11],
+      [80, 16],
+      [29, 11],
+      [80, 16],
+    ] as const) {
+      terminal.setSize(columns, rows);
+      await terminal.waitForRender();
+    }
+    const viewport = terminal.viewport().join("\n");
+    terminal.sendInput("x");
+    await deck.stop();
+
+    expect(viewport).toContain("Selected");
+    expect(viewport).toContain("Keep this draft");
+    expect(preserved.focus).toBe("composer");
+    expect(preserved.selectedAgentId).toBe("agent");
+    expect(preserved.expandedIds).toEqual(new Set(["project", "workspace"]));
+    expect(deck.tui.viewportTop).toBe(scrollTop);
+    expect(intents).toContainEqual({ type: "set-composer-text", text: "Keep this draftx" });
+  });
+
+  it("suspends an open overlay at minimum size and restores it from retained state", async () => {
+    const terminal = new RecordingTerminal(80, 16);
+    const modalState: AppState = { ...state(), modal: { type: "help" } };
+    const deck = new DeckTui(terminal, state(), () => undefined);
+
+    deck.start();
+    deck.update(modalState);
+    await terminal.waitForRender();
+    expect(terminal.viewport().join("\n")).toContain("Paseo Deck keys");
+    terminal.setSize(29, 12);
+    await terminal.waitForRender();
+    const minimumViewport = terminal.viewport().join("\n");
+    expect(minimumViewport).toContain("Terminal too small");
+    expect(minimumViewport).not.toContain("Paseo Deck keys");
+    terminal.setSize(80, 16);
+    await terminal.waitForRender();
+    await deck.stop();
+
+    expect(terminal.viewport().join("\n")).toContain("Paseo Deck keys");
+    expect(modalState.modal).toEqual({ type: "help" });
+  });
+
+  it("shows a stable minimum-size screen at each unsupported threshold", async () => {
+    const terminal = new RecordingTerminal(29, 12);
+    const deck = new DeckTui(terminal, state(), () => undefined);
+
+    deck.start();
+    await terminal.waitForRender();
+    expect(terminal.viewport().join("\n")).toContain("Terminal too small");
+    expect(terminal.viewport().every((line) => terminalDisplayWidth(line) <= 29)).toBe(true);
+    terminal.setSize(30, 11);
+    await terminal.waitForRender();
+    expect(terminal.viewport().join("\n")).toContain("Terminal too small");
+    expect(terminal.viewport().every((line) => terminalDisplayWidth(line) <= 30)).toBe(true);
+    terminal.setSize(30, 12);
+    await terminal.waitForRender();
+    expect(terminal.viewport().join("\n")).toContain("Prompt");
+    await deck.stop();
+  });
   it("shows tree counts and agent metadata only when the tree has room", async () => {
     const terminal = new RecordingTerminal(100, 16);
     const base = state();
@@ -540,5 +659,78 @@ describe("DeckTui viewport and focus", () => {
     await terminal.waitForRender();
     expect(terminal.viewport().join("\n")).toContain("o order · v archived · ! attention-only");
     await deck.stop();
+  });
+
+  it("lists bounded tree-width keys in help", async () => {
+    const terminal = new RecordingTerminal();
+    const deck = new DeckTui(terminal, state(), () => undefined);
+
+    deck.start();
+    deck.update({ ...state(), modal: { type: "help" } });
+    await terminal.waitForRender();
+    await deck.stop();
+
+    expect(terminal.viewport().join("\n")).toContain("[ / ] tree width (18–48)");
+  });
+
+  it("applies tree-width keys locally and restores the expanded tree view", async () => {
+    const terminal = new RecordingTerminal(80, 16);
+    const base = state();
+    const intents: unknown[] = [];
+    const resizedState: AppState = {
+      ...base,
+      focus: "tree",
+      selectedAgentId: "agent",
+      composer: { ...base.composer, drafts: { agent: "draft" } },
+      directory: {
+        ...base.directory,
+        projects: [{ id: "project", name: "Deck" }],
+        workspaces: [
+          {
+            id: "workspace",
+            projectId: "project",
+            title: "Main",
+            directory: "/deck",
+            archived: false,
+          },
+        ],
+        agents: [
+          {
+            id: "agent",
+            workspaceId: "workspace",
+            title: "Build",
+            status: "idle",
+            providerId: "openai",
+            modelId: "gpt",
+            availableModeIds: [],
+            availableThinkingLevels: [],
+            pendingPermissions: [],
+            needsAttention: false,
+            archived: false,
+          },
+        ],
+      },
+      expandedIds: new Set(["project", "workspace"]),
+    };
+    const deck = new DeckTui(terminal, resizedState, (intent) => intents.push(intent));
+
+    deck.start();
+    await terminal.waitForRender();
+    expect(terminal.viewport().join("\n")).toContain("openai/gpt");
+    for (let index = 0; index < 50; index += 1) terminal.sendInput("[");
+    await terminal.waitForRender();
+    const narrowTree = terminal.viewport().slice(0, 8).join("\n");
+    expect(narrowTree).not.toContain("openai/gpt");
+    expect(narrowTree).toContain("Selected agent timeline");
+    for (let index = 0; index < 50; index += 1) terminal.sendInput("]");
+    await terminal.waitForRender();
+    const wideTree = terminal.viewport().slice(0, 8).join("\n");
+    expect(wideTree).toContain("openai/gpt");
+    expect(wideTree).toContain("Selected agent timeline");
+    deck.update({ ...resizedState, focus: "composer" });
+    terminal.sendInput("x");
+    await deck.stop();
+
+    expect(intents).toContainEqual({ type: "set-composer-text", text: "draftx" });
   });
 });

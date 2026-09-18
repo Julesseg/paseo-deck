@@ -137,6 +137,22 @@ describe("DeckController keyboard seam", () => {
     ]);
   });
 
+  it("emits bounded tree-width adjustment intents outside editable fields", () => {
+    const intents: unknown[] = [];
+    const controller = new DeckController(
+      () => makeState(),
+      (intent) => intents.push(intent),
+    );
+
+    controller.handleKey("[");
+    controller.handleKey("]");
+
+    expect(intents).toEqual([
+      { type: "adjust-tree-width", delta: -2 },
+      { type: "adjust-tree-width", delta: 2 },
+    ]);
+  });
+
   it("keeps global bindings away from editable fields", () => {
     const intents: unknown[] = [];
     const controller = new DeckController(

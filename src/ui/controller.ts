@@ -11,6 +11,7 @@ export type UiIntent =
   | { type: "toggle-tree-order" }
   | { type: "toggle-archived" }
   | { type: "toggle-attention-only" }
+  | { type: "adjust-tree-width"; delta: -2 | 2 }
   | { type: "open-create-agent"; workspaceId: string; step: "provider" }
   | { type: "open-confirmation"; action: "stop" | "archive" | "detach"; agentId: string }
   | { type: "open-rename"; agentId: string }
@@ -104,6 +105,8 @@ export class DeckController {
     if (data === "o") return this.send({ type: "toggle-tree-order" });
     if (data === "v") return this.send({ type: "toggle-archived" });
     if (data === "!") return this.send({ type: "toggle-attention-only" });
+    if (data === "[") return this.send({ type: "adjust-tree-width", delta: -2 });
+    if (data === "]") return this.send({ type: "adjust-tree-width", delta: 2 });
     if (data === "p") return this.send({ type: "open-permissions" });
     if (data === "r") return this.send({ type: "refresh" });
     if (data === "?") return this.send({ type: "open-help" });
