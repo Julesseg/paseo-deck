@@ -38,7 +38,14 @@ function state(): AppState {
     focus: "tree",
     modal: { type: "none" },
     timeline: { items: [], loading: false },
-    composerText: "",
+    composer: {
+      drafts: {},
+      histories: {},
+      historyIndexes: {},
+      historyDrafts: {},
+      sendingAgentIds: new Set(),
+      detachedAgentIds: new Set(),
+    },
   };
 }
 
@@ -55,6 +62,76 @@ describe("tree view model", () => {
     ]);
     expect(rows[1]).toMatchObject({ id: "w", depth: 1 });
     expect(rows[2]).toMatchObject({ selected: true, attention: true });
+  });
+
+  it("keeps remote-backed workspaces keyboard-reachable under readable and Other groups", () => {
+    const remoteState: AppState = {
+      ...state(),
+      directory: {
+        ...emptyDirectory(),
+        projects: [{ id: "remote:github.com/acme/paseo-deck", name: "acme/paseo-deck" }],
+        workspaces: [
+          {
+            id: "workspace-remote",
+            projectId: "remote:github.com/acme/paseo-deck",
+            title: "Remote workspace",
+            directory: "/tmp/paseo-deck",
+            archived: false,
+          },
+          {
+            id: "workspace-orphan",
+            projectId: "remote:unknown",
+            title: "Orphan workspace",
+            directory: "/tmp/orphan",
+            archived: false,
+          },
+        ],
+        agents: [
+          {
+            id: "agent-orphan",
+            workspaceId: "workspace-orphan",
+            title: "Needs review",
+            status: "idle",
+            availableModeIds: [],
+            availableThinkingLevels: [],
+            pendingPermissions: [],
+            needsAttention: true,
+            archived: false,
+          },
+        ],
+      },
+      expandedIds: new Set([
+        "remote:github.com/acme/paseo-deck",
+        "workspace-remote",
+        "workspace-orphan",
+      ]),
+      selectedAgentId: "agent-orphan",
+      selectedWorkspaceId: "workspace-orphan",
+    };
+
+    expect(deriveTreeRows(remoteState)).toMatchObject([
+      { kind: "project", id: "remote:github.com/acme/paseo-deck", label: "acme/paseo-deck" },
+      { kind: "workspace", id: "workspace-remote" },
+      { kind: "project", label: "Other" },
+      { kind: "workspace", id: "workspace-orphan" },
+      { kind: "agent", id: "agent-orphan", selected: true, attention: true },
+    ]);
+    expect(deriveTreeRows(remoteState).map((row) => row.label)).not.toContain(
+      "remote:github.com/acme/paseo-deck",
+    );
+
+    const remoteFilterRows = deriveTreeRows({ ...remoteState, filter: "remote" });
+    expect(remoteFilterRows).toMatchObject([
+      { kind: "project", label: "acme/paseo-deck", expanded: true },
+      { kind: "workspace", id: "workspace-remote", expanded: true },
+    ]);
+
+    const orphanFilterRows = deriveTreeRows({ ...remoteState, filter: "needs" });
+    expect(orphanFilterRows).toMatchObject([
+      { kind: "project", label: "Other", expanded: true },
+      { kind: "workspace", id: "workspace-orphan", expanded: true },
+      { kind: "agent", id: "agent-orphan", attention: true },
+    ]);
   });
 });
 

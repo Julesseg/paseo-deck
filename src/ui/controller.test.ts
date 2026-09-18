@@ -40,7 +40,14 @@ function makeState(): AppState {
     focus: "tree",
     modal: { type: "none" },
     timeline: { items: [], loading: false },
-    composerText: "",
+    composer: {
+      drafts: {},
+      histories: {},
+      historyIndexes: {},
+      historyDrafts: {},
+      sendingAgentIds: new Set(),
+      detachedAgentIds: new Set(),
+    },
   };
 }
 
@@ -174,12 +181,43 @@ describe("DeckController keyboard seam", () => {
   it("escapes composer editing without discarding its text", () => {
     const intents: unknown[] = [];
     const controller = new DeckController(
-      () => ({ ...makeState(), focus: "composer", composerText: "keep this" }),
+      () => ({
+        ...makeState(),
+        focus: "composer",
+        composer: { ...makeState().composer, drafts: { a: "keep this" } },
+      }),
       (intent) => intents.push(intent),
     );
 
     expect(controller.handleKey("\u001b")).toBe(true);
     expect(intents).toEqual([{ type: "set-focus", focus: "tree" }]);
+  });
+
+  it("uses up and down for selected-agent prompt history while composing", () => {
+    const intents: unknown[] = [];
+    const controller = new DeckController(
+      () => ({ ...makeState(), focus: "composer" }),
+      (intent) => intents.push(intent),
+    );
+
+    expect(controller.handleKey("\u0010")).toBe(true);
+    expect(controller.handleKey("\u000e")).toBe(true);
+    expect(intents).toEqual([
+      { type: "navigate-composer-history", direction: -1 },
+      { type: "navigate-composer-history", direction: 1 },
+    ]);
+  });
+
+  it("leaves plain up and down available to the multiline editor", () => {
+    const intents: unknown[] = [];
+    const controller = new DeckController(
+      () => ({ ...makeState(), focus: "composer" }),
+      (intent) => intents.push(intent),
+    );
+
+    expect(controller.handleKey("\u001b[A")).toBe(false);
+    expect(controller.handleKey("\u001b[B")).toBe(false);
+    expect(intents).toEqual([]);
   });
 
   it("opens notification details only when they exist", () => {

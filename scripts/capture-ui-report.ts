@@ -54,7 +54,10 @@ const shots: Array<{
     state: {
       ...baseState,
       connection: "reconnecting",
-      composerText: "This draft remains while the daemon reconnects.",
+      composer: {
+        ...baseState.composer,
+        drafts: { "agent-atlas-1234": "This draft remains while the daemon reconnects." },
+      },
       notification: { kind: "info", message: "Reconnecting to Paseo…" },
     },
   },
@@ -231,7 +234,14 @@ function syntheticState(): AppState {
         },
       ],
     },
-    composerText: "",
+    composer: {
+      drafts: {},
+      histories: {},
+      historyIndexes: {},
+      historyDrafts: {},
+      sendingAgentIds: new Set(),
+      detachedAgentIds: new Set(),
+    },
   };
 }
 

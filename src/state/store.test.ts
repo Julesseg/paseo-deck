@@ -51,6 +51,32 @@ describe("deriveTree", () => {
 });
 
 describe("application store", () => {
+  it("clears an agent focus when selecting its workspace or project", () => {
+    let state = reduceApp(createInitialState(), {
+      type: "directory",
+      update: { type: "snapshot", snapshot: directory },
+    });
+    state = reduceApp(state, { type: "select-agent", agentId: "agent-a" });
+    state = reduceApp(state, { type: "select-workspace", workspaceId: "workspace-a" });
+
+    expect(state).toMatchObject({
+      selectedProjectId: "project-a",
+      selectedWorkspaceId: "workspace-a",
+      timeline: { items: [], loading: false },
+    });
+    expect(state.selectedAgentId).toBeUndefined();
+
+    state = reduceApp(state, { type: "select-agent", agentId: "agent-a" });
+    state = reduceApp(state, { type: "select-project", projectId: "project-a" });
+
+    expect(state).toMatchObject({
+      selectedProjectId: "project-a",
+      timeline: { items: [], loading: false },
+    });
+    expect(state.selectedWorkspaceId).toBeUndefined();
+    expect(state.selectedAgentId).toBeUndefined();
+  });
+
   it("upserts and removes directory entries while retaining a valid selection", () => {
     let state = reduceApp(createInitialState(), {
       type: "directory",
@@ -72,9 +98,36 @@ describe("application store", () => {
     state = reduceApp(state, { type: "open-modal", modal: { type: "help" } });
     expect(state).toMatchObject({
       filter: "codex",
-      composerText: "keep this",
+      composer: {
+        drafts: {},
+        histories: {},
+        historyIndexes: {},
+        historyDrafts: {},
+        sendingAgentIds: new Set(),
+      },
       modal: { type: "help" },
     });
+  });
+
+  it("keeps drafts and prompt history isolated by selected agent", () => {
+    let state = reduceApp(createInitialState(), {
+      type: "directory",
+      update: { type: "snapshot", snapshot: directory },
+    });
+    state = reduceApp(state, { type: "select-agent", agentId: "agent-a" });
+    state = reduceApp(state, { type: "set-composer", text: "first draft\nwith detail" });
+    state = reduceApp(state, { type: "composer-sent", agentId: "agent-a", prompt: "first prompt" });
+    state = reduceApp(state, { type: "set-composer", text: "unsaved a" });
+    state = reduceApp(state, { type: "select-agent", agentId: "agent-b" });
+    state = reduceApp(state, { type: "set-composer", text: "draft b" });
+    state = reduceApp(state, { type: "select-agent", agentId: "agent-a" });
+    expect(state.composer.drafts["agent-a"]).toBe("unsaved a");
+    state = reduceApp(state, { type: "navigate-composer-history", direction: -1 });
+    expect(state.composer.drafts["agent-a"]).toBe("first prompt");
+    state = reduceApp(state, { type: "navigate-composer-history", direction: 1 });
+    expect(state.composer.drafts["agent-a"]).toBe("unsaved a");
+    state = reduceApp(state, { type: "select-agent", agentId: "agent-b" });
+    expect(state.composer.drafts["agent-b"]).toBe("draft b");
   });
 
   it("merges same-message assistant deltas and same-call tool updates", () => {

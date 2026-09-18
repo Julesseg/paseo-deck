@@ -5,6 +5,7 @@ import type {
   DirectorySnapshot,
   DirectoryUpdate,
   PermissionRequest,
+  ProjectRecord,
   ProviderOption,
   TimelineCursor,
   TimelineEvent,
@@ -490,7 +491,10 @@ function emitDirectoryMessage(message: UnknownRecord, listener: Listener<Directo
     const project = asRecord(payload.project) ?? payload;
     if (payload.kind === "remove")
       listener({ type: "project-removed", projectId: String(payload.projectId) });
-    else listener({ type: "project-upserted", project: projectRecord(project) });
+    else {
+      const normalized = projectRecord(project);
+      if (normalized !== undefined) listener({ type: "project-upserted", project: normalized });
+    }
   }
 }
 
@@ -609,21 +613,45 @@ async function directorySnapshot(
   providers: UnknownRecord,
 ): Promise<DirectorySnapshot> {
   return {
-    projects: projectEntries(projects).map(projectRecord),
+    projects: projectEntries(projects)
+      .map(projectRecord)
+      .filter((project): project is ProjectRecord => project !== undefined),
     workspaces: recordEntries(workspaces).map(workspaceRecord),
     agents: recordEntries(agents).map((entry) => agentRecord(asRecord(entry.agent) ?? entry)),
     providers: await providerRecords(client, providers),
   };
 }
 
-function projectRecord(value: UnknownRecord) {
+function projectRecord(value: UnknownRecord): ProjectRecord | undefined {
+  const id = nonBlankString(value.id ?? value.projectKey);
+  if (id === undefined) return undefined;
+  const sourceName = nonBlankString(value.name ?? value.projectName);
+  const remoteName = readableRemoteProjectName(id);
+  const name = id.startsWith("remote:")
+    ? sourceName?.startsWith("remote:")
+      ? remoteName
+      : (sourceName ?? remoteName)
+    : (sourceName ?? id);
+  if (name === undefined) return undefined;
   return {
-    id: String(value.id ?? value.projectKey ?? "unknown-project"),
-    name: String(value.name ?? value.projectName ?? value.projectKey ?? "Project"),
+    id,
+    name,
     ...(stringValue(value.path ?? value.directory) === undefined
       ? {}
       : { path: stringValue(value.path ?? value.directory) as string }),
   };
+}
+
+function readableRemoteProjectName(id: string): string | undefined {
+  if (!id.startsWith("remote:")) return undefined;
+  const location = id.slice("remote:".length).replace(/^https?:\/\//, "");
+  const match = /^github\.com[/:]([^/]+)\/([^/]+?)(?:\.git)?\/?$/.exec(location);
+  return match ? `${match[1]}/${match[2]}` : undefined;
+}
+
+function nonBlankString(value: unknown): string | undefined {
+  const result = stringValue(value);
+  return result?.trim() ? result : undefined;
 }
 
 function workspaceRecord(value: UnknownRecord): WorkspaceRecord {

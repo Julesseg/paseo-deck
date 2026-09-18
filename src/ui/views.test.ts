@@ -35,7 +35,14 @@ function state(): AppState {
     focus: "tree",
     modal: { type: "none" },
     timeline: { items: [], loading: false },
-    composerText: "",
+    composer: {
+      drafts: {},
+      histories: {},
+      historyIndexes: {},
+      historyDrafts: {},
+      sendingAgentIds: new Set(),
+      detachedAgentIds: new Set(),
+    },
   };
 }
 
@@ -138,6 +145,57 @@ describe("creation prompt", () => {
 });
 
 describe("DeckTui viewport and focus", () => {
+  it("names the composer destination and its disabled reason", async () => {
+    const terminal = new RecordingTerminal(80, 14);
+    const base = state();
+    const deck = new DeckTui(
+      terminal,
+      {
+        ...base,
+        selectedAgentId: "agent",
+        directory: {
+          ...base.directory,
+          agents: [
+            {
+              id: "agent",
+              workspaceId: "workspace",
+              title: "Paused",
+              status: "stopped",
+              availableModeIds: [],
+              availableThinkingLevels: [],
+              pendingPermissions: [],
+              needsAttention: false,
+              archived: false,
+            },
+          ],
+        },
+      },
+      () => undefined,
+    );
+    deck.start();
+    await terminal.waitForRender();
+    await deck.stop();
+    expect(terminal.viewport().join("\n")).toContain("Prompt → Paused · stopped");
+  });
+  it("renders the unsent-draft preservation warning in destructive confirmation", async () => {
+    const terminal = new RecordingTerminal(80, 14);
+    const deck = new DeckTui(
+      terminal,
+      {
+        ...state(),
+        modal: { type: "confirm", action: "archive", agentId: "agent", draftWarning: true },
+      },
+      () => undefined,
+    );
+    deck.start();
+    deck.update({
+      ...state(),
+      modal: { type: "confirm", action: "archive", agentId: "agent", draftWarning: true },
+    });
+    await terminal.waitForRender();
+    await deck.stop();
+    expect(terminal.viewport().join("\n")).toContain("unsent draft; it will be preserved");
+  });
   it("shows mode and token context in the status line when space allows", async () => {
     const terminal = new RecordingTerminal(120, 18);
     const base = state();

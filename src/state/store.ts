@@ -11,6 +11,7 @@ import type {
   TimelineItem,
   TimelineUpdate,
 } from "../contracts/domain.js";
+import { createComposerState } from "./composer.js";
 
 export type AppAction =
   | { type: "directory"; update: DirectoryUpdate }
@@ -20,6 +21,10 @@ export type AppAction =
   | { type: "set-filter"; filter: string }
   | { type: "set-focus"; focus: FocusArea }
   | { type: "set-composer"; text: string }
+  | { type: "navigate-composer-history"; direction: -1 | 1 }
+  | { type: "set-composer-sending"; agentId: string; sending: boolean }
+  | { type: "composer-sent"; agentId: string; prompt: string }
+  | { type: "composer-detached"; agentId: string }
   | { type: "open-modal"; modal: Exclude<ModalState, { type: "none" }> }
   | { type: "close-modal" }
   | { type: "toggle-expanded"; id: string }
@@ -44,7 +49,7 @@ export function createInitialState(): AppState {
     focus: "tree",
     modal: { type: "none" },
     timeline: { items: [], loading: false },
-    composerText: "",
+    composer: createComposerState(),
   };
 }
 
@@ -356,23 +361,118 @@ export function reduceApp(state: AppState, action: AppAction): AppState {
       return next;
     }
     case "select-workspace": {
-      const next = { ...state };
+      const workspace = state.directory.workspaces.find(
+        (candidate) => candidate.id === action.workspaceId,
+      );
+      const project = state.directory.projects.find(
+        (candidate) => candidate.id === workspace?.projectId,
+      );
+      const next: AppState = {
+        ...state,
+        timeline: { items: [], loading: false },
+        focus: "tree",
+      };
       if (action.workspaceId) next.selectedWorkspaceId = action.workspaceId;
       else delete next.selectedWorkspaceId;
+      if (project) next.selectedProjectId = project.id;
+      else delete next.selectedProjectId;
+      delete next.selectedAgentId;
       return next;
     }
     case "select-project": {
-      const next = { ...state };
+      const next: AppState = {
+        ...state,
+        timeline: { items: [], loading: false },
+        focus: "tree",
+      };
       if (action.projectId) next.selectedProjectId = action.projectId;
       else delete next.selectedProjectId;
+      delete next.selectedWorkspaceId;
+      delete next.selectedAgentId;
       return next;
     }
     case "set-filter":
       return { ...state, filter: action.filter };
     case "set-focus":
       return { ...state, focus: action.focus };
-    case "set-composer":
-      return { ...state, composerText: action.text };
+    case "set-composer": {
+      const agentId = state.selectedAgentId;
+      if (!agentId) return state;
+      const historyIndexes = { ...state.composer.historyIndexes };
+      const historyDrafts = { ...state.composer.historyDrafts };
+      delete historyIndexes[agentId];
+      delete historyDrafts[agentId];
+      return {
+        ...state,
+        composer: {
+          ...state.composer,
+          drafts: { ...state.composer.drafts, [agentId]: action.text },
+          historyIndexes,
+          historyDrafts,
+        },
+      };
+    }
+    case "navigate-composer-history": {
+      const agentId = state.selectedAgentId;
+      if (!agentId) return state;
+      const history = state.composer.histories[agentId] ?? [];
+      if (history.length === 0) return state;
+      const current = state.composer.historyIndexes[agentId] ?? -1;
+      const index = Math.max(-1, Math.min(history.length - 1, (current ?? -1) - action.direction));
+      const historyDrafts = { ...state.composer.historyDrafts };
+      if (current === -1 && index !== -1)
+        historyDrafts[agentId] = state.composer.drafts[agentId] ?? "";
+      const text = index === -1 ? (historyDrafts[agentId] ?? "") : (history[index] ?? "");
+      if (index === -1) delete historyDrafts[agentId];
+      return {
+        ...state,
+        composer: {
+          ...state.composer,
+          drafts: { ...state.composer.drafts, [agentId]: text },
+          historyIndexes: { ...state.composer.historyIndexes, [agentId]: index },
+          historyDrafts,
+        },
+      };
+    }
+    case "set-composer-sending": {
+      const sendingAgentIds = new Set(state.composer.sendingAgentIds);
+      if (action.sending) sendingAgentIds.add(action.agentId);
+      else sendingAgentIds.delete(action.agentId);
+      return { ...state, composer: { ...state.composer, sendingAgentIds } };
+    }
+    case "composer-sent": {
+      const previousComposer = state.composer;
+      const history = previousComposer.histories[action.agentId] ?? [];
+      const histories = {
+        ...previousComposer.histories,
+        [action.agentId]: history[0] === action.prompt ? history : [action.prompt, ...history],
+      };
+      const drafts = { ...previousComposer.drafts };
+      if (drafts[action.agentId] === action.prompt) drafts[action.agentId] = "";
+      const sendingAgentIds = new Set(previousComposer.sendingAgentIds);
+      sendingAgentIds.delete(action.agentId);
+      const historyIndexes = { ...previousComposer.historyIndexes };
+      delete historyIndexes[action.agentId];
+      const historyDrafts = { ...previousComposer.historyDrafts };
+      delete historyDrafts[action.agentId];
+      const composer = {
+        ...previousComposer,
+        drafts,
+        histories,
+        sendingAgentIds,
+        historyIndexes,
+        historyDrafts,
+      };
+      return {
+        ...state,
+        composer,
+      };
+    }
+    case "composer-detached": {
+      const detachedAgentIds = new Set(state.composer.detachedAgentIds);
+      detachedAgentIds.add(action.agentId);
+      return { ...state, composer: { ...state.composer, detachedAgentIds } };
+    }
     case "open-modal":
       return { ...state, modal: action.modal };
     case "close-modal":

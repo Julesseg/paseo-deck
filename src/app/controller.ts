@@ -2,6 +2,7 @@ import type { AppState, ModalState } from "../contracts/app-state.js";
 import type { AgentCommand } from "../contracts/commands.js";
 import type { DirectoryUpdate } from "../contracts/domain.js";
 import type { Observation, PaseoGateway } from "../contracts/gateway.js";
+import { composerAvailability } from "../state/composer.js";
 import {
   type AppAction,
   createInitialState,
@@ -140,10 +141,18 @@ export class ApplicationController {
         }
         return;
       case "open-confirmation":
-        this.apply({
-          type: "open-modal",
-          modal: { type: "confirm", action: intent.action, agentId: intent.agentId },
-        });
+        {
+          const draft = this.#state.composer.drafts[intent.agentId] ?? "";
+          this.apply({
+            type: "open-modal",
+            modal: {
+              type: "confirm",
+              action: intent.action,
+              agentId: intent.agentId,
+              ...(draft.trim() ? { draftWarning: true } : {}),
+            },
+          });
+        }
         return;
       case "open-rename": {
         const agent = this.#state.directory.agents.find((item) => item.id === intent.agentId);
@@ -201,6 +210,9 @@ export class ApplicationController {
         return;
       case "set-composer-text":
         this.setComposerText(intent.text);
+        return;
+      case "navigate-composer-history":
+        this.apply({ type: "navigate-composer-history", direction: intent.direction });
         return;
       case "create-choice":
         await this.applyChoice(intent.choice);
@@ -286,10 +298,22 @@ export class ApplicationController {
   }
 
   private async submitPrompt(agentId: string, prompt: string): Promise<void> {
+    if (this.#state.composer.sendingAgentIds.has(agentId)) return;
+    const availability = composerAvailability(this.#state, agentId);
+    if (!availability.canSend) {
+      this.apply({
+        type: "notify",
+        message: availabilityMessage(availability.reason),
+        kind: "error",
+      });
+      return;
+    }
+    this.apply({ type: "set-composer-sending", agentId, sending: true });
     try {
       await this.gateway.execute({ type: "send-prompt", agentId, prompt });
-      this.apply({ type: "set-composer", text: "" });
+      this.apply({ type: "composer-sent", agentId, prompt });
     } catch (error) {
+      this.apply({ type: "set-composer-sending", agentId, sending: false });
       this.reportError("Could not send the prompt.", error);
     }
   }
@@ -305,6 +329,8 @@ export class ApplicationController {
           allow: command.allow,
         });
       }
+      if (command.type === "detach-agent")
+        this.apply({ type: "composer-detached", agentId: command.agentId });
       this.apply({ type: "close-modal" });
       this.apply({
         type: "notify",
@@ -410,6 +436,19 @@ export class ApplicationController {
   private reportError(message: string, error: unknown): void {
     this.apply({ type: "notify", message, detail: errorDetail(error), kind: "error" });
   }
+}
+
+function availabilityMessage(
+  reason: Exclude<ReturnType<typeof composerAvailability>, { canSend: true }>["reason"],
+): string {
+  return {
+    disconnected: "Cannot send while disconnected.",
+    missing: "The destination agent is unavailable.",
+    detached: "Cannot send to a detached agent.",
+    archived: "Cannot send to an archived agent.",
+    stopped: "Cannot send to a stopped agent.",
+    failed: "Cannot send to a failed agent.",
+  }[reason];
 }
 
 function selectedCreationModel(

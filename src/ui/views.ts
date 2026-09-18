@@ -18,6 +18,7 @@ import {
 
 import type { AppState, ModalState } from "../contracts/app-state.js";
 import type { TimelineEvent, TimelineItem } from "../contracts/domain.js";
+import { composerAvailability, selectedComposerDraft } from "../state/composer.js";
 import { DeckController, type UiIntent } from "./controller.js";
 import { TerminalLifecycle } from "./terminal.js";
 import { deriveTreeRows, shortAgentId, timelineItemDisplay } from "./view-model.js";
@@ -168,10 +169,12 @@ class ComposerView implements Component, Focusable {
   focused = false;
   private readonly editor: Editor;
   private selectedAgentId: string | undefined;
+  private state: AppState;
   constructor(tui: TUI, state: AppState, emit: (intent: UiIntent) => void) {
+    this.state = state;
     this.selectedAgentId = state.selectedAgentId;
     this.editor = new Editor(tui, { borderColor: plain, selectList: selectTheme }, { paddingX: 1 });
-    this.editor.setText(state.composerText);
+    this.editor.setText(selectedComposerDraft(state));
     this.editor.onChange = (text) => emit({ type: "set-composer-text", text });
     this.editor.onSubmit = (prompt) => {
       if (this.selectedAgentId && prompt.trim())
@@ -179,15 +182,28 @@ class ComposerView implements Component, Focusable {
     };
   }
   update(state: AppState): void {
+    this.state = state;
     this.selectedAgentId = state.selectedAgentId;
-    if (this.editor.getText() !== state.composerText) this.editor.setText(state.composerText);
+    const draft = selectedComposerDraft(state);
+    if (this.editor.getText() !== draft) this.editor.setText(draft);
   }
   invalidate(): void {
     this.editor.invalidate();
   }
   render(width: number): string[] {
     this.editor.focused = this.focused;
-    return ["Prompt", ...this.editor.render(width)];
+    const agent = this.state.directory.agents.find((item) => item.id === this.selectedAgentId);
+    const availability = this.selectedAgentId
+      ? composerAvailability(this.state, this.selectedAgentId)
+      : { canSend: false as const, reason: "missing" as const };
+    const destination = agent ? `Prompt → ${agent.title}` : "Prompt → no agent selected";
+    const status =
+      this.selectedAgentId && this.state.composer.sendingAgentIds.has(this.selectedAgentId)
+        ? " · sending…"
+        : !availability.canSend
+          ? ` · ${availability.reason}`
+          : "";
+    return [clip(`${destination}${status}`, width), ...this.editor.render(width)];
   }
   handleInput(data: string): void {
     this.editor.handleInput(data);
@@ -443,7 +459,11 @@ export class DeckTui {
       );
     else if (modal.type === "confirm")
       component = new Dialog(
-        [`${modal.action} this agent?`, "Enter confirms · Esc cancels"],
+        [
+          `${modal.action} this agent?`,
+          ...(modal.draftWarning ? ["This agent has an unsent draft; it will be preserved."] : []),
+          "Enter confirms · Esc cancels",
+        ],
         (data) => {
           if (matchesKey(data, "enter")) this.controller.confirm(modal);
           else if (matchesKey(data, "escape")) close();

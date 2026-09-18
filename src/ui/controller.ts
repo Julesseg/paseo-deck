@@ -25,6 +25,7 @@ export type UiIntent =
   | { type: "command"; command: AgentCommand }
   | { type: "submit-composer"; agentId: string; prompt: string }
   | { type: "set-composer-text"; text: string }
+  | { type: "navigate-composer-history"; direction: -1 | 1 }
   | { type: "create-choice"; choice: string };
 
 export class DeckController {
@@ -60,6 +61,10 @@ export class DeckController {
     }
     if (state.focus === "composer" && data === "\u001b")
       return this.send({ type: "set-focus", focus: "tree" });
+    if (state.focus === "composer" && data === "\u0010")
+      return this.send({ type: "navigate-composer-history", direction: -1 });
+    if (state.focus === "composer" && data === "\u000e")
+      return this.send({ type: "navigate-composer-history", direction: 1 });
     if (isTextEditing(state.modal) || state.focus === "composer") return false;
     if (data === "\u001b") {
       if (state.modal.type !== "none") this.emit({ type: "close-modal" });

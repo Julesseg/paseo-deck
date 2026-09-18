@@ -14,7 +14,12 @@ export type ModalState =
   | { type: "none" }
   | { type: "help" }
   | { type: "filter"; query: string }
-  | { type: "confirm"; action: "stop" | "archive" | "detach"; agentId: string }
+  | {
+      type: "confirm";
+      action: "stop" | "archive" | "detach";
+      agentId: string;
+      draftWarning?: boolean;
+    }
   | { type: "permission"; request: PermissionRequest }
   | {
       type: "create-agent";
@@ -46,6 +51,15 @@ export interface NotificationState {
   kind: "info" | "error";
 }
 
+export interface ComposerState {
+  drafts: Readonly<Record<string, string>>;
+  histories: Readonly<Record<string, readonly string[]>>;
+  historyIndexes: Readonly<Record<string, number>>;
+  historyDrafts: Readonly<Record<string, string>>;
+  sendingAgentIds: ReadonlySet<string>;
+  detachedAgentIds: ReadonlySet<string>;
+}
+
 export interface AppState {
   connection: ConnectionState;
   directory: DirectorySnapshot;
@@ -57,7 +71,7 @@ export interface AppState {
   focus: FocusArea;
   modal: ModalState;
   timeline: FocusedTimelineState;
-  composerText: string;
+  composer: ComposerState;
   notification?: NotificationState;
 }
 

@@ -1,5 +1,6 @@
 import type { AppState } from "../contracts/app-state.js";
 import type { AgentRecord, TimelineEvent, TimelineItem } from "../contracts/domain.js";
+import { selectedComposerDraft } from "../state/composer.js";
 
 export type TreeRowKind = "project" | "workspace" | "agent";
 
@@ -236,7 +237,7 @@ export function renderDashboard(
       `${clip(treeLines[index] ?? "", leftWidth).padEnd(leftWidth)} │ ${clip(timelineLines[index] ?? "", rightWidth)}`,
     );
   lines.push("─".repeat(Math.max(1, width)));
-  lines.push(clip(`Prompt: ${state.composerText || "Type a follow-up…"}`, width));
+  lines.push(clip(`Prompt: ${selectedComposerDraft(state) || "Type a follow-up…"}`, width));
   const permissionCount = state.directory.agents.reduce(
     (total, agent) => total + agent.pendingPermissions.length,
     0,

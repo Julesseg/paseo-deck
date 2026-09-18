@@ -33,7 +33,14 @@ describe("application state contracts", () => {
       focus: "tree",
       modal: { type: "none" },
       timeline: { items: [], loading: false },
-      composerText: "",
+      composer: {
+        drafts: {},
+        histories: {},
+        historyIndexes: {},
+        historyDrafts: {},
+        sendingAgentIds: new Set(),
+        detachedAgentIds: new Set(),
+      },
     };
 
     expect(findSelectedAgent(state)?.title).toBe("Review");

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { DirectorySnapshot, TimelineEvent } from "../contracts/domain.js";
 import type { Observation } from "../contracts/gateway.js";
 import { FakePaseoGateway } from "../paseo/fake-gateway.js";
+import { selectedComposerDraft } from "../state/composer.js";
 import { ApplicationController } from "./controller.js";
 
 const snapshot: DirectorySnapshot = {
@@ -59,6 +60,51 @@ const snapshot: DirectorySnapshot = {
   ],
 };
 
+const remoteSnapshot: DirectorySnapshot = {
+  projects: [{ id: "remote:github.com/acme/paseo-deck", name: "acme/paseo-deck" }],
+  workspaces: [
+    {
+      id: "workspace-remote",
+      projectId: "remote:github.com/acme/paseo-deck",
+      title: "Remote workspace",
+      directory: "/tmp/paseo-deck",
+      archived: false,
+    },
+    {
+      id: "workspace-orphan",
+      projectId: "remote:unknown",
+      title: "Orphan workspace",
+      directory: "/tmp/orphan",
+      archived: false,
+    },
+  ],
+  agents: [
+    {
+      id: "agent-remote",
+      workspaceId: "workspace-remote",
+      title: "Remote agent",
+      status: "running",
+      availableModeIds: [],
+      availableThinkingLevels: [],
+      pendingPermissions: [],
+      needsAttention: false,
+      archived: false,
+    },
+    {
+      id: "agent-orphan",
+      workspaceId: "workspace-orphan",
+      title: "Orphan agent",
+      status: "idle",
+      availableModeIds: [],
+      availableThinkingLevels: [],
+      pendingPermissions: [],
+      needsAttention: true,
+      archived: false,
+    },
+  ],
+  providers: [],
+};
+
 function event(sequence: number, text: string): TimelineEvent {
   return {
     epoch: "epoch-1",
@@ -73,6 +119,28 @@ function event(sequence: number, text: string): TimelineEvent {
 }
 
 describe("ApplicationController", () => {
+  it("reaches resolved and orphan remote agents through tree keyboard intents", async () => {
+    const gateway = new FakePaseoGateway(remoteSnapshot);
+    const app = new ApplicationController(gateway);
+    await app.start();
+
+    await app.handleIntent({ type: "select-next", direction: 1 });
+    expect(app.state.selectedProjectId).toBe("remote:github.com/acme/paseo-deck");
+    await app.handleIntent({ type: "collapse-or-expand", direction: 1 });
+    await app.handleIntent({ type: "select-next", direction: 1 });
+    expect(app.state.selectedWorkspaceId).toBe("workspace-remote");
+    await app.handleIntent({ type: "collapse-or-expand", direction: 1 });
+    await app.handleIntent({ type: "select-next", direction: 1 });
+    expect(app.state.selectedAgentId).toBe("agent-remote");
+
+    await app.handleIntent({ type: "select-next", direction: 1 });
+    await app.handleIntent({ type: "select-next", direction: 1 });
+    expect(app.state.selectedWorkspaceId).toBe("workspace-orphan");
+    await app.handleIntent({ type: "collapse-or-expand", direction: 1 });
+    await app.handleIntent({ type: "select-next", direction: 1 });
+    expect(app.state.selectedAgentId).toBe("agent-orphan");
+  });
+
   it("integrates directory, timelines, permissions, focus changes, and reconnects exactly once", async () => {
     const gateway = new FakePaseoGateway(snapshot);
     const app = new ApplicationController(gateway);
@@ -129,7 +197,7 @@ describe("ApplicationController", () => {
     gateway.emitDirectory({ type: "snapshot", snapshot });
     gateway.emitDirectory({ type: "connection-changed", state: "connected" });
     expect(app.state.connection).toBe("connected");
-    expect(app.state.composerText).toBe("preserve me");
+    expect(selectedComposerDraft(app.state)).toBe("preserve me");
 
     await app.releaseObservations();
     expect(gateway.releaseCount).toBe(3);
@@ -174,8 +242,97 @@ describe("ApplicationController", () => {
 
     await app.handleIntent({ type: "submit-composer", agentId: "agent-1", prompt: "Keep this" });
 
-    expect(app.state.composerText).toBe("Keep this");
+    expect(selectedComposerDraft(app.state)).toBe("Keep this");
     expect(app.state.notification?.kind).toBe("error");
+  });
+
+  it("warns before destructive actions when the destination has an unsent draft", async () => {
+    const gateway = new FakePaseoGateway(snapshot);
+    const app = new ApplicationController(gateway);
+    await app.start();
+    await app.selectAgent("agent-1");
+    app.setComposerText("do not lose this");
+
+    await app.handleIntent({ type: "open-confirmation", action: "archive", agentId: "agent-1" });
+
+    expect(app.state.modal).toEqual({
+      type: "confirm",
+      action: "archive",
+      agentId: "agent-1",
+      draftWarning: true,
+    });
+  });
+
+  it("records one in-flight send and clears the selected draft only after it succeeds", async () => {
+    const gateway = new FakePaseoGateway(snapshot);
+    const app = new ApplicationController(gateway);
+    await app.start();
+    await app.selectAgent("agent-1");
+    app.setComposerText("send once");
+
+    await Promise.all([
+      app.handleIntent({ type: "submit-composer", agentId: "agent-1", prompt: "send once" }),
+      app.handleIntent({ type: "submit-composer", agentId: "agent-1", prompt: "send once" }),
+    ]);
+
+    expect(gateway.commands.filter((command) => command.type === "send-prompt")).toHaveLength(1);
+    expect(selectedComposerDraft(app.state)).toBe("");
+    expect(app.state.composer.histories["agent-1"]).toEqual(["send once"]);
+  });
+
+  it("keeps edits made during a failed send and permits another agent to send", async () => {
+    const gateway = new DeferredSendGateway(snapshot);
+    const app = new ApplicationController(gateway);
+    await app.start();
+    await app.selectAgent("agent-1");
+    app.setComposerText("original");
+    const first = app.handleIntent({
+      type: "submit-composer",
+      agentId: "agent-1",
+      prompt: "original",
+    });
+    app.setComposerText("edited while sending");
+    await app.selectAgent("agent-2");
+    app.setComposerText("second prompt");
+    const second = app.handleIntent({
+      type: "submit-composer",
+      agentId: "agent-2",
+      prompt: "second prompt",
+    });
+    expect(gateway.commands.filter((command) => command.type === "send-prompt")).toHaveLength(2);
+
+    gateway.rejectAll(new Error("offline"));
+    await Promise.all([first, second]);
+    await app.selectAgent("agent-1");
+    expect(selectedComposerDraft(app.state)).toBe("edited while sending");
+  });
+
+  it("keeps edits made during a successful deferred send", async () => {
+    const gateway = new DeferredSendGateway(snapshot);
+    const app = new ApplicationController(gateway);
+    await app.start();
+    await app.selectAgent("agent-1");
+    app.setComposerText("submitted");
+    const sending = app.handleIntent({
+      type: "submit-composer",
+      agentId: "agent-1",
+      prompt: "submitted",
+    });
+    app.setComposerText("newer draft");
+    gateway.resolveAll();
+    await sending;
+    expect(selectedComposerDraft(app.state)).toBe("newer draft");
+  });
+
+  it("marks a successfully detached agent as unavailable to the composer", async () => {
+    const gateway = new FakePaseoGateway(snapshot);
+    const app = new ApplicationController(gateway);
+    await app.start();
+    await app.handleIntent({
+      type: "command",
+      command: { type: "detach-agent", agentId: "agent-1" },
+    });
+    expect(app.state.composer.detachedAgentIds.has("agent-1")).toBe(true);
   });
 
   it("ignores and releases focus operations that complete after a newer selection", async () => {
@@ -210,10 +367,9 @@ describe("ApplicationController", () => {
     expect(app.state.connection).toBe("disconnected");
   });
 
-  it("reconnects on refresh after a failed connection without losing composer text", async () => {
+  it("reconnects on refresh after a failed connection", async () => {
     const gateway = new RecoveringSnapshotGateway(snapshot);
     const app = new ApplicationController(gateway);
-    app.setComposerText("draft survives");
     await app.start();
     expect(app.state.connection).toBe("disconnected");
 
@@ -221,7 +377,6 @@ describe("ApplicationController", () => {
 
     expect(app.state.connection).toBe("connected");
     expect(app.state.directory.agents).toHaveLength(2);
-    expect(app.state.composerText).toBe("draft survives");
   });
 
   it("rejects mode and thinking choices that discovery did not return", async () => {
@@ -273,6 +428,30 @@ class DeferredFocusGateway extends FakePaseoGateway {
     const focus = this.focuses[index];
     if (!focus) throw new Error(`missing focus ${index}`);
     focus.listener(update);
+  }
+}
+
+class DeferredSendGateway extends FakePaseoGateway {
+  private readonly failures: Array<(error: Error) => void> = [];
+  private readonly successes: Array<
+    (result: import("../contracts/commands.js").CommandResult) => void
+  > = [];
+
+  override async execute(command: import("../contracts/commands.js").AgentCommand) {
+    if (command.type !== "send-prompt") return super.execute(command);
+    this.commands.push(command);
+    return new Promise<import("../contracts/commands.js").CommandResult>((resolve, reject) => {
+      this.failures.push(reject);
+      this.successes.push(resolve);
+    });
+  }
+
+  rejectAll(error: Error): void {
+    for (const reject of this.failures.splice(0)) reject(error);
+  }
+
+  resolveAll(): void {
+    for (const resolve of this.successes.splice(0)) resolve({ type: "ok" });
   }
 }
 

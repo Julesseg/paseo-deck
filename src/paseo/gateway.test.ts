@@ -152,6 +152,48 @@ describe("ProductionPaseoGateway", () => {
     expect(fixture.client.providers.listModes).toHaveBeenCalledWith("codex");
   });
 
+  it("keeps remote workspace IDs while exposing only readable remote projects", async () => {
+    const fixture = testClient();
+    fixture.client.projects.list.mockResolvedValueOnce({
+      projects: [
+        {
+          projectKey: "remote:github.com/acme/paseo-deck",
+          projectName: "remote:github.com/acme/paseo-deck",
+        },
+        { projectKey: "remote:unknown" },
+        {},
+        { projectKey: "", projectName: "" },
+      ],
+    } as never);
+    fixture.client.workspaces.list.mockResolvedValueOnce({
+      entries: [
+        {
+          id: "workspace-remote",
+          projectId: "remote:github.com/acme/paseo-deck",
+          workspaceDirectory: "/tmp/paseo-deck",
+        },
+        {
+          id: "workspace-orphan",
+          projectId: "remote:unknown",
+          workspaceDirectory: "/tmp/orphan",
+        },
+      ],
+    } as never);
+    const gateway = new ProductionPaseoGateway({
+      host: "127.0.0.1:6767",
+      createClient: () => fixture.client as never,
+    });
+
+    await gateway.connect();
+    await expect(gateway.getDirectorySnapshot()).resolves.toMatchObject({
+      projects: [{ id: "remote:github.com/acme/paseo-deck", name: "acme/paseo-deck" }],
+      workspaces: [
+        { id: "workspace-remote", projectId: "remote:github.com/acme/paseo-deck" },
+        { id: "workspace-orphan", projectId: "remote:unknown" },
+      ],
+    });
+  });
+
   it("attaches and releases stable SDK local directory listeners after establishing server demand", async () => {
     const fixture = testClient();
     const gateway = new ProductionPaseoGateway({
