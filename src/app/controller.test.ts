@@ -381,6 +381,15 @@ describe("ApplicationController", () => {
     expect(app.state.composer.detachedAgentIds.has("agent-1")).toBe(true);
   });
 
+  it("surfaces local UI feedback as a nonfatal notification", async () => {
+    const app = new ApplicationController(new FakePaseoGateway(snapshot));
+    await app.start();
+
+    await app.handleIntent({ type: "notify", message: "Copied." });
+
+    expect(app.state.notification).toEqual({ kind: "info", message: "Copied." });
+  });
+
   it("ignores and releases focus operations that complete after a newer selection", async () => {
     const gateway = new DeferredFocusGateway(snapshot);
     const app = new ApplicationController(gateway);

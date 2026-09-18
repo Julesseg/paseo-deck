@@ -217,6 +217,19 @@ describe("DeckController keyboard seam", () => {
     expect(intents).not.toContainEqual({ type: "select-or-open" });
   });
 
+  it("opens source search and copy only from the timeline outside editors", () => {
+    const intents: unknown[] = [];
+    const controller = new DeckController(
+      () => ({ ...makeState(), focus: "timeline" }),
+      (intent) => intents.push(intent),
+    );
+
+    controller.handleKey("\u0006");
+    controller.handleKey("y");
+
+    expect(intents).toEqual([{ type: "open-timeline-search" }, { type: "open-timeline-copy" }]);
+  });
+
   it("treats arrows and g/G as their Vim navigation equivalents outside editors", () => {
     const intents: unknown[] = [];
     const controller = new DeckController(

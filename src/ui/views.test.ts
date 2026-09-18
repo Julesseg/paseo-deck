@@ -179,6 +179,455 @@ describe("creation prompt", () => {
 });
 
 describe("DeckTui viewport and focus", () => {
+  it("searches source timeline text through the overlay", async () => {
+    const terminal = new RecordingTerminal(80, 16);
+    const searchState: AppState = {
+      ...state(),
+      focus: "timeline",
+      timeline: {
+        recoveryRevision: 0,
+        loading: false,
+        items: [
+          {
+            epoch: "search",
+            sequence: 1,
+            item: {
+              id: "match",
+              type: "reasoning",
+              text: "\u001b[31mneedle\u001b[0m",
+            },
+          },
+        ],
+      },
+    };
+    const deck = new DeckTui(terminal, searchState, () => undefined);
+    deck.start();
+    terminal.sendInput("\u0006");
+    terminal.sendInput("needle");
+    await terminal.waitForRender();
+    expect(terminal.viewport().join("\n")).toContain("1 match · result 1");
+    terminal.sendInput("\u001b");
+    await terminal.waitForRender();
+    await deck.stop();
+
+    expect(terminal.viewport().join("\n")).toContain("needle");
+  });
+
+  it("keeps search input local, refreshes streamed results, and restores its prior selection on cancel", async () => {
+    const terminal = new RecordingTerminal(80, 16);
+    const base: AppState = {
+      ...state(),
+      focus: "timeline",
+      timeline: {
+        recoveryRevision: 0,
+        loading: false,
+        items: [
+          {
+            epoch: "search",
+            sequence: 1,
+            item: { id: "first", type: "user-message", text: "first" },
+          },
+          {
+            epoch: "search",
+            sequence: 2,
+            item: { id: "needle", type: "assistant-message", messageId: "needle", text: "needle" },
+          },
+        ],
+      },
+    };
+    const deck = new DeckTui(terminal, base, () => undefined);
+    deck.start();
+    terminal.sendInput("\u0006");
+    terminal.sendInput("needle");
+    await terminal.waitForRender();
+    expect(terminal.viewport().join("\n")).toContain("1 match · result 1");
+
+    deck.update({
+      ...base,
+      timeline: {
+        ...base.timeline,
+        items: [
+          ...base.timeline.items,
+          {
+            epoch: "search",
+            sequence: 3,
+            item: { id: "new-needle", type: "user-message", text: "new needle" },
+          },
+        ],
+      },
+    });
+    await terminal.waitForRender();
+    expect(terminal.viewport().join("\n")).toContain("2 matches · result 1 · updated");
+    terminal.sendInput("\u000e");
+    await terminal.waitForRender();
+    expect(terminal.viewport().join("\n")).toContain("2 matches · result 2");
+    terminal.sendInput("\u0010");
+    await terminal.waitForRender();
+    expect(terminal.viewport().join("\n")).toContain("2 matches · result 1");
+    terminal.sendInput("\r");
+    await terminal.waitForRender();
+    expect(terminal.viewport().join("\n")).toContain("2 matches · result 2");
+    terminal.sendInput("\u001b");
+    await terminal.waitForRender();
+    await deck.stop();
+
+    expect(terminal.viewport().join("\n")).toContain("> You");
+    expect(terminal.viewport().join("\n")).toContain("first");
+  });
+
+  it("shows no-match feedback and expands matched tool source before computing its range", async () => {
+    const terminal = new RecordingTerminal(80, 16);
+    const deck = new DeckTui(
+      terminal,
+      {
+        ...state(),
+        focus: "timeline",
+        timeline: {
+          recoveryRevision: 0,
+          loading: false,
+          items: [
+            {
+              epoch: "search",
+              sequence: 1,
+              item: {
+                id: "tool",
+                type: "tool",
+                callId: "tool",
+                name: "shell",
+                status: "completed",
+                output: "matched tool output",
+              },
+            },
+          ],
+        },
+      },
+      () => undefined,
+    );
+    deck.start();
+    terminal.sendInput("\u0006");
+    terminal.sendInput("missing");
+    await terminal.waitForRender();
+    expect(terminal.viewport().join("\n")).toContain("No matches.");
+    for (let index = 0; index < "missing".length; index += 1) terminal.sendInput("\u007f");
+    terminal.sendInput("matched");
+    await terminal.waitForRender();
+    terminal.sendInput("\u001b");
+    await terminal.waitForRender();
+    await deck.stop();
+
+    expect(terminal.viewport().join("\n")).toContain("matched tool output");
+  });
+
+  it("restores exact paused or following semantic timeline snapshots after streamed updates", async () => {
+    const terminal = new RecordingTerminal(80, 16);
+    const intents: unknown[] = [];
+    const base: AppState = {
+      ...state(),
+      selectedAgentId: "agent",
+      focus: "timeline",
+      timeline: {
+        agentId: "agent",
+        recoveryRevision: 0,
+        loading: false,
+        items: Array.from({ length: 16 }, (_, sequence) => ({
+          epoch: "pause",
+          sequence,
+          item: {
+            id: `event-${sequence}`,
+            type: "user-message" as const,
+            text: `event ${sequence}`,
+          },
+        })),
+      },
+    };
+    const deck = new DeckTui(terminal, base, (intent) => intents.push(intent));
+    deck.start();
+    await terminal.waitForRender();
+    const transcript = (
+      deck as unknown as {
+        transcript: {
+          scrollTop: number;
+          isFollowingEnd: boolean;
+          scrollTo: (top: number, options: { disableFollow: boolean }) => void;
+          scrollToEnd: () => void;
+        };
+      }
+    ).transcript;
+    transcript.scrollTo(4, { disableFollow: true });
+    const pausedTop = transcript.scrollTop;
+    terminal.sendInput("\u0006");
+    terminal.sendInput("event");
+    deck.update({
+      ...base,
+      timeline: {
+        ...base.timeline,
+        items: [
+          ...base.timeline.items,
+          {
+            epoch: "pause",
+            sequence: 16,
+            item: { id: "stream", type: "user-message", text: "event stream" },
+          },
+        ],
+      },
+    });
+    terminal.sendInput("\u001b");
+    await terminal.waitForRender();
+    expect(transcript.scrollTop).toBe(pausedTop);
+    expect(intents).toContainEqual({
+      type: "set-timeline-navigation",
+      agentId: "agent",
+      following: false,
+      anchor: { epoch: "pause", sequence: 1 },
+    });
+
+    transcript.scrollToEnd();
+    terminal.sendInput("\u0006");
+    deck.update({
+      ...base,
+      timeline: {
+        ...base.timeline,
+        items: [
+          ...base.timeline.items,
+          {
+            epoch: "pause",
+            sequence: 17,
+            item: { id: "later", type: "user-message", text: "event later" },
+          },
+        ],
+      },
+    });
+    terminal.sendInput("\u001b");
+    await terminal.waitForRender();
+    await deck.stop();
+
+    expect(transcript.isFollowingEnd).toBe(true);
+  });
+
+  it("copies the selected source safely and reports unavailable copy targets", async () => {
+    const terminal = new RecordingTerminal(80, 16);
+    const copied: string[] = [];
+    const intents: unknown[] = [];
+    const copyState: AppState = {
+      ...state(),
+      focus: "timeline",
+      timeline: {
+        recoveryRevision: 0,
+        loading: false,
+        items: [
+          {
+            epoch: "copy",
+            sequence: 1,
+            item: { id: "copy", type: "user-message", text: "\u001b[31mhello\u001b[0m" },
+          },
+        ],
+      },
+    };
+    const deck = new DeckTui(terminal, copyState, (intent) => intents.push(intent), {
+      copyText: (text) => {
+        copied.push(text);
+      },
+    });
+    deck.start();
+    terminal.sendInput("y");
+    await terminal.waitForRender();
+    expect(terminal.viewport().join("\n")).toContain("Copy selected timeline item");
+    terminal.sendInput("\r");
+    await terminal.waitForRender();
+    await deck.stop();
+
+    expect(copied).toEqual(["hello"]);
+    expect(intents).toContainEqual({ type: "notify", message: "Copied." });
+  });
+
+  it("offers UI-selectable code, error-detail, and tool-output copy targets", async () => {
+    const cases = [
+      {
+        item: {
+          id: "message",
+          type: "assistant-message" as const,
+          messageId: "message",
+          text: "```ts\ncode\n```",
+        },
+        moveToTarget: true,
+        expected: "code\n",
+      },
+      {
+        item: { id: "error", type: "error" as const, message: "failed", detail: "error detail" },
+        moveToTarget: false,
+        expected: "error detail",
+      },
+      {
+        item: {
+          id: "tool",
+          type: "tool" as const,
+          callId: "tool",
+          name: "shell",
+          status: "completed" as const,
+          output: "tool output",
+        },
+        moveToTarget: false,
+        expected: "tool output",
+      },
+    ];
+    for (const { item, moveToTarget, expected } of cases) {
+      const terminal = new RecordingTerminal(80, 16);
+      const copied: string[] = [];
+      const deck = new DeckTui(
+        terminal,
+        {
+          ...state(),
+          focus: "timeline",
+          timeline: {
+            recoveryRevision: 0,
+            loading: false,
+            items: [{ epoch: "copy", sequence: 1, item }],
+          },
+        },
+        () => undefined,
+        { copyText: (text) => void copied.push(text) },
+      );
+      deck.start();
+      terminal.sendInput("y");
+      if (moveToTarget) terminal.sendInput("\u001b[B");
+      terminal.sendInput("\r");
+      await terminal.waitForRender();
+      await deck.stop();
+      expect(copied).toEqual([expected]);
+    }
+  });
+
+  it("reports a non-copyable selected item without opening an overlay", async () => {
+    const terminal = new RecordingTerminal(80, 16);
+    const intents: unknown[] = [];
+    const deck = new DeckTui(
+      terminal,
+      {
+        ...state(),
+        focus: "timeline",
+        timeline: {
+          recoveryRevision: 0,
+          loading: false,
+          items: [
+            {
+              epoch: "copy",
+              sequence: 1,
+              item: { id: "turn", type: "turn", status: "completed" },
+            },
+          ],
+        },
+      },
+      (intent) => intents.push(intent),
+    );
+    deck.start();
+    terminal.sendInput("y");
+    await terminal.waitForRender();
+    await deck.stop();
+
+    expect(terminal.viewport().join("\n")).not.toContain("Copy selected timeline item");
+    expect(intents).toContainEqual({
+      type: "notify",
+      message: "Selected item has nothing to copy.",
+    });
+  });
+
+  it("yields a local search overlay when an app modal opens", async () => {
+    const terminal = new RecordingTerminal(80, 16);
+    const base: AppState = {
+      ...state(),
+      focus: "timeline",
+      timeline: {
+        recoveryRevision: 0,
+        loading: false,
+        items: [
+          {
+            epoch: "search",
+            sequence: 1,
+            item: { id: "match", type: "user-message", text: "needle" },
+          },
+        ],
+      },
+    };
+    const intents: unknown[] = [];
+    const deck = new DeckTui(terminal, base, (intent) => intents.push(intent));
+    deck.start();
+    terminal.sendInput("\u0006");
+    terminal.sendInput("needle");
+    deck.update({ ...base, modal: { type: "help" } });
+    await terminal.waitForRender();
+    await deck.stop();
+
+    expect(terminal.viewport().join("\n")).toContain("Paseo Deck keys");
+    expect(terminal.viewport().join("\n")).not.toContain("Search timeline");
+    expect(intents).not.toContainEqual(
+      expect.objectContaining({ type: "set-timeline-navigation" }),
+    );
+  });
+
+  it("keeps Ctrl-C global while isolating other bindings in a local overlay", async () => {
+    const terminal = new RecordingTerminal(80, 16);
+    const intents: unknown[] = [];
+    const deck = new DeckTui(
+      terminal,
+      {
+        ...state(),
+        focus: "timeline",
+        timeline: {
+          recoveryRevision: 0,
+          loading: false,
+          items: [
+            {
+              epoch: "search",
+              sequence: 1,
+              item: { id: "one", type: "user-message", text: "one" },
+            },
+          ],
+        },
+      },
+      (intent) => intents.push(intent),
+    );
+    deck.start();
+    terminal.sendInput("\u0006");
+    terminal.sendInput("y");
+    terminal.sendInput("\u0003");
+    await deck.stop();
+
+    expect(intents).toEqual([{ type: "quit" }]);
+  });
+
+  it("reports copy failures without crashing the timeline", async () => {
+    const terminal = new RecordingTerminal(80, 16);
+    const intents: unknown[] = [];
+    const deck = new DeckTui(
+      terminal,
+      {
+        ...state(),
+        focus: "timeline",
+        timeline: {
+          recoveryRevision: 0,
+          loading: false,
+          items: [
+            {
+              epoch: "copy",
+              sequence: 1,
+              item: { id: "copy", type: "user-message", text: "text" },
+            },
+          ],
+        },
+      },
+      (intent) => intents.push(intent),
+      { copyText: () => Promise.reject(new Error("clipboard unavailable")) },
+    );
+    deck.start();
+    terminal.sendInput("y");
+    terminal.sendInput("\r");
+    await terminal.waitForRender();
+    await deck.stop();
+
+    expect(intents).toContainEqual({ type: "notify", message: "Copy failed.", kind: "error" });
+    expect(terminal.viewport().join("\n")).toContain("Selected agent timeline");
+  });
+
   it("renders Markdown assistant streaming and timestamp metadata", async () => {
     const terminal = new RecordingTerminal(80, 14);
     const deck = new DeckTui(
@@ -590,7 +1039,7 @@ describe("DeckTui viewport and focus", () => {
     await terminal.waitForRender();
     expect(terminal.viewport().join("\n")).toContain("[TIMELINE] Selected agent timeline");
     expect(terminal.viewport().join("\n")).toContain(
-      "Timeline: ↑↓ g/G [] turns {} errors Enter Tab",
+      "Timeline: ↑↓ g/G [] turns {} errors Ctrl-F search · y copy · Enter Tab",
     );
     deck.update({ ...state(), focus: "composer" });
     await terminal.waitForRender();

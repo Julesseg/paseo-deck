@@ -39,6 +39,9 @@ export type UiIntent =
   | { type: "submit-composer"; agentId: string; prompt: string }
   | { type: "set-composer-text"; text: string }
   | { type: "navigate-composer-history"; direction: -1 | 1 }
+  | { type: "open-timeline-search" }
+  | { type: "open-timeline-copy" }
+  | { type: "notify"; message: string; kind?: "info" | "error" }
   | { type: "create-choice"; choice: string };
 
 export class DeckController {
@@ -126,6 +129,10 @@ export class DeckController {
     if (data === "\u001b[Z")
       return this.send({ type: "set-focus", focus: nextFocus(state.focus, -1) });
     if (data === "i") return this.send({ type: "set-focus", focus: "composer" });
+    if (state.focus === "timeline" && data === "\u0006")
+      return this.send({ type: "open-timeline-search" });
+    if (state.focus === "timeline" && data === "y")
+      return this.send({ type: "open-timeline-copy" });
     if (data === "n" && state.selectedWorkspaceId)
       return this.send({
         type: "open-create-agent",

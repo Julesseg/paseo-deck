@@ -31,6 +31,7 @@ import {
 import { type RenderClock, RenderScheduler } from "./render-scheduler.js";
 import { TerminalLifecycle } from "./terminal.js";
 import { clipTerminalLine, sanitizeTerminalText } from "./text-safety.js";
+import { clipboardPlainText, copyTargets, findTimelineMatches } from "./timeline-search.js";
 import { deriveTreeRows, shortAgentId, type TreeRow, timelineItemDisplay } from "./view-model.js";
 
 const plain = (value: string): string => value;
@@ -62,6 +63,7 @@ const selectTheme = {
 export interface DeckTuiOptions {
   renderClock?: RenderClock;
   frameMilliseconds?: number;
+  copyText?: (text: string) => Promise<void> | void;
 }
 
 class TreeView implements Component {
@@ -204,6 +206,26 @@ class TimelineView implements Component {
   moveSelectionBoundary(boundary: "start" | "end"): void {
     if (this.events.length > 0)
       this.selectedIndex = boundary === "start" ? 0 : this.events.length - 1;
+  }
+  selectEvent(id: string): boolean {
+    const index = this.events.findIndex((event) => event.item.id === id);
+    if (index === -1) return false;
+    this.selectedIndex = index;
+    const item = this.events[index]?.item;
+    if (
+      item &&
+      (item.type === "reasoning" || item.type === "tool") &&
+      !this.expanded.has(item.id)
+    ) {
+      this.expanded.add(item.id);
+      const view = this.itemViews.get(item.id);
+      view?.update(item, true);
+      view?.invalidate();
+    }
+    return true;
+  }
+  selectedItem(): TimelineItem | undefined {
+    return this.events[this.selectedIndex]?.item;
   }
   moveLandmark(direction: -1 | 1, kind: "turn" | "error"): void {
     const candidates = this.events
@@ -409,7 +431,7 @@ function footerContext(state: AppState, width: number): string {
     case "tree":
       return "Tree: ↑↓ ←→ g/G Tab";
     case "timeline":
-      return "Timeline: ↑↓ g/G [] turns {} errors Enter Tab";
+      return "Timeline: ↑↓ g/G [] turns {} errors Ctrl-F search · y copy · Enter Tab";
     case "composer":
       return "Composer: Esc Ctrl-P/N Enter";
   }
@@ -455,6 +477,51 @@ class InputDialog implements Component, Focusable {
   }
 }
 
+class SearchDialog implements Component, Focusable {
+  focused = false;
+  private readonly input = new Input();
+  constructor(
+    private readonly result: () => string,
+    private readonly change: (value: string) => void,
+    private readonly close: () => void,
+    private readonly navigate: (direction: -1 | 1) => void,
+  ) {
+    this.input.onSubmit = () => this.navigate(1);
+  }
+  invalidate(): void {
+    this.input.invalidate();
+  }
+  render(width: number): string[] {
+    this.input.focused = this.focused;
+    return [
+      "Search timeline",
+      ...this.input.render(width),
+      this.result(),
+      "Enter next · Ctrl-P previous · Esc cancel",
+    ];
+  }
+  handleInput(data: string): void {
+    if (data === "\u001b" || matchesKey(data, "escape")) {
+      this.close();
+      return;
+    }
+    if (data === "\u000e") {
+      this.navigate(1);
+      return;
+    }
+    if (data === "\u0010") {
+      this.navigate(-1);
+      return;
+    }
+    if (data === "\r" || matchesKey(data, "enter")) {
+      this.navigate(1);
+      return;
+    }
+    this.input.handleInput(data);
+    this.change(this.input.getValue());
+  }
+}
+
 class ChoiceDialog implements Component {
   private readonly list: SelectList;
   constructor(
@@ -496,10 +563,22 @@ export class DeckTui {
   private treeWidth = 34;
   private overlay: OverlayHandle | undefined;
   private modalKey = "";
+  private searchMatches = findTimelineMatches([], "");
+  private searchIndex = 0;
+  private searchQuery = "";
+  private searchFeedback = "Type to search source text.";
+  private localSnapshot:
+    | {
+        itemId?: string;
+        scrollTop: number;
+        following: boolean;
+        anchor?: { epoch: string; sequence: number };
+      }
+    | undefined;
   private state: AppState;
 
   constructor(
-    terminal: Terminal,
+    private readonly terminal: Terminal,
     initialState: AppState,
     private readonly emit: (intent: UiIntent) => void,
     options: DeckTuiOptions = {},
@@ -514,6 +593,7 @@ export class DeckTui {
       options.renderClock,
       options.frameMilliseconds,
     );
+    this.copyText = options.copyText ?? ((text) => this.writeOsc52(text));
     this.controller = new DeckController(
       () => this.state,
       (intent) => this.handleControllerIntent(intent),
@@ -530,10 +610,35 @@ export class DeckTui {
       else this.pauseTimeline();
     });
     this.setShellLayout();
-    this.tui.addInputListener((data) =>
-      this.controller.handleKey(data) ? { consume: true } : undefined,
-    );
+    this.tui.addInputListener((data) => {
+      // Local overlays have no AppState modal, so keep global bindings from
+      // interpreting their editor/list input.
+      if (this.modalKey.startsWith("__timeline-")) {
+        if (data === "\u0003")
+          return this.controller.handleKey(data) ? { consume: true } : undefined;
+        if (data === "\u001b") {
+          this.restoreLocalOverlay();
+          return { consume: true };
+        }
+        if (this.modalKey === "__timeline-search" && data === "\u000e") {
+          this.moveTimelineSearch(1);
+          return { consume: true };
+        }
+        if (this.modalKey === "__timeline-search" && data === "\u0010") {
+          this.moveTimelineSearch(-1);
+          return { consume: true };
+        }
+        if (this.modalKey === "__timeline-search" && data === "\r") {
+          this.moveTimelineSearch(1);
+          return { consume: true };
+        }
+        return undefined;
+      }
+      return this.controller.handleKey(data) ? { consume: true } : undefined;
+    });
   }
+
+  private readonly copyText: (text: string) => Promise<void> | void;
 
   private setShellLayout(): void {
     const supported = (viewport: { width: number; height: number }): boolean =>
@@ -595,6 +700,8 @@ export class DeckTui {
     this.status.update(state);
     this.tui.setFocus(state.focus === "composer" ? this.composer : null);
     this.syncModal();
+    if (timelineChanged && this.modalKey === "__timeline-search")
+      this.refreshTimelineSearchResults();
     const restoredPaused =
       (previousAgentId !== state.selectedAgentId || recoveryChanged) &&
       state.selectedAgentId !== undefined &&
@@ -648,7 +755,148 @@ export class DeckTui {
       this.renderScheduler.requestImmediate();
       return;
     }
+    if (intent.type === "open-timeline-search") {
+      this.openTimelineSearch();
+      return;
+    }
+    if (intent.type === "open-timeline-copy") {
+      this.openTimelineCopy();
+      return;
+    }
     this.emit(intent);
+  }
+
+  private openTimelineSearch(): void {
+    this.captureLocalSnapshot();
+    this.searchMatches = findTimelineMatches(this.state.timeline.items, "");
+    this.searchIndex = 0;
+    this.searchQuery = "";
+    this.searchFeedback = "Type to search source text.";
+    this.modalKey = "__timeline-search";
+    this.overlay?.hide();
+    this.overlay = this.tui.showOverlay(
+      new SearchDialog(
+        () => this.searchFeedback,
+        (query) => this.updateTimelineSearch(query),
+        () => this.restoreLocalOverlay(),
+        (direction) => this.moveTimelineSearch(direction),
+      ),
+      { width: "70%", minWidth: 28, maxHeight: "70%", margin: 1 },
+    );
+  }
+
+  private updateTimelineSearch(query: string): void {
+    this.searchQuery = query;
+    this.searchMatches = findTimelineMatches(this.state.timeline.items, query);
+    this.searchIndex = 0;
+    const match = this.searchMatches[0];
+    if (!match) {
+      this.searchFeedback = query.trim() ? "No matches." : "Type to search source text.";
+    } else {
+      this.timeline.selectEvent(match.event.item.id);
+      this.revealTimelineSelection();
+      this.searchFeedback = `${this.searchMatches.length} match${this.searchMatches.length === 1 ? "" : "es"} · result 1`;
+    }
+    this.renderScheduler.requestImmediate();
+  }
+
+  private moveTimelineSearch(direction: -1 | 1): void {
+    if (this.searchMatches.length === 0) return;
+    this.searchIndex =
+      (this.searchIndex + direction + this.searchMatches.length) % this.searchMatches.length;
+    const match = this.searchMatches[this.searchIndex];
+    if (match && this.timeline.selectEvent(match.event.item.id)) this.revealTimelineSelection();
+    this.searchFeedback = `${this.searchMatches.length} matches · result ${this.searchIndex + 1}`;
+    this.renderScheduler.requestImmediate();
+  }
+
+  private openTimelineCopy(): void {
+    const item = this.timeline.selectedItem();
+    const targets = item ? copyTargets(item) : [];
+    if (targets.length === 0) {
+      this.searchFeedback = "Selected item has nothing to copy.";
+      this.emit({ type: "notify", message: this.searchFeedback });
+      return;
+    }
+    this.captureLocalSnapshot();
+    this.modalKey = "__timeline-copy";
+    this.overlay?.hide();
+    this.overlay = this.tui.showOverlay(
+      new ChoiceDialog(
+        "Copy selected timeline item",
+        targets.map((target, index) => ({ value: String(index), label: target.label })),
+        (choice) => void this.copyTimelineTarget(targets[Number(choice)]?.text),
+        () => this.restoreLocalOverlay(),
+      ),
+      { width: "70%", minWidth: 28, maxHeight: "70%", margin: 1 },
+    );
+  }
+
+  private async copyTimelineTarget(value: string | undefined): Promise<void> {
+    if (value === undefined) return;
+    try {
+      await this.copyText(clipboardPlainText(value));
+      this.searchFeedback = "Copied.";
+      this.emit({ type: "notify", message: this.searchFeedback });
+    } catch {
+      this.searchFeedback = "Copy failed.";
+      this.emit({ type: "notify", message: this.searchFeedback, kind: "error" });
+    }
+    this.restoreLocalOverlay();
+    this.renderScheduler.requestImmediate();
+  }
+
+  private restoreLocalOverlay(): void {
+    const snapshot = this.localSnapshot;
+    this.disposeLocalOverlay();
+    if (snapshot) {
+      if (snapshot.itemId) this.timeline.selectEvent(snapshot.itemId);
+      if (snapshot.following) this.transcript.scrollToEnd();
+      else this.transcript.scrollTo(snapshot.scrollTop, { disableFollow: true });
+      this.setTimelineFollowing(snapshot.following, snapshot.anchor);
+    }
+    this.tui.setFocus(this.state.focus === "composer" ? this.composer : null);
+    this.renderScheduler.requestImmediate();
+  }
+
+  private disposeLocalOverlay(): void {
+    this.overlay?.hide();
+    this.overlay = undefined;
+    this.modalKey = "";
+    this.localSnapshot = undefined;
+  }
+
+  private captureLocalSnapshot(): void {
+    if (this.localSnapshot) return;
+    const itemId = this.timeline.selectedItem()?.id;
+    const anchor = this.timeline.cursorAtLine(this.transcript.scrollTop);
+    this.localSnapshot = {
+      scrollTop: this.transcript.scrollTop,
+      following: this.transcript.isFollowingEnd,
+      ...(itemId === undefined ? {} : { itemId }),
+      ...(anchor === undefined ? {} : { anchor }),
+    };
+  }
+
+  private refreshTimelineSearchResults(): void {
+    const selectedId = this.searchMatches[this.searchIndex]?.event.item.id;
+    this.searchMatches = findTimelineMatches(this.state.timeline.items, this.searchQuery);
+    if (this.searchMatches.length === 0) {
+      this.searchIndex = 0;
+      this.searchFeedback = this.searchQuery.trim()
+        ? "No matches. Results changed."
+        : "Type to search source text.";
+      return;
+    }
+    const nextIndex = this.searchMatches.findIndex((match) => match.event.item.id === selectedId);
+    this.searchIndex = nextIndex === -1 ? 0 : nextIndex;
+    const match = this.searchMatches[this.searchIndex];
+    if (match) this.timeline.selectEvent(match.event.item.id);
+    this.searchFeedback = `${this.searchMatches.length} matches · result ${this.searchIndex + 1} · updated`;
+  }
+
+  private writeOsc52(text: string): void {
+    this.terminal.write(`\u001b]52;c;${Buffer.from(text).toString("base64")}\u0007`);
   }
 
   private scrollToEndIndicator(): string {
@@ -671,10 +919,15 @@ export class DeckTui {
       this.revealRange(this.transcript, this.timeline.lineRangeForCursor(navigation.anchor));
   }
 
-  private setTimelineFollowing(following: boolean): void {
+  private setTimelineFollowing(
+    following: boolean,
+    rememberedAnchor?: { epoch: string; sequence: number },
+  ): void {
     const agentId = this.state.selectedAgentId;
     if (!agentId) return;
-    const anchor = following ? undefined : this.timeline.cursorAtLine(this.transcript.scrollTop);
+    const anchor = following
+      ? undefined
+      : (rememberedAnchor ?? this.timeline.cursorAtLine(this.transcript.scrollTop));
     this.emit({
       type: "set-timeline-navigation",
       agentId,
@@ -730,6 +983,10 @@ export class DeckTui {
   }
 
   private syncModal(): void {
+    if (this.modalKey.startsWith("__timeline-")) {
+      if (this.state.modal.type === "none") return;
+      this.disposeLocalOverlay();
+    }
     const key = JSON.stringify(this.state.modal);
     if (key === this.modalKey) return;
     this.overlay?.unfocus({ target: this.state.focus === "composer" ? this.composer : null });
@@ -747,6 +1004,7 @@ export class DeckTui {
           "↑↓/j k move · ←→/h l collapse/expand · g/G ends · [/] turns · {} errors · Enter open · Tab focus",
           "i compose · n new · / filter · p permissions · r refresh",
           "o order · v archived · ! attention-only",
+          "Timeline: Ctrl-F search · y copy selected source",
           `[ / ] tree width (${MIN_TREE_WIDTH}–${MAX_TREE_WIDTH})`,
           "x stop · A archive · d detach · e rename · m mode · t thinking",
           "? help · E error details · q quit · Esc cancel",

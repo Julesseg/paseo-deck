@@ -212,6 +212,15 @@ export class ApplicationController {
       case "move-timeline-selection":
       case "move-timeline-selection-boundary":
       case "move-timeline-landmark":
+      case "open-timeline-search":
+      case "open-timeline-copy":
+        return;
+      case "notify":
+        this.apply({
+          type: "notify",
+          message: intent.message,
+          ...(intent.kind ? { kind: intent.kind } : {}),
+        });
         return;
       case "set-timeline-navigation":
         this.apply({
