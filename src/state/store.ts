@@ -28,6 +28,7 @@ export type AppAction =
   | { type: "open-modal"; modal: Exclude<ModalState, { type: "none" }> }
   | { type: "close-modal" }
   | { type: "toggle-expanded"; id: string }
+  | { type: "reveal-workspace"; workspaceId: string }
   | { type: "timeline"; update: TimelineUpdate }
   | { type: "permission-resolved"; agentId: string; requestId: string; allow: boolean }
   | { type: "notify"; message: string; detail?: string; kind?: "info" | "error" }
@@ -112,7 +113,76 @@ function reconcileSelection(state: AppState, directory: DirectorySnapshot): AppS
   else delete next.selectedWorkspaceId;
   if (selectedProject) next.selectedProjectId = selectedProject.id;
   else delete next.selectedProjectId;
+
+  // Directory delivery is eventually consistent. Keep an existing selection by
+  // stable ID, and when that ID truly disappears choose the next surviving row
+  // from the prior sibling order rather than jumping to an arbitrary snapshot row.
+  if (!selectedWorkspace && state.selectedWorkspaceId) {
+    const removed = state.directory.workspaces.find(
+      (item) => item.id === state.selectedWorkspaceId,
+    );
+    const fallback = nearby(
+      state.directory.workspaces,
+      directory.workspaces,
+      state.selectedWorkspaceId,
+      (item) => item.projectId === removed?.projectId,
+    );
+    if (fallback) next.selectedWorkspaceId = fallback.id;
+  }
+  if (!selectedAgent && state.selectedAgentId) {
+    const removed = state.directory.agents.find((item) => item.id === state.selectedAgentId);
+    const fallback = nearby(
+      state.directory.agents,
+      directory.agents,
+      state.selectedAgentId,
+      (item) => item.workspaceId === removed?.workspaceId,
+    );
+    if (fallback) {
+      next.selectedAgentId = fallback.id;
+      next.selectedWorkspaceId = fallback.workspaceId;
+    }
+  }
+  if (!selectedProject && state.selectedProjectId) {
+    const fallback = nearby(
+      state.directory.projects,
+      directory.projects,
+      state.selectedProjectId,
+      () => true,
+    );
+    if (fallback) next.selectedProjectId = fallback.id;
+  }
   return next;
+}
+
+function nearby<T extends { id: string }>(
+  previous: readonly T[],
+  current: readonly T[],
+  removedId: string,
+  matches: (item: T) => boolean,
+): T | undefined {
+  const candidates = previous.filter(matches);
+  const start = Math.max(
+    0,
+    candidates.findIndex((item) => item.id === removedId),
+  );
+  for (const candidate of [
+    ...candidates.slice(start + 1),
+    ...candidates.slice(0, start).reverse(),
+  ]) {
+    const replacement = current.find((item) => item.id === candidate.id);
+    if (replacement) return replacement;
+  }
+  // A snapshot may have no overlap with the prior list; its first sibling is still deterministic.
+  return current.find(matches);
+}
+
+function revealWorkspaceIds(state: AppState, workspaceId: string): ReadonlySet<string> {
+  const workspace = state.directory.workspaces.find((item) => item.id === workspaceId);
+  if (!workspace) return state.expandedIds;
+  const expandedIds = new Set(state.expandedIds);
+  expandedIds.add(workspace.id);
+  if (workspace.projectId) expandedIds.add(workspace.projectId);
+  return expandedIds;
 }
 
 function eventKey(event: TimelineEvent): string {
@@ -357,7 +427,10 @@ export function reduceApp(state: AppState, action: AppAction): AppState {
       };
       if (agentId) next.selectedAgentId = agent?.id ?? agentId;
       else delete next.selectedAgentId;
-      if (agent?.workspaceId) next.selectedWorkspaceId = agent.workspaceId;
+      if (agent?.workspaceId) {
+        next.selectedWorkspaceId = agent.workspaceId;
+        next.expandedIds = revealWorkspaceIds(state, agent.workspaceId);
+      }
       return next;
     }
     case "select-workspace": {
@@ -482,6 +555,9 @@ export function reduceApp(state: AppState, action: AppAction): AppState {
       if (expandedIds.has(action.id)) expandedIds.delete(action.id);
       else expandedIds.add(action.id);
       return { ...state, expandedIds };
+    }
+    case "reveal-workspace": {
+      return { ...state, expandedIds: revealWorkspaceIds(state, action.workspaceId) };
     }
     case "timeline":
       return applyTimeline(state, action.update);

@@ -203,6 +203,26 @@ describe("ApplicationController", () => {
     expect(gateway.releaseCount).toBe(3);
   });
 
+  it("preserves selected tree context through refresh and reconnect snapshots", async () => {
+    const gateway = new FakePaseoGateway(snapshot);
+    const app = new ApplicationController(gateway);
+    await app.start();
+    await app.selectAgent("agent-1");
+    expect(app.state.expandedIds).toEqual(new Set(["workspace-1", "project-1"]));
+
+    await app.handleIntent({ type: "refresh" });
+    expect(app.state.selectedAgentId).toBe("agent-1");
+    expect(app.state.selectedWorkspaceId).toBe("workspace-1");
+    expect(app.state.expandedIds).toEqual(new Set(["workspace-1", "project-1"]));
+
+    gateway.emitDirectory({ type: "connection-changed", state: "reconnecting" });
+    gateway.emitDirectory({ type: "snapshot", snapshot });
+    gateway.emitDirectory({ type: "connection-changed", state: "connected" });
+    expect(app.state.selectedAgentId).toBe("agent-1");
+    expect(app.state.selectedWorkspaceId).toBe("workspace-1");
+    expect(app.state.expandedIds).toEqual(new Set(["workspace-1", "project-1"]));
+  });
+
   it("creates an agent only after provider, model, mode, thinking, and prompt choices", async () => {
     const gateway = new FakePaseoGateway(snapshot);
     const app = new ApplicationController(gateway);
@@ -230,6 +250,7 @@ describe("ApplicationController", () => {
       prompt: "Start here",
     });
     expect(app.state.selectedAgentId).toBe("fake-agent-1");
+    expect(app.state.expandedIds).toEqual(new Set(["workspace-1", "project-1"]));
   });
 
   it("preserves composer text when sending a prompt fails", async () => {

@@ -130,6 +130,110 @@ describe("application store", () => {
     expect(state.composer.drafts["agent-b"]).toBe("draft b");
   });
 
+  it("preserves expansion and selected agent across snapshots, unrelated upserts, and filtering", () => {
+    let state = reduceApp(createInitialState(), {
+      type: "directory",
+      update: { type: "snapshot", snapshot: directory },
+    });
+    state = reduceApp(state, { type: "toggle-expanded", id: "project-a" });
+    state = reduceApp(state, { type: "toggle-expanded", id: "workspace-a" });
+    state = reduceApp(state, { type: "select-agent", agentId: "agent-a" });
+    state = reduceApp(state, { type: "set-filter", filter: "no match" });
+    state = reduceApp(state, {
+      type: "directory",
+      update: { type: "snapshot", snapshot: directory },
+    });
+    const changed = directory.agents[1];
+    if (!changed) throw new Error("fixture requires a second agent");
+    state = reduceApp(state, {
+      type: "directory",
+      update: { type: "agent-upserted", agent: { ...changed, title: "Changed" } },
+    });
+    expect(state.selectedAgentId).toBe("agent-a");
+    expect(state.expandedIds).toEqual(new Set(["project-a", "workspace-a"]));
+    expect(state.filter).toBe("no match");
+  });
+
+  it.each([
+    { type: "project-upserted", project: { id: "project-a", name: "Alpha renamed" } },
+    {
+      type: "workspace-upserted",
+      workspace: {
+        id: "workspace-a",
+        projectId: "project-a",
+        title: "Main renamed",
+        directory: "/a",
+        archived: false,
+      },
+    },
+    {
+      type: "agent-upserted",
+      agent: {
+        id: "agent-b",
+        workspaceId: "workspace-b",
+        title: "Watch renamed",
+        status: "idle",
+        availableModeIds: [],
+        availableThinkingLevels: [],
+        pendingPermissions: [],
+        needsAttention: false,
+        archived: false,
+      },
+    },
+  ] as const)("preserves tree context through $type", (update) => {
+    let state = reduceApp(createInitialState(), {
+      type: "directory",
+      update: { type: "snapshot", snapshot: directory },
+    });
+    state = reduceApp(state, { type: "reveal-workspace", workspaceId: "workspace-a" });
+    state = reduceApp(state, { type: "select-agent", agentId: "agent-a" });
+    state = reduceApp(state, { type: "directory", update });
+    expect(state.selectedAgentId).toBe("agent-a");
+    expect(state.selectedWorkspaceId).toBe("workspace-a");
+    expect(state.expandedIds).toEqual(new Set(["project-a", "workspace-a"]));
+  });
+
+  it("chooses the next surviving sibling when a selected workspace or project disappears", () => {
+    const expanded = new Set(["project-a"]);
+    let state = reduceApp(
+      { ...createInitialState(), expandedIds: expanded },
+      { type: "directory", update: { type: "snapshot", snapshot: directory } },
+    );
+    state = reduceApp(state, { type: "select-workspace", workspaceId: "workspace-a" });
+    state = reduceApp(state, {
+      type: "directory",
+      update: { type: "workspace-removed", workspaceId: "workspace-a" },
+    });
+    expect(state.selectedWorkspaceId).toBeUndefined();
+    expect(state.selectedProjectId).toBe("project-a");
+    state = reduceApp(state, { type: "select-project", projectId: "project-a" });
+    state = reduceApp(state, {
+      type: "directory",
+      update: { type: "project-removed", projectId: "project-a" },
+    });
+    expect(state.selectedProjectId).toBeUndefined();
+  });
+
+  it("falls back to a sibling agent without requiring the workspace selection to disappear", () => {
+    const first = directory.agents[0];
+    if (!first) throw new Error("fixture requires an agent");
+    const withSibling = {
+      ...directory,
+      agents: [...directory.agents, { ...first, id: "agent-a2", title: "Build two" }],
+    };
+    let state = reduceApp(createInitialState(), {
+      type: "directory",
+      update: { type: "snapshot", snapshot: withSibling },
+    });
+    state = reduceApp(state, { type: "select-agent", agentId: "agent-a" });
+    state = reduceApp(state, {
+      type: "directory",
+      update: { type: "agent-removed", agentId: "agent-a" },
+    });
+    expect(state.selectedAgentId).toBe("agent-a2");
+    expect(state.selectedWorkspaceId).toBe("workspace-a");
+  });
+
   it("merges same-message assistant deltas and same-call tool updates", () => {
     let state = reduceApp(createInitialState(), { type: "select-agent", agentId: "agent-a" });
     state = reduceApp(state, {

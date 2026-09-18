@@ -422,6 +422,7 @@ export class ApplicationController {
       if (result.type !== "agent-created")
         throw new Error("Paseo did not return the created agent.");
       this.apply({ type: "close-modal" });
+      this.apply({ type: "reveal-workspace", workspaceId: modal.workspaceId });
       await this.selectAgent(result.agentId);
       this.apply({ type: "notify", message: `Created agent ${shortId(result.agentId)}.` });
     } catch (error) {
