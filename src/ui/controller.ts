@@ -3,6 +3,7 @@ import type { AgentCommand } from "../contracts/commands.js";
 
 export type UiIntent =
   | { type: "select-next"; direction: -1 | 1 }
+  | { type: "select-boundary"; boundary: "start" | "end" }
   | { type: "collapse-or-expand"; direction: -1 | 1 }
   | { type: "select-or-open" }
   | { type: "set-focus"; focus: FocusArea }
@@ -24,6 +25,7 @@ export type UiIntent =
   | { type: "close-modal" }
   | { type: "toggle-timeline-item"; itemId: string }
   | { type: "move-timeline-selection"; direction: -1 | 1 }
+  | { type: "move-timeline-selection-boundary"; boundary: "start" | "end" }
   | { type: "toggle-selected-timeline-item" }
   | { type: "respond-permission"; agentId: string; requestId: string; allow: boolean }
   | { type: "command"; command: AgentCommand }
@@ -69,6 +71,10 @@ export class DeckController {
       return this.send({ type: "navigate-composer-history", direction: -1 });
     if (state.focus === "composer" && data === "\u000e")
       return this.send({ type: "navigate-composer-history", direction: 1 });
+    if (state.focus === "composer" && data === "\t")
+      return this.send({ type: "set-focus", focus: nextFocus(state.focus, 1) });
+    if (state.focus === "composer" && data === "\u001b[Z")
+      return this.send({ type: "set-focus", focus: nextFocus(state.focus, -1) });
     if (isTextEditing(state.modal) || state.focus === "composer") return false;
     if (data === "\u001b") {
       if (state.modal.type !== "none") this.emit({ type: "close-modal" });
@@ -77,16 +83,26 @@ export class DeckController {
     // Every non-text modal owns its own navigation (SelectList, confirmation,
     // and help), rather than letting tree bindings leak through the overlay.
     if (state.modal.type !== "none") return false;
-    if (data === "j")
+    if (data === "j" || data === "\u001b[B")
       return state.focus === "timeline"
         ? this.send({ type: "move-timeline-selection", direction: 1 })
         : this.send({ type: "select-next", direction: 1 });
-    if (data === "k")
+    if (data === "k" || data === "\u001b[A")
       return state.focus === "timeline"
         ? this.send({ type: "move-timeline-selection", direction: -1 })
         : this.send({ type: "select-next", direction: -1 });
-    if (data === "h") return this.send({ type: "collapse-or-expand", direction: -1 });
-    if (data === "l") return this.send({ type: "collapse-or-expand", direction: 1 });
+    if ((data === "h" || data === "\u001b[D") && state.focus === "tree")
+      return this.send({ type: "collapse-or-expand", direction: -1 });
+    if ((data === "l" || data === "\u001b[C") && state.focus === "tree")
+      return this.send({ type: "collapse-or-expand", direction: 1 });
+    if (data === "g")
+      return state.focus === "timeline"
+        ? this.send({ type: "move-timeline-selection-boundary", boundary: "start" })
+        : this.send({ type: "select-boundary", boundary: "start" });
+    if (data === "G")
+      return state.focus === "timeline"
+        ? this.send({ type: "move-timeline-selection-boundary", boundary: "end" })
+        : this.send({ type: "select-boundary", boundary: "end" });
     if (data === "\r")
       return state.focus === "timeline"
         ? this.send({ type: "toggle-selected-timeline-item" })

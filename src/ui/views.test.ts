@@ -176,6 +176,140 @@ describe("creation prompt", () => {
 });
 
 describe("DeckTui viewport and focus", () => {
+  it("keeps a streaming timeline following its newest content", async () => {
+    const terminal = new RecordingTerminal(80, 12);
+    const deck = new DeckTui(terminal, { ...state(), focus: "timeline" }, () => undefined);
+    deck.start();
+    for (let count = 1; count <= 20; count += 1) {
+      deck.update({
+        ...state(),
+        focus: "timeline",
+        timeline: {
+          loading: false,
+          items: Array.from({ length: count }, (_, sequence) => ({
+            epoch: "stream",
+            sequence,
+            item: {
+              id: `stream-${sequence}`,
+              type: "assistant-message" as const,
+              messageId: `stream-${sequence}`,
+              text: `Newest ${sequence}`,
+            },
+          })),
+        },
+      });
+    }
+    await terminal.waitForRender();
+    await deck.stop();
+
+    expect(terminal.viewport().join("\n")).toContain("Newest 19");
+  });
+
+  it("brings explicit timeline boundaries and metadata-height tree selection into view", async () => {
+    const terminal = new RecordingTerminal(80, 12);
+    const base = state();
+    const agents = Array.from({ length: 12 }, (_, index) => ({
+      id: `agent-${index}`,
+      workspaceId: "workspace",
+      title: `Agent ${index}`,
+      status: "idle" as const,
+      providerId: "openai",
+      modelId: "gpt",
+      lastActivityAt: "2026-09-18T10:30:00Z",
+      availableModeIds: [],
+      availableThinkingLevels: [],
+      pendingPermissions: [],
+      needsAttention: false,
+      archived: false,
+    }));
+    const treeState: AppState = {
+      ...base,
+      directory: {
+        ...base.directory,
+        projects: [{ id: "project", name: "Deck" }],
+        workspaces: [
+          {
+            id: "workspace",
+            projectId: "project",
+            title: "Main",
+            directory: "/deck",
+            archived: false,
+          },
+        ],
+        agents,
+      },
+      expandedIds: new Set(["project", "workspace"]),
+      selectedAgentId: "agent-11",
+    };
+    const deck = new DeckTui(terminal, state(), () => undefined);
+    deck.start();
+    const { selectedAgentId: _selectedAgentId, ...unselectedTreeState } = treeState;
+    deck.update(unselectedTreeState);
+    await terminal.waitForRender();
+    deck.update(treeState);
+    await terminal.waitForRender();
+    const treeViewport = terminal.viewport().slice(0, 8).join("\n");
+    expect(treeViewport).toContain("Agent 11");
+    expect(treeViewport).toContain("openai/gpt · 09/18 10:30");
+
+    const timelineState: AppState = {
+      ...treeState,
+      focus: "timeline",
+      timeline: {
+        loading: false,
+        items: Array.from({ length: 20 }, (_, sequence) => ({
+          epoch: "timeline",
+          sequence,
+          item: {
+            id: `event-${sequence}`,
+            type: "user-message" as const,
+            text: `Event ${sequence}`,
+          },
+        })),
+      },
+    };
+    deck.update(timelineState);
+    terminal.sendInput("G");
+    await terminal.waitForRender();
+    expect(terminal.viewport().join("\n")).toContain("Event 19");
+    terminal.sendInput("g");
+    await terminal.waitForRender();
+    await deck.stop();
+
+    expect(terminal.viewport().join("\n")).toContain("Event 0");
+  });
+
+  it("makes focused panes and their contextual footer ASCII-visible", async () => {
+    const terminal = new RecordingTerminal(100, 16);
+    const deck = new DeckTui(terminal, state(), () => undefined);
+
+    deck.start();
+    await terminal.waitForRender();
+    expect(terminal.viewport().join("\n")).toContain("[TREE] Projects / workspaces");
+    expect(terminal.viewport().join("\n")).toContain("Tree: ↑↓ ←→ g/G Tab");
+    deck.update({ ...state(), focus: "timeline" });
+    await terminal.waitForRender();
+    expect(terminal.viewport().join("\n")).toContain("[TIMELINE] Selected agent timeline");
+    expect(terminal.viewport().join("\n")).toContain("Timeline: ↑↓ g/G Enter Tab");
+    deck.update({ ...state(), focus: "composer" });
+    await terminal.waitForRender();
+    await deck.stop();
+
+    expect(terminal.viewport().join("\n")).toContain("[COMPOSER] Prompt");
+    expect(terminal.viewport().join("\n")).toContain("Composer: Esc Ctrl-P/N Enter");
+  });
+
+  it("keeps a named shortcut hint in the narrow supported footer", async () => {
+    const terminal = new RecordingTerminal(30, 12);
+    const deck = new DeckTui(terminal, state(), () => undefined);
+
+    deck.start();
+    await terminal.waitForRender();
+    await deck.stop();
+
+    expect(terminal.viewport().join("\n")).toContain("Tree j/k Tab · connected");
+  });
+
   it("recovers the exact session shell after repeated minimum-size resize cycles", async () => {
     const terminal = new RecordingTerminal(80, 16);
     const base = state();
@@ -477,6 +611,7 @@ describe("DeckTui viewport and focus", () => {
           usage: { inputTokens: 12, outputTokens: 3, contextTokens: 15, contextWindow: 100 },
           items: [],
         },
+        notification: { kind: "info", message: "Directory refreshed." },
       },
       () => undefined,
     );
@@ -488,6 +623,7 @@ describe("DeckTui viewport and focus", () => {
     expect(terminal.viewport().join("\n")).toContain(
       "ready/one · plan · low · context 15/100 · in 12 · out 3",
     );
+    expect(terminal.viewport().join("\n")).toContain("Tree: ↑↓ ←→ g/G Tab");
   });
 
   it("expands the selected collapsed timeline block with Enter", async () => {
@@ -721,12 +857,12 @@ describe("DeckTui viewport and focus", () => {
     await terminal.waitForRender();
     const narrowTree = terminal.viewport().slice(0, 8).join("\n");
     expect(narrowTree).not.toContain("openai/gpt");
-    expect(narrowTree).toContain("Selected agent timeline");
+    expect(narrowTree).toContain("No timeline selected");
     for (let index = 0; index < 50; index += 1) terminal.sendInput("]");
     await terminal.waitForRender();
     const wideTree = terminal.viewport().slice(0, 8).join("\n");
     expect(wideTree).toContain("openai/gpt");
-    expect(wideTree).toContain("Selected agent timeline");
+    expect(wideTree).toContain("No timeline selected");
     deck.update({ ...resizedState, focus: "composer" });
     terminal.sendInput("x");
     await deck.stop();

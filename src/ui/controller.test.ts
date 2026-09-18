@@ -215,6 +215,77 @@ describe("DeckController keyboard seam", () => {
     expect(intents).not.toContainEqual({ type: "select-or-open" });
   });
 
+  it("treats arrows and g/G as their Vim navigation equivalents outside editors", () => {
+    const intents: unknown[] = [];
+    const controller = new DeckController(
+      () => makeState(),
+      (intent) => intents.push(intent),
+    );
+
+    controller.handleKey("\u001b[A");
+    controller.handleKey("\u001b[B");
+    controller.handleKey("\u001b[D");
+    controller.handleKey("\u001b[C");
+    controller.handleKey("g");
+    controller.handleKey("G");
+
+    expect(intents).toEqual([
+      { type: "select-next", direction: -1 },
+      { type: "select-next", direction: 1 },
+      { type: "collapse-or-expand", direction: -1 },
+      { type: "collapse-or-expand", direction: 1 },
+      { type: "select-boundary", boundary: "start" },
+      { type: "select-boundary", boundary: "end" },
+    ]);
+  });
+
+  it("keeps timeline g/G local while text editors retain arrow keys", () => {
+    const timelineIntents: unknown[] = [];
+    const timeline = new DeckController(
+      () => ({ ...makeState(), focus: "timeline" }),
+      (intent) => timelineIntents.push(intent),
+    );
+    timeline.handleKey("g");
+    timeline.handleKey("G");
+    timeline.handleKey("\u001b[A");
+
+    const composer = new DeckController(
+      () => ({ ...makeState(), focus: "composer" }),
+      () => undefined,
+    );
+    expect(composer.handleKey("\u001b[A")).toBe(false);
+
+    expect(timelineIntents).toEqual([
+      { type: "move-timeline-selection-boundary", boundary: "start" },
+      { type: "move-timeline-selection-boundary", boundary: "end" },
+      { type: "move-timeline-selection", direction: -1 },
+    ]);
+  });
+
+  it("cycles focus forward and backward with Tab", () => {
+    let current = makeState();
+    const intents: unknown[] = [];
+    const controller = new DeckController(
+      () => current,
+      (intent) => {
+        intents.push(intent);
+        if (intent.type === "set-focus") current = { ...current, focus: intent.focus };
+      },
+    );
+
+    controller.handleKey("\t");
+    controller.handleKey("\t");
+    controller.handleKey("\t");
+    controller.handleKey("\u001b[Z");
+
+    expect(intents).toEqual([
+      { type: "set-focus", focus: "timeline" },
+      { type: "set-focus", focus: "composer" },
+      { type: "set-focus", focus: "tree" },
+      { type: "set-focus", focus: "composer" },
+    ]);
+  });
+
   it("escapes composer editing without discarding its text", () => {
     const intents: unknown[] = [];
     const controller = new DeckController(

@@ -156,6 +156,16 @@ describe("ApplicationController", () => {
     expect(app.state.selectedAgentId).toBe("agent-orphan");
   });
 
+  it("derives tree start and end boundaries from the current visible rows", async () => {
+    const app = new ApplicationController(new FakePaseoGateway(remoteSnapshot));
+    await app.start();
+
+    await app.handleIntent({ type: "select-boundary", boundary: "end" });
+    expect(app.state.selectedWorkspaceId).toBe("workspace-orphan");
+    await app.handleIntent({ type: "select-boundary", boundary: "start" });
+    expect(app.state.selectedProjectId).toBe("remote:github.com/acme/paseo-deck");
+  });
+
   it("integrates directory, timelines, permissions, focus changes, and reconnects exactly once", async () => {
     const gateway = new FakePaseoGateway(snapshot);
     const app = new ApplicationController(gateway);

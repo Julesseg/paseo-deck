@@ -72,7 +72,7 @@ class TreeView implements Component {
   invalidate(): void {}
   render(width: number): string[] {
     return [
-      "Projects / workspaces",
+      `${this.state.focus === "tree" ? "[TREE]" : " Tree "} Projects / workspaces`,
       ...deriveTreeRows(this.state).flatMap((row) => {
         const selected = row.selected ? ">" : " ";
         const branch = row.kind === "agent" ? "•" : row.expanded ? "▾" : "▸";
@@ -92,6 +92,17 @@ class TreeView implements Component {
           : [primary];
       }),
     ];
+  }
+
+  selectedLineRange(width: number): { start: number; end: number } | undefined {
+    let line = 1;
+    for (const row of deriveTreeRows(this.state)) {
+      const height =
+        row.kind === "agent" && width >= 34 && (row.providerModel || row.activityLabel) ? 2 : 1;
+      if (row.selected) return { start: line, end: line + height - 1 };
+      line += height;
+    }
+    return undefined;
   }
 }
 
@@ -154,11 +165,14 @@ class TimelineView implements Component {
   private expanded = new Set<string>();
   private heading = "Selected agent timeline";
   private selectedIndex = 0;
+  private focused = false;
+  private renderedWidth = 80;
   updateSelection(state: AppState): void {
     const selected = state.directory.agents.find((agent) => agent.id === state.selectedAgentId);
     this.heading = selected
       ? `Selected agent timeline · ${selected.title} [${shortAgentId(selected.id)}]`
       : "Selected agent timeline";
+    this.focused = state.focus === "timeline";
   }
   update(events: readonly TimelineEvent[]): void {
     this.events = events;
@@ -182,6 +196,10 @@ class TimelineView implements Component {
       Math.min(this.events.length - 1, this.selectedIndex + direction),
     );
   }
+  moveSelectionBoundary(boundary: "start" | "end"): void {
+    if (this.events.length > 0)
+      this.selectedIndex = boundary === "start" ? 0 : this.events.length - 1;
+  }
   toggleSelected(): void {
     const selected = this.events[this.selectedIndex];
     if (selected) this.toggle(selected.item.id);
@@ -196,7 +214,9 @@ class TimelineView implements Component {
     for (const item of this.itemViews.values()) item.invalidate();
   }
   render(width: number): string[] {
-    const heading = width < 18 ? "Timeline" : this.heading;
+    this.renderedWidth = width;
+    const heading =
+      width < 18 ? "Timeline" : `${this.focused ? "[TIMELINE]" : " Timeline  "} ${this.heading}`;
     if (this.events.length === 0) return [heading, "No timeline selected."];
     return [
       clipTerminalLine(heading, width),
@@ -206,6 +226,17 @@ class TimelineView implements Component {
         return lines.map((line) => clipTerminalLine(line, width));
       }),
     ];
+  }
+
+  selectedLineRange(): { start: number; end: number } | undefined {
+    if (this.events.length === 0) return undefined;
+    let line = 1;
+    for (const [index, event] of this.events.entries()) {
+      const height = this.itemViews.get(event.item.id)?.render(this.renderedWidth).length ?? 0;
+      if (index === this.selectedIndex) return { start: line, end: line + height - 1 };
+      line += height;
+    }
+    return undefined;
   }
 }
 
@@ -247,7 +278,8 @@ class ComposerView implements Component, Focusable {
         : !availability.canSend
           ? ` · ${availability.reason}`
           : "";
-    return [clip(`${destination}${status}`, width), ...this.editor.render(width)];
+    const heading = `${this.state.focus === "composer" ? "[COMPOSER]" : " Composer  "} ${destination}${status}`;
+    return [clip(heading, width), ...this.editor.render(width)];
   }
   handleInput(data: string): void {
     this.editor.handleInput(data);
@@ -287,12 +319,35 @@ class StatusView implements Component {
     const notification = this.state.notification
       ? ` · ${this.state.notification.kind}: ${this.state.notification.message}${this.state.notification.detail ? " · E details" : ""}`
       : "";
+    const context = footerContext(this.state, width);
     return [
       clip(
-        `${this.state.connection}${compact ? "" : ` · ${details} · permissions ${permissions}`}${notification}`,
+        `${context} · ${this.state.connection}${compact ? "" : ` · ${details} · permissions ${permissions}`}${notification}`,
         width,
       ),
     ];
+  }
+}
+
+function footerContext(state: AppState, width: number): string {
+  if (state.modal.type !== "none") return "Dialog: Esc";
+  if (width < 70) {
+    switch (state.focus) {
+      case "tree":
+        return "Tree j/k Tab";
+      case "timeline":
+        return "Timeline j/k Enter";
+      case "composer":
+        return "Composer Esc Enter";
+    }
+  }
+  switch (state.focus) {
+    case "tree":
+      return "Tree: ↑↓ ←→ g/G Tab";
+    case "timeline":
+      return "Timeline: ↑↓ g/G Enter Tab";
+    case "composer":
+      return "Composer: Esc Ctrl-P/N Enter";
   }
 }
 
@@ -371,6 +426,7 @@ export class DeckTui {
   private readonly composer: ComposerView;
   private readonly status: StatusView;
   private readonly renderScheduler: RenderScheduler;
+  private readonly treeTranscript: ScrollView;
   private readonly transcript: ScrollView;
   private readonly minimumSize: MinimumSizeView;
   private treeWidth = 34;
@@ -404,6 +460,7 @@ export class DeckTui {
     this.composer = new ComposerView(this.tui, initialState, emit);
     this.status = new StatusView(initialState);
     this.minimumSize = new MinimumSizeView();
+    this.treeTranscript = new ScrollView(this.tree, { follow: "none", scrollbar: "auto" });
     this.transcript = new ScrollView(this.timeline, {
       follow: "end",
       primary: true,
@@ -423,7 +480,12 @@ export class DeckTui {
         {
           component: new HStack(
             [
-              { component: this.tree, basis: this.treeWidth, shrink: 1, minSize: MIN_TREE_WIDTH },
+              {
+                component: this.treeTranscript,
+                basis: this.treeWidth,
+                shrink: 1,
+                minSize: MIN_TREE_WIDTH,
+              },
               { component: this.transcript, basis: 0, grow: 1, minSize: 10 },
             ],
             { gap: 2 },
@@ -454,6 +516,11 @@ export class DeckTui {
   }
   update(state: AppState): void {
     const timelineChanged = state.timeline.items !== this.state.timeline.items;
+    const focusChanged = state.focus !== this.state.focus;
+    const treeSelectionChanged =
+      state.selectedAgentId !== this.state.selectedAgentId ||
+      state.selectedWorkspaceId !== this.state.selectedWorkspaceId ||
+      state.selectedProjectId !== this.state.selectedProjectId;
     this.state = state;
     this.tree.update(state);
     this.timeline.update(state.timeline.items);
@@ -462,6 +529,10 @@ export class DeckTui {
     this.status.update(state);
     this.tui.setFocus(state.focus === "composer" ? this.composer : null);
     this.syncModal();
+    if (focusChanged || treeSelectionChanged) {
+      if (state.focus === "timeline") this.revealTimelineSelection();
+      else if (state.focus === "tree") this.revealTreeSelection();
+    }
     if (timelineChanged) this.renderScheduler.request();
     else this.renderScheduler.requestImmediate();
   }
@@ -474,6 +545,14 @@ export class DeckTui {
   private handleControllerIntent(intent: UiIntent): void {
     if (intent.type === "move-timeline-selection") {
       this.timeline.moveSelection(intent.direction);
+      this.revealTimelineSelection();
+      this.renderScheduler.requestImmediate();
+      return;
+    }
+    if (intent.type === "move-timeline-selection-boundary") {
+      this.timeline.moveSelectionBoundary(intent.boundary);
+      if (intent.boundary === "start") this.transcript.scrollToStart();
+      else this.transcript.scrollToEnd();
       this.renderScheduler.requestImmediate();
       return;
     }
@@ -491,6 +570,30 @@ export class DeckTui {
     this.emit(intent);
   }
 
+  private revealTreeSelection(): void {
+    this.revealRange(this.treeTranscript, this.tree.selectedLineRange(this.treeWidth));
+  }
+
+  private revealTimelineSelection(): void {
+    this.revealRange(this.transcript, this.timeline.selectedLineRange());
+  }
+
+  private revealRange(
+    scrollView: ScrollView,
+    range: { start: number; end: number } | undefined,
+  ): void {
+    if (range === undefined) return;
+    if (scrollView.viewportHeight <= 0) {
+      scrollView.scrollTo(range.start, { disableFollow: true });
+      return;
+    }
+    const top = scrollView.scrollTop;
+    const bottom = top + scrollView.viewportHeight - 1;
+    if (range.start < top) scrollView.scrollTo(range.start, { disableFollow: true });
+    else if (range.end > bottom)
+      scrollView.scrollTo(range.end - scrollView.viewportHeight + 1, { disableFollow: true });
+  }
+
   private syncModal(): void {
     const key = JSON.stringify(this.state.modal);
     if (key === this.modalKey) return;
@@ -506,7 +609,7 @@ export class DeckTui {
       component = new Dialog(
         [
           "Paseo Deck keys",
-          "j/k move · h/l collapse/expand · Enter open · Tab focus",
+          "↑↓/j k move · ←→/h l collapse/expand · g/G ends · Enter open · Tab focus",
           "i compose · n new · / filter · p permissions · r refresh",
           "o order · v archived · ! attention-only",
           `[ / ] tree width (${MIN_TREE_WIDTH}–${MAX_TREE_WIDTH})`,

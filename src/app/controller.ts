@@ -117,6 +117,9 @@ export class ApplicationController {
       case "select-next":
         await this.moveSelection(intent.direction);
         return;
+      case "select-boundary":
+        await this.moveSelectionBoundary(intent.boundary);
+        return;
       case "collapse-or-expand":
         this.collapseOrExpand(intent.direction);
         return;
@@ -206,6 +209,9 @@ export class ApplicationController {
         return;
       case "toggle-timeline-item":
         return;
+      case "move-timeline-selection":
+      case "move-timeline-selection-boundary":
+        return;
       case "respond-permission":
         await this.runCommand({
           type: "respond-permission",
@@ -247,6 +253,12 @@ export class ApplicationController {
     const current = rows.findIndex((row) => row.id === selectedId);
     const index = current === -1 ? (direction === 1 ? 0 : rows.length - 1) : current + direction;
     const row = rows[Math.max(0, Math.min(rows.length - 1, index))];
+    if (row) await this.selectRow(row);
+  }
+
+  private async moveSelectionBoundary(boundary: "start" | "end"): Promise<void> {
+    const rows = deriveTreeRows(this.#state);
+    const row = boundary === "start" ? rows[0] : rows.at(-1);
     if (row) await this.selectRow(row);
   }
 
