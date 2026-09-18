@@ -204,8 +204,20 @@ class StatusView implements Component {
     const selected = this.state.directory.agents.find(
       (agent) => agent.id === this.state.selectedAgentId,
     );
+    const usage = this.state.timeline.usage ?? selected?.lastUsage;
+    const usageDetails = usage
+      ? [
+          usage.contextTokens !== undefined
+            ? `context ${usage.contextTokens}${usage.contextWindow ? `/${usage.contextWindow}` : ""}`
+            : undefined,
+          usage.inputTokens !== undefined ? `in ${usage.inputTokens}` : undefined,
+          usage.outputTokens !== undefined ? `out ${usage.outputTokens}` : undefined,
+        ]
+          .filter(Boolean)
+          .join(" · ")
+      : undefined;
     const details = selected
-      ? `${selected.providerId ?? "unknown"}/${selected.modelId ?? "unknown"}${selected.thinkingLevel ? ` · ${selected.thinkingLevel}` : ""}`
+      ? `${selected.providerId ?? "unknown"}/${selected.modelId ?? "unknown"}${selected.modeId ? ` · ${selected.modeId}` : ""}${selected.thinkingLevel ? ` · ${selected.thinkingLevel}` : ""}${usageDetails ? ` · ${usageDetails}` : ""}`
       : "no agent selected";
     const permissions = this.state.directory.agents.reduce(
       (total, agent) => total + agent.pendingPermissions.length,
@@ -329,10 +341,13 @@ export class DeckTui {
     this.tui.setLayoutRoot(
       new VStack([
         {
-          component: new HStack([
-            { component: this.tree, basis: 30, shrink: 1, minSize: 18 },
-            { component: transcript, basis: 0, grow: 1, minSize: 12 },
-          ]),
+          component: new HStack(
+            [
+              { component: this.tree, basis: 30, shrink: 1, minSize: 18 },
+              { component: transcript, basis: 0, grow: 1, minSize: 12 },
+            ],
+            { gap: 2 },
+          ),
           basis: 0,
           grow: 1,
           minSize: 3,
@@ -499,9 +514,20 @@ export function creationChoices(
   return [];
 }
 
-function agentChoices(state: AppState, type: "mode" | "thinking"): SelectItem[] {
+export function agentChoices(state: AppState, type: "mode" | "thinking"): SelectItem[] {
   const agent = state.directory.agents.find((candidate) => candidate.id === state.selectedAgentId);
-  const values = type === "mode" ? agent?.availableModeIds : agent?.availableThinkingLevels;
+  const provider = state.directory.providers.find(
+    (candidate) => candidate.id === agent?.providerId,
+  );
+  const model = provider?.models.find((candidate) => candidate.id === agent?.modelId);
+  const values =
+    type === "mode"
+      ? agent?.availableModeIds.length
+        ? agent.availableModeIds
+        : provider?.modeIds
+      : agent?.availableThinkingLevels.length
+        ? agent.availableThinkingLevels
+        : model?.thinkingLevels;
   return (values ?? []).map((value) => ({ value, label: value }));
 }
 

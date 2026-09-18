@@ -35,6 +35,10 @@ export class DeckController {
 
   handleKey(data: string): boolean {
     const state = this.getState();
+    // ProcessTerminal enables raw mode, so Ctrl+C is delivered as input rather
+    // than raising SIGINT. It must remain a global escape hatch even while an
+    // editor or modal owns the keyboard.
+    if (data === "\u0003") return this.send({ type: "quit" });
     if (state.modal.type === "permission") {
       if (data === "a")
         this.emit({

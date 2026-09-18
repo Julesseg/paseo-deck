@@ -282,6 +282,50 @@ describe("ProductionPaseoGateway", () => {
     });
   });
 
+  it("orders cursorless turn events without colliding with timeline cursors", async () => {
+    const fixture = testClient();
+    fixture.timeline.refetch
+      .mockResolvedValueOnce({
+        epoch: "epoch-1",
+        entries: [{ seqStart: 1, seqEnd: 1, item: { type: "user_message", text: "one" } }],
+        endCursor: { epoch: "epoch-1", seq: 1 },
+      })
+      .mockResolvedValueOnce({ epoch: "epoch-1", entries: [], endCursor: null });
+    const gateway = new ProductionPaseoGateway({
+      host: "127.0.0.1:6767",
+      createClient: () => fixture.client as never,
+    });
+    await gateway.connect();
+    const updates: Array<Record<string, unknown>> = [];
+    await gateway.focusAgent("agent-1", (update) => updates.push(update as never));
+
+    fixture.emitTimeline({
+      epoch: "epoch-1",
+      seq: 2,
+      event: {
+        type: "timeline",
+        item: { type: "assistant_message", messageId: "m1", text: "two" },
+      },
+    });
+    fixture.emitTimeline({ event: { type: "turn_completed", turnId: "turn-1" } });
+
+    const delivered = updates.filter((update) => update.type === "event") as Array<{
+      event: { sequence: number; item: { type: string } };
+    }>;
+    expect(delivered).toHaveLength(2);
+    expect(delivered[0]?.event.sequence).toBe(2);
+    expect(delivered[1]?.event.item.type).toBe("turn");
+    expect(delivered[1]?.event.sequence).toBeGreaterThan(2);
+
+    fixture.emitTimeline({ event: { type: "subscription_restored" } });
+    await vi.waitFor(() => expect(fixture.timeline.refetch).toHaveBeenCalledTimes(2));
+    expect(fixture.timeline.refetch).toHaveBeenLastCalledWith({
+      direction: "after",
+      cursor: { epoch: "epoch-1", seq: 2 },
+      projection: "projected",
+    });
+  });
+
   it("does not deliver late hydration after closing the focused observation", async () => {
     const page = deferred<Record<string, unknown>>();
     const fixture = testClient({ page: page.promise });

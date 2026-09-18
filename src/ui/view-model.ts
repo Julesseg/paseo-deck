@@ -63,7 +63,10 @@ export function deriveTreeRows(state: AppState): TreeRow[] {
       label: group.name,
       depth: 0,
       expanded,
-      selected: state.selectedProjectId === group.id,
+      selected:
+        state.selectedProjectId === group.id &&
+        state.selectedWorkspaceId === undefined &&
+        state.selectedAgentId === undefined,
       attention: false,
       permissionCount: 0,
     });
@@ -76,7 +79,7 @@ export function deriveTreeRows(state: AppState): TreeRow[] {
         label: workspace.title,
         depth: 1,
         expanded: workspaceExpanded,
-        selected: state.selectedWorkspaceId === workspace.id,
+        selected: state.selectedWorkspaceId === workspace.id && state.selectedAgentId === undefined,
         attention: false,
         permissionCount: 0,
       });

@@ -120,6 +120,17 @@ describe("DeckController keyboard seam", () => {
     expect(intents).toEqual([]);
   });
 
+  it("treats raw-mode Ctrl+C as a global quit even while editing", () => {
+    const intents: unknown[] = [];
+    const controller = new DeckController(
+      () => ({ ...makeState(), modal: { type: "rename", agentId: "a", value: "draft" } }),
+      (intent) => intents.push(intent),
+    );
+
+    expect(controller.handleKey("\u0003")).toBe(true);
+    expect(intents).toEqual([{ type: "quit" }]);
+  });
+
   it("does not turn composer text into global shortcuts", () => {
     const intents: unknown[] = [];
     const controller = new DeckController(

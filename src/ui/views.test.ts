@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { AppState } from "../contracts/app-state.js";
 import { emptyDirectory } from "../contracts/app-state.js";
 import { RecordingTerminal } from "./terminal.js";
-import { creationChoices, DeckTui, highlightFencedCode } from "./views.js";
+import { agentChoices, creationChoices, DeckTui, highlightFencedCode } from "./views.js";
 
 function state(): AppState {
   return {
@@ -71,6 +71,35 @@ describe("creation picker choices", () => {
       }),
     ).toEqual([{ value: "low", label: "low" }]);
   });
+
+  it("falls back to provider discovery for an existing agent's mutable choices", () => {
+    const base = state();
+    const withAgent: AppState = {
+      ...base,
+      selectedAgentId: "agent",
+      directory: {
+        ...base.directory,
+        agents: [
+          {
+            id: "agent",
+            workspaceId: "workspace",
+            title: "Agent",
+            status: "idle",
+            providerId: "ready",
+            modelId: "one",
+            availableModeIds: [],
+            availableThinkingLevels: [],
+            pendingPermissions: [],
+            needsAttention: false,
+            archived: false,
+          },
+        ],
+      },
+    };
+
+    expect(agentChoices(withAgent, "mode")).toEqual([{ value: "plan", label: "plan" }]);
+    expect(agentChoices(withAgent, "thinking")).toEqual([{ value: "low", label: "low" }]);
+  });
 });
 
 describe("fenced code highlighter", () => {
@@ -109,6 +138,53 @@ describe("creation prompt", () => {
 });
 
 describe("DeckTui viewport and focus", () => {
+  it("shows mode and token context in the status line when space allows", async () => {
+    const terminal = new RecordingTerminal(120, 18);
+    const base = state();
+    const deck = new DeckTui(
+      terminal,
+      {
+        ...base,
+        selectedAgentId: "agent",
+        directory: {
+          ...base.directory,
+          agents: [
+            {
+              id: "agent",
+              workspaceId: "workspace",
+              title: "Agent",
+              status: "idle",
+              providerId: "ready",
+              modelId: "one",
+              modeId: "plan",
+              thinkingLevel: "low",
+              availableModeIds: [],
+              availableThinkingLevels: [],
+              pendingPermissions: [],
+              needsAttention: false,
+              archived: false,
+            },
+          ],
+        },
+        timeline: {
+          agentId: "agent",
+          loading: false,
+          usage: { inputTokens: 12, outputTokens: 3, contextTokens: 15, contextWindow: 100 },
+          items: [],
+        },
+      },
+      () => undefined,
+    );
+
+    deck.start();
+    await terminal.waitForRender();
+    await deck.stop();
+
+    expect(terminal.viewport().join("\n")).toContain(
+      "ready/one · plan · low · context 15/100 · in 12 · out 3",
+    );
+  });
+
   it("expands the selected collapsed timeline block with Enter", async () => {
     const terminal = new RecordingTerminal(70, 16);
     const deck = new DeckTui(

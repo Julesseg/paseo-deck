@@ -28,12 +28,12 @@
   "dependencies": {
     "@earendil-works/pi-tui": "0.85.1",
     "@getpaseo/client": "0.8.0",
-    "@getpaseo/protocol": "0.8.0"
+    "@getpaseo/protocol": "0.8.0",
+    "@xterm/headless": "5.5.0"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.14",
     "@types/node": "26.6.1",
-    "@xterm/headless": "5.5.0",
     "tsx": "4.23.13",
     "typescript": "7.0.2",
     "vitest": "5.0.1"

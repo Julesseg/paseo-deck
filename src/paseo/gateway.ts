@@ -94,6 +94,10 @@ export class ProductionPaseoGateway implements PaseoGateway {
           url: target.websocketUrl,
           ...(target.password === undefined ? {} : { password: target.password }),
           reconnect: { enabled: true },
+          // SDK background task failures otherwise write directly to stderr
+          // after the alternate screen has been restored. Request failures and
+          // owned observation errors are surfaced through the gateway instead.
+          logger: quietPaseoLogger,
         }) as unknown as ClientSurface);
   }
 
@@ -272,11 +276,15 @@ export class ProductionPaseoGateway implements PaseoGateway {
         asRecord(message.event) ?? (asRecord(message.payload)?.event as UnknownRecord | undefined);
       if (stream === undefined) return;
       const epoch = stringValue(message.epoch) ?? activeEpoch ?? "live";
-      const sequence = numberValue(message.seq) ?? ++syntheticSequence;
+      const wireSequence = numberValue(message.seq);
+      const sequence = wireSequence ?? syntheticControlSequence(epoch, cursor, ++syntheticSequence);
       const event = timelineEvent(epoch, sequence, stream, agentId);
       if (event === undefined) return;
       activeEpoch = epoch;
-      cursor = latestCursor(cursor, { epoch, sequence });
+      // Control events such as turn_started and turn_completed intentionally
+      // carry no daemon cursor. Give them stable ordering space between real
+      // timeline entries without advancing reconnect recovery past the server.
+      if (wireSequence !== undefined) cursor = latestCursor(cursor, { epoch, sequence });
       if (stream.type === "usage_updated") {
         listener({ type: "usage", agentId, usage: usageSummary(stream.usage) });
       }
@@ -407,6 +415,22 @@ export class ProductionPaseoGateway implements PaseoGateway {
     return this.client;
   }
 }
+
+function syntheticControlSequence(
+  epoch: string,
+  cursor: TimelineCursor | undefined,
+  ordinal: number,
+): number {
+  const base = cursor?.epoch === epoch ? cursor.sequence : -1;
+  return base + ordinal / 1_000_000;
+}
+
+const quietPaseoLogger = {
+  debug: (_object: object, _message?: string): void => undefined,
+  info: (_object: object, _message?: string): void => undefined,
+  warn: (_object: object, _message?: string): void => undefined,
+  error: (_object: object, _message?: string): void => undefined,
+};
 
 export function createPaseoGateway(options?: PaseoGatewayOptions): ProductionPaseoGateway {
   return new ProductionPaseoGateway(options);
