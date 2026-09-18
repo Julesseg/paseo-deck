@@ -46,7 +46,8 @@ function state(): AppState {
     attentionOnly: false,
     focus: "tree",
     modal: { type: "none" },
-    timeline: { items: [], loading: false },
+    timeline: { recoveryRevision: 0, items: [], loading: false },
+    timelineNavigation: {},
     composer: {
       drafts: {},
       histories: {},

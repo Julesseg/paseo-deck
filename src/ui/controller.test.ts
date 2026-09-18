@@ -42,7 +42,8 @@ function makeState(): AppState {
     attentionOnly: false,
     focus: "tree",
     modal: { type: "none" },
-    timeline: { items: [], loading: false },
+    timeline: { recoveryRevision: 0, items: [], loading: false },
+    timelineNavigation: {},
     composer: {
       drafts: {},
       histories: {},
@@ -194,6 +195,7 @@ describe("DeckController keyboard seam", () => {
         ...makeState(),
         focus: "timeline",
         timeline: {
+          recoveryRevision: 0,
           loading: false,
           items: [
             {
@@ -259,6 +261,30 @@ describe("DeckController keyboard seam", () => {
       { type: "move-timeline-selection-boundary", boundary: "start" },
       { type: "move-timeline-selection-boundary", boundary: "end" },
       { type: "move-timeline-selection", direction: -1 },
+    ]);
+  });
+
+  it("uses focus-scoped bracket pairs for turns and errors without leaking into editors", () => {
+    const intents: unknown[] = [];
+    const timeline = new DeckController(
+      () => ({ ...makeState(), focus: "timeline" }),
+      (intent) => intents.push(intent),
+    );
+    timeline.handleKey("[");
+    timeline.handleKey("]");
+    timeline.handleKey("{");
+    timeline.handleKey("}");
+    const composer = new DeckController(
+      () => ({ ...makeState(), focus: "composer" }),
+      () => undefined,
+    );
+
+    expect(composer.handleKey("[")).toBe(false);
+    expect(intents).toEqual([
+      { type: "move-timeline-landmark", direction: -1, kind: "turn" },
+      { type: "move-timeline-landmark", direction: 1, kind: "turn" },
+      { type: "move-timeline-landmark", direction: -1, kind: "error" },
+      { type: "move-timeline-landmark", direction: 1, kind: "error" },
     ]);
   });
 

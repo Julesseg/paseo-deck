@@ -211,6 +211,15 @@ export class ApplicationController {
         return;
       case "move-timeline-selection":
       case "move-timeline-selection-boundary":
+      case "move-timeline-landmark":
+        return;
+      case "set-timeline-navigation":
+        this.apply({
+          type: "set-timeline-navigation",
+          agentId: intent.agentId,
+          following: intent.following,
+          ...(intent.anchor === undefined ? {} : { anchor: intent.anchor }),
+        });
         return;
       case "respond-permission":
         await this.runCommand({

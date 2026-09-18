@@ -1,4 +1,10 @@
-import type { AppState, FocusArea, ModalState, TreeOrder } from "../contracts/app-state.js";
+import type {
+  AppState,
+  FocusArea,
+  ModalState,
+  TimelineNavigationState,
+  TreeOrder,
+} from "../contracts/app-state.js";
 import { emptyDirectory } from "../contracts/app-state.js";
 import type {
   AgentRecord,
@@ -32,6 +38,12 @@ export type AppAction =
   | { type: "close-modal" }
   | { type: "toggle-expanded"; id: string }
   | { type: "reveal-workspace"; workspaceId: string }
+  | {
+      type: "set-timeline-navigation";
+      agentId: string;
+      following: boolean;
+      anchor?: TimelineCursor;
+    }
   | { type: "timeline"; update: TimelineUpdate }
   | { type: "permission-resolved"; agentId: string; requestId: string; allow: boolean }
   | { type: "notify"; message: string; detail?: string; kind?: "info" | "error" }
@@ -55,7 +67,8 @@ export function createInitialState(): AppState {
     attentionOnly: false,
     focus: "tree",
     modal: { type: "none" },
-    timeline: { items: [], loading: false },
+    timeline: { items: [], loading: false, recoveryRevision: 0 },
+    timelineNavigation: {},
     composer: createComposerState(),
   };
 }
@@ -111,7 +124,7 @@ function reconcileSelection(state: AppState, directory: DirectorySnapshot): AppS
   const next: AppState = {
     ...state,
     directory,
-    timeline: selectedAgent ? state.timeline : { items: [], loading: false },
+    timeline: selectedAgent ? state.timeline : { items: [], loading: false, recoveryRevision: 0 },
   };
   if (selectedAgent) next.selectedAgentId = selectedAgent.id;
   else delete next.selectedAgentId;
@@ -357,6 +370,7 @@ type TimelineChanges = {
   usage?: AppState["timeline"]["usage"] | undefined;
   loading?: boolean;
   error?: string | undefined;
+  recoveryRevision?: number;
 };
 
 function timelineWith<T extends AppState["timeline"]>(
@@ -378,45 +392,89 @@ function focusMatches(state: AppState, agentId: string): boolean {
   return state.selectedAgentId === agentId && state.timeline.agentId === agentId;
 }
 
+function timelineNavigation(state: AppState, agentId: string): TimelineNavigationState {
+  return state.timelineNavigation[agentId] ?? { following: true, unread: 0 };
+}
+
+function withUnreadForNewEntries(
+  state: AppState,
+  agentId: string,
+  before: readonly TimelineEvent[],
+  after: readonly TimelineEvent[],
+): AppState {
+  const navigation = timelineNavigation(state, agentId);
+  const known = new Set(before.map(timelineIdentity));
+  const unread = after.reduce(
+    (total, event) => total + (known.has(timelineIdentity(event)) ? 0 : 1),
+    0,
+  );
+  if (navigation.following || unread === 0) return state;
+  return {
+    ...state,
+    timelineNavigation: {
+      ...state.timelineNavigation,
+      [agentId]: { ...navigation, unread: navigation.unread + unread },
+    },
+  };
+}
+
+function timelineIdentity(event: TimelineEvent): string {
+  const item = event.item;
+  if (item.type === "assistant-message") return `assistant:${item.messageId}`;
+  if (item.type === "tool") return `tool:${item.callId}`;
+  return `${item.type}:${item.id}`;
+}
+
 function applyTimeline(state: AppState, update: TimelineUpdate): AppState {
   if (update.type === "hydrated") {
     if (state.selectedAgentId !== update.agentId) return state;
     const appended = appendEvents(state.timeline.items, update.items, consumedOf(state.timeline));
     const cursor = advanceCursor(state.timeline.cursor, update.items, update.cursor);
-    return {
-      ...state,
-      timeline: timelineWith(
-        state.timeline,
-        {
-          agentId: update.agentId,
-          items: appended.items,
-          ...(cursor === undefined ? {} : { cursor, epoch: cursor.epoch }),
-          loading: false,
-          error: undefined,
-        },
-        appended.consumed,
-      ),
-    };
+    return withUnreadForNewEntries(
+      {
+        ...state,
+        timeline: timelineWith(
+          state.timeline,
+          {
+            agentId: update.agentId,
+            items: appended.items,
+            ...(cursor === undefined ? {} : { cursor, epoch: cursor.epoch }),
+            loading: false,
+            error: undefined,
+          },
+          appended.consumed,
+        ),
+      },
+      update.agentId,
+      state.timeline.items,
+      appended.items,
+    );
   }
   if (update.type === "replaced") {
     if (state.selectedAgentId !== update.agentId) return state;
     const appended = appendEvents([], update.items, new Set());
     const cursor = advanceCursor(undefined, update.items, update.cursor);
-    return {
-      ...state,
-      timeline: timelineWith(
-        state.timeline,
-        {
-          agentId: update.agentId,
-          epoch: update.epoch,
-          items: appended.items,
-          ...(cursor === undefined ? {} : { cursor }),
-          loading: false,
-          error: undefined,
-        },
-        appended.consumed,
-      ),
-    };
+    return withUnreadForNewEntries(
+      {
+        ...state,
+        timeline: timelineWith(
+          state.timeline,
+          {
+            agentId: update.agentId,
+            epoch: update.epoch,
+            items: appended.items,
+            ...(cursor === undefined ? {} : { cursor }),
+            loading: false,
+            recoveryRevision: state.timeline.recoveryRevision + 1,
+            error: undefined,
+          },
+          appended.consumed,
+        ),
+      },
+      update.agentId,
+      state.timeline.items,
+      appended.items,
+    );
   }
   if (update.type === "event" || update.type === "restored") {
     if (update.type === "event" && !focusMatches(state, update.agentId)) return state;
@@ -424,19 +482,27 @@ function applyTimeline(state: AppState, update: TimelineUpdate): AppState {
     const additions = update.type === "event" ? [update.event] : update.missed;
     const appended = appendEvents(state.timeline.items, additions, consumedOf(state.timeline));
     const cursor = advanceCursor(state.timeline.cursor, additions);
-    return {
-      ...state,
-      timeline: timelineWith(
-        state.timeline,
-        {
-          agentId: update.agentId,
-          items: appended.items,
-          ...(cursor === undefined ? {} : { cursor, epoch: cursor.epoch }),
-          loading: false,
-        },
-        appended.consumed,
-      ),
-    };
+    return withUnreadForNewEntries(
+      {
+        ...state,
+        timeline: timelineWith(
+          state.timeline,
+          {
+            agentId: update.agentId,
+            items: appended.items,
+            ...(cursor === undefined ? {} : { cursor, epoch: cursor.epoch }),
+            loading: false,
+            ...(update.type === "restored"
+              ? { recoveryRevision: state.timeline.recoveryRevision + 1 }
+              : {}),
+          },
+          appended.consumed,
+        ),
+      },
+      update.agentId,
+      state.timeline.items,
+      appended.items,
+    );
   }
   if (update.type === "usage") {
     if (!focusMatches(state, update.agentId)) return state;
@@ -486,7 +552,9 @@ export function reduceApp(state: AppState, action: AppAction): AppState {
       const agentId = action.agentId?.trim();
       const next: AppState = {
         ...state,
-        timeline: agentId ? { agentId, items: [], loading: true } : { items: [], loading: false },
+        timeline: agentId
+          ? { agentId, items: [], loading: true, recoveryRevision: 0 }
+          : { items: [], loading: false, recoveryRevision: 0 },
         focus: "timeline",
       };
       if (agentId) next.selectedAgentId = agent?.id ?? agentId;
@@ -506,7 +574,7 @@ export function reduceApp(state: AppState, action: AppAction): AppState {
       );
       const next: AppState = {
         ...state,
-        timeline: { items: [], loading: false },
+        timeline: { items: [], loading: false, recoveryRevision: 0 },
         focus: "tree",
       };
       if (action.workspaceId) next.selectedWorkspaceId = action.workspaceId;
@@ -519,7 +587,7 @@ export function reduceApp(state: AppState, action: AppAction): AppState {
     case "select-project": {
       const next: AppState = {
         ...state,
-        timeline: { items: [], loading: false },
+        timeline: { items: [], loading: false, recoveryRevision: 0 },
         focus: "tree",
       };
       if (action.projectId) next.selectedProjectId = action.projectId;
@@ -628,6 +696,20 @@ export function reduceApp(state: AppState, action: AppAction): AppState {
     }
     case "reveal-workspace": {
       return { ...state, expandedIds: revealWorkspaceIds(state, action.workspaceId) };
+    }
+    case "set-timeline-navigation": {
+      const current = timelineNavigation(state, action.agentId);
+      return {
+        ...state,
+        timelineNavigation: {
+          ...state.timelineNavigation,
+          [action.agentId]: {
+            following: action.following,
+            unread: action.following ? 0 : current.unread,
+            ...(action.following || action.anchor === undefined ? {} : { anchor: action.anchor }),
+          },
+        },
+      };
     }
     case "timeline":
       return applyTimeline(state, action.update);

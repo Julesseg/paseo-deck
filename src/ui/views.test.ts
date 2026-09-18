@@ -2,6 +2,8 @@ import { describe, expect, it, vi } from "vitest";
 
 import type { AppState } from "../contracts/app-state.js";
 import { emptyDirectory } from "../contracts/app-state.js";
+import type { TimelineEvent } from "../contracts/domain.js";
+import { reduceApp } from "../state/store.js";
 import type { RenderClock } from "./render-scheduler.js";
 import { RecordingTerminal } from "./terminal.js";
 import { terminalDisplayWidth } from "./text-safety.js";
@@ -39,7 +41,8 @@ function state(): AppState {
     attentionOnly: false,
     focus: "tree",
     modal: { type: "none" },
-    timeline: { items: [], loading: false },
+    timeline: { recoveryRevision: 0, items: [], loading: false },
+    timelineNavigation: {},
     composer: {
       drafts: {},
       histories: {},
@@ -183,6 +186,7 @@ describe("DeckTui viewport and focus", () => {
       {
         ...state(),
         timeline: {
+          recoveryRevision: 0,
           loading: false,
           items: [
             {
@@ -215,6 +219,7 @@ describe("DeckTui viewport and focus", () => {
       {
         ...state(),
         timeline: {
+          recoveryRevision: 0,
           loading: false,
           items: [
             {
@@ -252,6 +257,7 @@ describe("DeckTui viewport and focus", () => {
         ...state(),
         focus: "timeline",
         timeline: {
+          recoveryRevision: 0,
           loading: false,
           items: Array.from({ length: count }, (_, sequence) => ({
             epoch: "stream",
@@ -270,6 +276,231 @@ describe("DeckTui viewport and focus", () => {
     await deck.stop();
 
     expect(terminal.viewport().join("\n")).toContain("Newest 19");
+  });
+
+  it("keeps paused scrollback fixed, marks unread output, and resumes at the end", async () => {
+    const terminal = new RecordingTerminal(80, 14);
+    const items = Array.from({ length: 12 }, (_, sequence) => ({
+      epoch: "stream",
+      sequence,
+      item: {
+        id: `message-${sequence}`,
+        type: "assistant-message" as const,
+        messageId: `message-${sequence}`,
+        text: `event ${sequence}`,
+      },
+    }));
+    const initial = {
+      ...state(),
+      selectedAgentId: "agent",
+      focus: "timeline" as const,
+      timeline: { recoveryRevision: 0, loading: false, agentId: "agent", items },
+      timelineNavigation: { agent: { following: true, unread: 0 } },
+    };
+    const deck = new DeckTui(terminal, initial, () => undefined);
+    deck.start();
+    await terminal.waitForRender();
+    deck.tui.scrollBy(-4);
+    await terminal.waitForRender();
+    const pausedTop = deck.tui.viewportTop;
+    deck.update({
+      ...initial,
+      timeline: {
+        recoveryRevision: 0,
+        loading: false,
+        agentId: "agent",
+        items: [
+          ...items,
+          {
+            epoch: "stream",
+            sequence: 12,
+            item: {
+              id: "new",
+              type: "assistant-message",
+              messageId: "new",
+              text: "new event",
+            },
+          },
+        ],
+      },
+      timelineNavigation: {
+        agent: { following: false, unread: 1, anchor: { epoch: "stream", sequence: 4 } },
+      },
+    });
+    await terminal.waitForRender();
+
+    expect(deck.tui.viewportTop).toBe(pausedTop);
+    expect(terminal.viewport().join("\n")).toContain("1 new · G end");
+    deck.tui.scrollBy(999);
+    await terminal.waitForRender();
+    expect(terminal.viewport().join("\n")).not.toContain("2 new · G end");
+    await deck.stop();
+
+    expect(terminal.viewport().join("\n")).toContain("new event");
+  });
+
+  it("counts consecutive unseen identities once while paused and clears them on G", async () => {
+    const terminal = new RecordingTerminal(80, 14);
+    const items = Array.from({ length: 10 }, (_, sequence) => ({
+      epoch: "stream",
+      sequence,
+      item: {
+        id: `message-${sequence}`,
+        type: "assistant-message" as const,
+        messageId: `message-${sequence}`,
+        text: `event ${sequence}`,
+      },
+    }));
+    const initial = {
+      ...state(),
+      selectedAgentId: "agent",
+      focus: "timeline" as const,
+      timeline: { recoveryRevision: 0, loading: false, agentId: "agent", items },
+      timelineNavigation: { agent: { following: true, unread: 0 } },
+    };
+    let current: AppState = initial;
+    const deck = new DeckTui(terminal, initial, (intent) => {
+      if (intent.type !== "set-timeline-navigation") return;
+      current = reduceApp(current, {
+        type: "set-timeline-navigation",
+        agentId: intent.agentId,
+        following: intent.following,
+        ...(intent.anchor === undefined ? {} : { anchor: intent.anchor }),
+      });
+      deck.update(current);
+    });
+    deck.start();
+    await terminal.waitForRender();
+    deck.tui.scrollBy(-3);
+    expect(current.timelineNavigation.agent).toMatchObject({ following: false, unread: 0 });
+    const append = (sequence: number, item: TimelineEvent["item"]): void => {
+      current = reduceApp(current, {
+        type: "timeline",
+        update: { type: "event", agentId: "agent", event: { epoch: "stream", sequence, item } },
+      });
+      deck.update(current);
+    };
+    append(10, { id: "first", type: "error", message: "first unseen" });
+    await terminal.waitForRender();
+    expect(terminal.viewport().join("\n")).toContain("1 new · G end");
+    append(11, { id: "second", type: "turn", status: "completed" });
+    append(12, {
+      id: "delta",
+      type: "assistant-message",
+      messageId: "message-0",
+      text: "event 0 updated",
+    });
+    await terminal.waitForRender();
+    expect(current.timelineNavigation.agent?.unread).toBe(2);
+    expect(terminal.viewport().join("\n")).toContain("2 new · G end");
+    terminal.sendInput("G");
+    await terminal.waitForRender();
+    await deck.stop();
+
+    expect(current.timelineNavigation.agent).toEqual({ following: true, unread: 0 });
+  });
+
+  it("moves between turn, error, and failed-tool landmarks from the timeline", async () => {
+    const terminal = new RecordingTerminal(80, 14);
+    const deck = new DeckTui(
+      terminal,
+      {
+        ...state(),
+        focus: "timeline",
+        timeline: {
+          recoveryRevision: 0,
+          loading: false,
+          items: [
+            { epoch: "e", sequence: 1, item: { id: "user", type: "user-message", text: "start" } },
+            { epoch: "e", sequence: 2, item: { id: "turn", type: "turn", status: "started" } },
+            { epoch: "e", sequence: 3, item: { id: "error", type: "error", message: "failed" } },
+            {
+              epoch: "e",
+              sequence: 4,
+              item: { id: "tool", type: "tool", callId: "c", name: "git", status: "failed" },
+            },
+          ],
+        },
+      },
+      () => undefined,
+    );
+    deck.start();
+    await terminal.waitForRender();
+    terminal.sendInput("]");
+    terminal.sendInput("}");
+    await terminal.waitForRender();
+    await deck.stop();
+
+    expect(terminal.viewport().join("\n")).toContain("> Error: failed");
+  });
+
+  it("restores an agent's paused semantic anchor after switching away and back", async () => {
+    const terminal = new RecordingTerminal(80, 14);
+    const items = Array.from({ length: 12 }, (_, sequence) => ({
+      epoch: "a",
+      sequence,
+      item: {
+        id: `message-${sequence}`,
+        type: "assistant-message" as const,
+        messageId: `message-${sequence}`,
+        text: `event ${sequence}`,
+      },
+    }));
+    let current: AppState = {
+      ...state(),
+      selectedAgentId: "a",
+      focus: "timeline",
+      timeline: { recoveryRevision: 0, loading: false, agentId: "a", items },
+      timelineNavigation: { a: { following: true, unread: 0 } },
+    };
+    const deck = new DeckTui(terminal, current, (intent) => {
+      if (intent.type !== "set-timeline-navigation") return;
+      current = reduceApp(current, {
+        type: "set-timeline-navigation",
+        agentId: intent.agentId,
+        following: intent.following,
+        ...(intent.anchor === undefined ? {} : { anchor: intent.anchor }),
+      });
+      deck.update(current);
+    });
+    deck.start();
+    await terminal.waitForRender();
+    deck.tui.scrollBy(-4);
+    await terminal.waitForRender();
+    const pausedAnchor = current.timelineNavigation.a?.anchor;
+    const recoveredItems = [
+      {
+        epoch: "a",
+        sequence: -1,
+        item: { id: "recovered", type: "error" as const, message: "older" },
+      },
+      ...items,
+    ];
+    current = {
+      ...current,
+      timeline: { recoveryRevision: 1, loading: false, agentId: "a", items: recoveredItems },
+    };
+    deck.update(current);
+    await terminal.waitForRender();
+    expect(terminal.viewport().join("\n")).toContain(`event ${pausedAnchor?.sequence}`);
+    current = {
+      ...current,
+      selectedAgentId: "b",
+      timeline: { recoveryRevision: 0, loading: false, agentId: "b", items: [] },
+      timelineNavigation: { ...current.timelineNavigation, b: { following: true, unread: 0 } },
+    };
+    deck.update(current);
+    current = {
+      ...current,
+      selectedAgentId: "a",
+      timeline: { recoveryRevision: 1, loading: false, agentId: "a", items: recoveredItems },
+    };
+    deck.update(current);
+    await terminal.waitForRender();
+    await deck.stop();
+
+    expect(current.timelineNavigation.a?.following).toBe(false);
+    expect(terminal.viewport().join("\n")).toContain(`event ${pausedAnchor?.sequence}`);
   });
 
   it("brings explicit timeline boundaries and metadata-height tree selection into view", async () => {
@@ -323,6 +554,7 @@ describe("DeckTui viewport and focus", () => {
       ...treeState,
       focus: "timeline",
       timeline: {
+        recoveryRevision: 0,
         loading: false,
         items: Array.from({ length: 20 }, (_, sequence) => ({
           epoch: "timeline",
@@ -357,7 +589,9 @@ describe("DeckTui viewport and focus", () => {
     deck.update({ ...state(), focus: "timeline" });
     await terminal.waitForRender();
     expect(terminal.viewport().join("\n")).toContain("[TIMELINE] Selected agent timeline");
-    expect(terminal.viewport().join("\n")).toContain("Timeline: ↑↓ g/G Enter Tab");
+    expect(terminal.viewport().join("\n")).toContain(
+      "Timeline: ↑↓ g/G [] turns {} errors Enter Tab",
+    );
     deck.update({ ...state(), focus: "composer" });
     await terminal.waitForRender();
     await deck.stop();
@@ -387,6 +621,7 @@ describe("DeckTui viewport and focus", () => {
       focus: "composer",
       composer: { ...base.composer, drafts: { agent: "Keep this draft" } },
       timeline: {
+        recoveryRevision: 0,
         loading: false,
         items: Array.from({ length: 20 }, (_, sequence) => ({
           epoch: "resize",
@@ -558,6 +793,7 @@ describe("DeckTui viewport and focus", () => {
     const streamed = (text: string): AppState => ({
       ...state(),
       timeline: {
+        recoveryRevision: 0,
         loading: false,
         items: [
           {
@@ -673,6 +909,7 @@ describe("DeckTui viewport and focus", () => {
           ],
         },
         timeline: {
+          recoveryRevision: 0,
           agentId: "agent",
           loading: false,
           usage: { inputTokens: 12, outputTokens: 3, contextTokens: 15, contextWindow: 100 },
@@ -701,6 +938,7 @@ describe("DeckTui viewport and focus", () => {
         ...state(),
         focus: "timeline",
         timeline: {
+          recoveryRevision: 0,
           loading: false,
           items: [
             {
@@ -745,6 +983,7 @@ describe("DeckTui viewport and focus", () => {
     const terminal = new RecordingTerminal(42, 14);
     const base = state();
     const timeline = {
+      recoveryRevision: 0,
       agentId: "agent",
       loading: false,
       items: [

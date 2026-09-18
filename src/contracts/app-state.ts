@@ -43,7 +43,16 @@ export interface FocusedTimelineState {
   items: readonly TimelineEvent[];
   usage?: UsageSummary;
   loading: boolean;
+  /** Advances only when recovery replaces or restores history ordering. */
+  recoveryRevision: number;
   error?: string;
+}
+
+/** Semantic scrollback intent, retained per agent without terminal line coordinates. */
+export interface TimelineNavigationState {
+  following: boolean;
+  unread: number;
+  anchor?: TimelineCursor;
 }
 
 export interface NotificationState {
@@ -75,6 +84,7 @@ export interface AppState {
   focus: FocusArea;
   modal: ModalState;
   timeline: FocusedTimelineState;
+  timelineNavigation: Readonly<Record<string, TimelineNavigationState>>;
   composer: ComposerState;
   notification?: NotificationState;
 }

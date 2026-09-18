@@ -62,7 +62,7 @@ describe("application store", () => {
     expect(state).toMatchObject({
       selectedProjectId: "project-a",
       selectedWorkspaceId: "workspace-a",
-      timeline: { items: [], loading: false },
+      timeline: { recoveryRevision: 0, items: [], loading: false },
     });
     expect(state.selectedAgentId).toBeUndefined();
 
@@ -71,7 +71,7 @@ describe("application store", () => {
 
     expect(state).toMatchObject({
       selectedProjectId: "project-a",
-      timeline: { items: [], loading: false },
+      timeline: { recoveryRevision: 0, items: [], loading: false },
     });
     expect(state.selectedWorkspaceId).toBeUndefined();
     expect(state.selectedAgentId).toBeUndefined();
@@ -314,6 +314,116 @@ describe("application store", () => {
     expect(state.timeline.cursor).toEqual({ epoch: "epoch-1", sequence: 4 });
   });
 
+  it("retains per-agent scrollback intent and counts only new timeline entries as unread", () => {
+    let state = reduceApp(createInitialState(), { type: "select-agent", agentId: "agent-a" });
+    state = reduceApp(state, {
+      type: "set-timeline-navigation",
+      agentId: "agent-a",
+      following: false,
+      anchor: { epoch: "epoch-1", sequence: 1 },
+    });
+    state = reduceApp(state, {
+      type: "timeline",
+      update: {
+        type: "event",
+        agentId: "agent-a",
+        event: event(1, { id: "message", type: "assistant-message", messageId: "m", text: "one" }),
+      },
+    });
+    state = reduceApp(state, {
+      type: "timeline",
+      update: {
+        type: "event",
+        agentId: "agent-a",
+        event: event(2, { id: "delta", type: "assistant-message", messageId: "m", text: "two" }),
+      },
+    });
+    state = reduceApp(state, {
+      type: "timeline",
+      update: {
+        type: "event",
+        agentId: "agent-a",
+        event: event(3, { id: "error", type: "error", message: "failed" }),
+      },
+    });
+
+    expect(state.timelineNavigation["agent-a"]).toEqual({
+      following: false,
+      unread: 2,
+      anchor: { epoch: "epoch-1", sequence: 1 },
+    });
+    state = reduceApp(state, {
+      type: "set-timeline-navigation",
+      agentId: "agent-a",
+      following: true,
+    });
+    expect(state.timelineNavigation["agent-a"]).toEqual({ following: true, unread: 0 });
+  });
+
+  it("uses semantic identities when replacement and restored updates reorder timeline entries", () => {
+    let state = reduceApp(createInitialState(), { type: "select-agent", agentId: "agent-a" });
+    const assistant = event(1, {
+      id: "assistant-1",
+      type: "assistant-message",
+      messageId: "message-1",
+      text: "one",
+    });
+    const error = event(2, { id: "error-1", type: "error", message: "failed" });
+    state = reduceApp(state, {
+      type: "timeline",
+      update: { type: "hydrated", agentId: "agent-a", items: [assistant, error] },
+    });
+    state = reduceApp(state, {
+      type: "set-timeline-navigation",
+      agentId: "agent-a",
+      following: false,
+    });
+    state = reduceApp(state, {
+      type: "timeline",
+      update: { type: "replaced", agentId: "agent-a", epoch: "epoch-2", items: [error, assistant] },
+    });
+    state = reduceApp(state, {
+      type: "timeline",
+      update: {
+        type: "restored",
+        agentId: "agent-a",
+        missed: [
+          event(3, {
+            id: "assistant-2",
+            type: "assistant-message",
+            messageId: "message-1",
+            text: "two",
+          }),
+          event(4, { id: "turn-2", type: "turn", status: "completed" }),
+        ],
+      },
+    });
+
+    expect(state.timelineNavigation["agent-a"]?.unread).toBe(1);
+    expect(state.timeline.recoveryRevision).toBe(2);
+  });
+
+  it("keeps a paused agent's navigation intent while another agent is focused", () => {
+    let state = reduceApp(createInitialState(), { type: "select-agent", agentId: "agent-a" });
+    state = reduceApp(state, {
+      type: "set-timeline-navigation",
+      agentId: "agent-a",
+      following: false,
+      anchor: { epoch: "epoch-1", sequence: 7 },
+    });
+    state = reduceApp(state, { type: "select-agent", agentId: "agent-b" });
+    state = reduceApp(state, { type: "select-agent", agentId: "agent-a" });
+
+    expect(state.timelineNavigation["agent-a"]).toMatchObject({
+      following: false,
+      anchor: { epoch: "epoch-1", sequence: 7 },
+    });
+    expect(state.timelineNavigation["agent-b"] ?? { following: true, unread: 0 }).toEqual({
+      following: true,
+      unread: 0,
+    });
+  });
+
   it("merges stable turn updates without losing trusted start timing", () => {
     let state = reduceApp(createInitialState(), { type: "select-agent", agentId: "agent-a" });
     state = reduceApp(state, {
@@ -515,6 +625,6 @@ describe("application store", () => {
 
     expect(state.directory.agents.map((agent) => agent.id)).toEqual(["agent-b"]);
     expect(state.selectedAgentId).toBeUndefined();
-    expect(state.timeline).toEqual({ items: [], loading: false });
+    expect(state.timeline).toEqual({ items: [], loading: false, recoveryRevision: 0 });
   });
 });

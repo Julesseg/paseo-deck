@@ -188,6 +188,7 @@ function syntheticState(): AppState {
     focus: "tree",
     modal: { type: "none" },
     timeline: {
+      recoveryRevision: 0,
       agentId: "agent-atlas-1234",
       epoch: "demo",
       cursor: { epoch: "demo", sequence: 5 },
@@ -237,6 +238,7 @@ function syntheticState(): AppState {
         },
       ],
     },
+    timelineNavigation: {},
     composer: {
       drafts: {},
       histories: {},

@@ -205,6 +205,16 @@ class TimelineView implements Component {
     if (this.events.length > 0)
       this.selectedIndex = boundary === "start" ? 0 : this.events.length - 1;
   }
+  moveLandmark(direction: -1 | 1, kind: "turn" | "error"): void {
+    const candidates = this.events
+      .map((event, index) => ({ event, index }))
+      .filter(({ event }) => landmark(event.item, kind));
+    const candidate =
+      direction === -1
+        ? [...candidates].reverse().find(({ index }) => index < this.selectedIndex)
+        : candidates.find(({ index }) => index > this.selectedIndex);
+    if (candidate) this.selectedIndex = candidate.index;
+  }
   toggleSelected(): void {
     const selected = this.events[this.selectedIndex];
     if (selected) this.toggle(selected.item.id);
@@ -242,6 +252,55 @@ class TimelineView implements Component {
       line += height;
     }
     return undefined;
+  }
+
+  cursorAtLine(line: number): { epoch: string; sequence: number } | undefined {
+    let start = 1;
+    for (const event of this.events) {
+      const height = this.itemViews.get(event.item.id)?.render(this.renderedWidth).length ?? 0;
+      if (line >= start && line < start + height)
+        return { epoch: event.epoch, sequence: event.sequence };
+      start += height;
+    }
+    return undefined;
+  }
+
+  lineRangeForCursor(cursor: {
+    epoch: string;
+    sequence: number;
+  }): { start: number; end: number } | undefined {
+    let start = 1;
+    for (const event of this.events) {
+      const height = this.itemViews.get(event.item.id)?.render(this.renderedWidth).length ?? 0;
+      if (event.epoch === cursor.epoch && event.sequence === cursor.sequence)
+        return { start, end: start + height - 1 };
+      start += height;
+    }
+    return undefined;
+  }
+}
+
+function landmark(item: TimelineItem, kind: "turn" | "error"): boolean {
+  return kind === "turn"
+    ? item.type === "turn"
+    : item.type === "error" || (item.type === "tool" && item.status === "failed");
+}
+
+class TimelineScrollView extends ScrollView {
+  constructor(
+    component: Component,
+    private readonly onFollowChange: (following: boolean) => void,
+  ) {
+    super(component, { follow: "end", primary: true, scrollbar: "auto" });
+  }
+
+  override scrollBy(lines: number): number {
+    const wasFollowing = this.isFollowingEnd;
+    const before = this.scrollTop;
+    const remaining = super.scrollBy(lines);
+    if (before !== this.scrollTop && wasFollowing !== this.isFollowingEnd)
+      this.onFollowChange(this.isFollowingEnd);
+    return remaining;
   }
 }
 
@@ -341,7 +400,7 @@ function footerContext(state: AppState, width: number): string {
       case "tree":
         return "Tree j/k Tab";
       case "timeline":
-        return "Timeline j/k Enter";
+        return "Timeline j/k G [] {}";
       case "composer":
         return "Composer Esc Enter";
     }
@@ -350,7 +409,7 @@ function footerContext(state: AppState, width: number): string {
     case "tree":
       return "Tree: ↑↓ ←→ g/G Tab";
     case "timeline":
-      return "Timeline: ↑↓ g/G Enter Tab";
+      return "Timeline: ↑↓ g/G [] turns {} errors Enter Tab";
     case "composer":
       return "Composer: Esc Ctrl-P/N Enter";
   }
@@ -432,7 +491,7 @@ export class DeckTui {
   private readonly status: StatusView;
   private readonly renderScheduler: RenderScheduler;
   private readonly treeTranscript: ScrollView;
-  private readonly transcript: ScrollView;
+  private readonly transcript: TimelineScrollView;
   private readonly minimumSize: MinimumSizeView;
   private treeWidth = 34;
   private overlay: OverlayHandle | undefined;
@@ -447,7 +506,7 @@ export class DeckTui {
   ) {
     this.state = initialState;
     this.tui = new TuiAltScreen(terminal, undefined, undefined, {
-      scrollToEndIndicator: () => "↓ End",
+      scrollToEndIndicator: () => this.scrollToEndIndicator(),
     });
     this.lifecycle = new TerminalLifecycle(this.tui, terminal);
     this.renderScheduler = new RenderScheduler(
@@ -466,10 +525,9 @@ export class DeckTui {
     this.status = new StatusView(initialState);
     this.minimumSize = new MinimumSizeView();
     this.treeTranscript = new ScrollView(this.tree, { follow: "none", scrollbar: "auto" });
-    this.transcript = new ScrollView(this.timeline, {
-      follow: "end",
-      primary: true,
-      scrollbar: "auto",
+    this.transcript = new TimelineScrollView(this.timeline, (following) => {
+      if (following) this.setTimelineFollowing(true);
+      else this.pauseTimeline();
     });
     this.setShellLayout();
     this.tui.addInputListener((data) =>
@@ -526,6 +584,9 @@ export class DeckTui {
       state.selectedAgentId !== this.state.selectedAgentId ||
       state.selectedWorkspaceId !== this.state.selectedWorkspaceId ||
       state.selectedProjectId !== this.state.selectedProjectId;
+    const previousAgentId = this.state.selectedAgentId;
+    const recoveryChanged =
+      state.timeline.recoveryRevision !== this.state.timeline.recoveryRevision;
     this.state = state;
     this.tree.update(state);
     this.timeline.update(state.timeline.items);
@@ -534,8 +595,14 @@ export class DeckTui {
     this.status.update(state);
     this.tui.setFocus(state.focus === "composer" ? this.composer : null);
     this.syncModal();
+    const restoredPaused =
+      (previousAgentId !== state.selectedAgentId || recoveryChanged) &&
+      state.selectedAgentId !== undefined &&
+      state.timelineNavigation[state.selectedAgentId]?.following === false;
+    if (previousAgentId !== state.selectedAgentId || recoveryChanged)
+      this.restoreTimelineNavigation(state);
     if (focusChanged || treeSelectionChanged) {
-      if (state.focus === "timeline") this.revealTimelineSelection();
+      if (state.focus === "timeline" && !restoredPaused) this.revealTimelineSelection();
       else if (state.focus === "tree") this.revealTreeSelection();
     }
     if (timelineChanged) this.renderScheduler.request();
@@ -551,6 +618,7 @@ export class DeckTui {
     if (intent.type === "move-timeline-selection") {
       this.timeline.moveSelection(intent.direction);
       this.revealTimelineSelection();
+      this.pauseIfScrolledAwayFromEnd();
       this.renderScheduler.requestImmediate();
       return;
     }
@@ -558,6 +626,14 @@ export class DeckTui {
       this.timeline.moveSelectionBoundary(intent.boundary);
       if (intent.boundary === "start") this.transcript.scrollToStart();
       else this.transcript.scrollToEnd();
+      this.setTimelineFollowing(intent.boundary === "end");
+      this.renderScheduler.requestImmediate();
+      return;
+    }
+    if (intent.type === "move-timeline-landmark") {
+      this.timeline.moveLandmark(intent.direction, intent.kind);
+      this.revealTimelineSelection();
+      this.setTimelineFollowing(false);
       this.renderScheduler.requestImmediate();
       return;
     }
@@ -573,6 +649,60 @@ export class DeckTui {
       return;
     }
     this.emit(intent);
+  }
+
+  private scrollToEndIndicator(): string {
+    const agentId = this.state.selectedAgentId;
+    const navigation = agentId ? this.state.timelineNavigation[agentId] : undefined;
+    return navigation && !navigation.following && navigation.unread > 0
+      ? `${navigation.unread} new · G end`
+      : "↓ End";
+  }
+
+  private restoreTimelineNavigation(state: AppState): void {
+    const agentId = state.selectedAgentId;
+    if (!agentId) return;
+    const navigation = state.timelineNavigation[agentId] ?? { following: true, unread: 0 };
+    if (navigation.following) {
+      this.transcript.scrollToEnd();
+      return;
+    }
+    if (navigation.anchor)
+      this.revealRange(this.transcript, this.timeline.lineRangeForCursor(navigation.anchor));
+  }
+
+  private setTimelineFollowing(following: boolean): void {
+    const agentId = this.state.selectedAgentId;
+    if (!agentId) return;
+    const anchor = following ? undefined : this.timeline.cursorAtLine(this.transcript.scrollTop);
+    this.emit({
+      type: "set-timeline-navigation",
+      agentId,
+      following,
+      ...(anchor === undefined ? {} : { anchor }),
+    });
+  }
+
+  private pauseTimeline(): void {
+    const agentId = this.state.selectedAgentId;
+    if (!agentId) return;
+    this.persistPausedTimeline(agentId, this.timeline.cursorAtLine(this.transcript.scrollTop));
+  }
+
+  private pauseIfScrolledAwayFromEnd(): void {
+    if (!this.transcript.isFollowingEnd) this.pauseTimeline();
+  }
+
+  private persistPausedTimeline(
+    agentId: string,
+    anchor: { epoch: string; sequence: number } | undefined,
+  ): void {
+    this.emit({
+      type: "set-timeline-navigation",
+      agentId,
+      following: false,
+      ...(anchor === undefined ? {} : { anchor }),
+    });
   }
 
   private revealTreeSelection(): void {
@@ -614,7 +744,7 @@ export class DeckTui {
       component = new Dialog(
         [
           "Paseo Deck keys",
-          "↑↓/j k move · ←→/h l collapse/expand · g/G ends · Enter open · Tab focus",
+          "↑↓/j k move · ←→/h l collapse/expand · g/G ends · [/] turns · {} errors · Enter open · Tab focus",
           "i compose · n new · / filter · p permissions · r refresh",
           "o order · v archived · ! attention-only",
           `[ / ] tree width (${MIN_TREE_WIDTH}–${MAX_TREE_WIDTH})`,

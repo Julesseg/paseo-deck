@@ -26,6 +26,13 @@ export type UiIntent =
   | { type: "toggle-timeline-item"; itemId: string }
   | { type: "move-timeline-selection"; direction: -1 | 1 }
   | { type: "move-timeline-selection-boundary"; boundary: "start" | "end" }
+  | { type: "move-timeline-landmark"; direction: -1 | 1; kind: "turn" | "error" }
+  | {
+      type: "set-timeline-navigation";
+      agentId: string;
+      following: boolean;
+      anchor?: { epoch: string; sequence: number };
+    }
   | { type: "toggle-selected-timeline-item" }
   | { type: "respond-permission"; agentId: string; requestId: string; allow: boolean }
   | { type: "command"; command: AgentCommand }
@@ -103,6 +110,14 @@ export class DeckController {
       return state.focus === "timeline"
         ? this.send({ type: "move-timeline-selection-boundary", boundary: "end" })
         : this.send({ type: "select-boundary", boundary: "end" });
+    if (state.focus === "timeline" && data === "[")
+      return this.send({ type: "move-timeline-landmark", direction: -1, kind: "turn" });
+    if (state.focus === "timeline" && data === "]")
+      return this.send({ type: "move-timeline-landmark", direction: 1, kind: "turn" });
+    if (state.focus === "timeline" && data === "{")
+      return this.send({ type: "move-timeline-landmark", direction: -1, kind: "error" });
+    if (state.focus === "timeline" && data === "}")
+      return this.send({ type: "move-timeline-landmark", direction: 1, kind: "error" });
     if (data === "\r")
       return state.focus === "timeline"
         ? this.send({ type: "toggle-selected-timeline-item" })
