@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { AppState } from "../contracts/app-state.js";
 import { emptyDirectory } from "../contracts/app-state.js";
 import { RecordingTerminal } from "./terminal.js";
+import { terminalDisplayWidth } from "./text-safety.js";
 import { agentChoices, creationChoices, DeckTui, highlightFencedCode } from "./views.js";
 
 function state(): AppState {
@@ -289,6 +290,104 @@ describe("DeckTui viewport and focus", () => {
     expect(lines.join("\n")).toContain("Timeline");
     expect(lines.join("\n")).toContain("Prompt");
     expect(lines.every((line) => line.length <= 30)).toBe(true);
+  });
+
+  it("contains unsafe wide markdown deltas while retaining the surrounding panes", async () => {
+    const terminal = new RecordingTerminal(42, 14);
+    const base = state();
+    const timeline = {
+      agentId: "agent",
+      loading: false,
+      items: [
+        {
+          epoch: "e",
+          sequence: 1,
+          item: {
+            id: "message",
+            type: "assistant-message" as const,
+            messageId: "message",
+            text: "```ts\n\u001b[2J\tconstVeryLongIdentifier🙂\n```",
+          },
+        },
+      ],
+    };
+    const deck = new DeckTui(
+      terminal,
+      {
+        ...base,
+        selectedAgentId: "agent",
+        directory: {
+          ...base.directory,
+          agents: [
+            {
+              id: "agent",
+              workspaceId: "workspace",
+              title: "Streaming",
+              status: "running",
+              availableModeIds: [],
+              availableThinkingLevels: [],
+              pendingPermissions: [],
+              needsAttention: false,
+              archived: false,
+            },
+          ],
+        },
+        timeline,
+      },
+      () => undefined,
+    );
+
+    deck.start();
+    await terminal.waitForRender();
+    const wideLines = terminal.viewport();
+    expect(wideLines.join("\n")).toContain("Projects");
+    expect(wideLines.join("\n")).toContain("Prompt");
+    expect(wideLines.every((line) => terminalDisplayWidth(line) <= 42)).toBe(true);
+    terminal.setSize(30, 14);
+    deck.update({
+      ...base,
+      selectedAgentId: "agent",
+      directory: {
+        ...base.directory,
+        agents: [
+          {
+            id: "agent",
+            workspaceId: "workspace",
+            title: "Streaming",
+            status: "running",
+            availableModeIds: [],
+            availableThinkingLevels: [],
+            pendingPermissions: [],
+            needsAttention: false,
+            archived: false,
+          },
+        ],
+      },
+      timeline: {
+        ...timeline,
+        items: [
+          {
+            epoch: "e",
+            sequence: 2,
+            item: {
+              id: "message",
+              type: "assistant-message",
+              messageId: "message",
+              text: "```ts\n\u001b[2J\tconstVeryLongIdentifier🙂e\u0301🇫🇷1️⃣🙂\n```",
+            },
+          },
+        ],
+      },
+    });
+    await terminal.waitForRender();
+    await deck.stop();
+
+    const lines = terminal.viewport();
+    expect(lines.join("\n")).toContain("Projects");
+    expect(lines.join("\n")).toContain("Prompt");
+    expect(lines.join("\n")).toContain("connected");
+    expect(lines.join("\n")).toContain("␛[2J");
+    expect(lines.every((line) => terminalDisplayWidth(line) <= 30)).toBe(true);
   });
 
   it("restores composer focus after replacing and closing an overlay", async () => {

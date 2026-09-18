@@ -1,6 +1,7 @@
 import type { AppState } from "../contracts/app-state.js";
 import type { AgentRecord, TimelineEvent, TimelineItem } from "../contracts/domain.js";
 import { selectedComposerDraft } from "../state/composer.js";
+import { clipTerminalLine, sanitizeTerminalText, wrapTerminalText } from "./text-safety.js";
 
 export type TreeRowKind = "project" | "workspace" | "agent";
 
@@ -121,23 +122,6 @@ function clip(value: string, width: number): string {
   return value.length > width ? `${value.slice(0, width - 1)}…` : value;
 }
 
-function wrap(value: string, width: number): string[] {
-  if (width < 2) return [clip(value, width)];
-  const words = value.replaceAll("\n", " ").split(/\s+/);
-  const lines: string[] = [];
-  let line = "";
-  for (const word of words) {
-    if (!line) line = word;
-    else if (line.length + word.length + 1 <= width) line += ` ${word}`;
-    else {
-      lines.push(clip(line, width));
-      line = word;
-    }
-  }
-  if (line) lines.push(clip(line, width));
-  return lines.length ? lines : [""];
-}
-
 export function timelineDisplay(
   events: readonly TimelineEvent[],
   width: number,
@@ -153,49 +137,44 @@ export function timelineItemDisplay(
   width: number,
   expanded: boolean,
 ): string[] {
-  const bodyWidth = Math.max(12, width - 4);
+  const bodyWidth = Math.max(1, width - 2);
+  const body = (value: string): string[] =>
+    wrapTerminalText(value, bodyWidth).map((line) => clipTerminalLine(`  ${line}`, width));
+  const heading = (value: string): string => clipTerminalLine(sanitizeTerminalText(value), width);
   switch (item.type) {
     case "user-message":
-      return ["You", ...wrap(item.text, bodyWidth).map((line) => `  ${line}`)];
+      return [heading("You"), ...body(item.text)];
     case "assistant-message":
-      return ["Assistant", ...wrap(item.text, bodyWidth).map((line) => `  ${line}`)];
+      return [heading("Assistant"), ...body(item.text)];
     case "reasoning": {
       const collapsed = item.collapsed ?? item.text.length > 180;
       if (collapsed && !expanded)
         return [
-          `Reasoning (collapsed)  [Enter to expand]`,
-          `  ${clip(item.text.replaceAll("\n", " "), bodyWidth)}`,
+          heading("Reasoning (collapsed)  [Enter to expand]"),
+          ...body(item.text.replaceAll("\n", " ")).slice(0, 1),
         ];
-      return ["Reasoning", ...wrap(item.text, bodyWidth).map((line) => `  ${line}`)];
+      return [heading("Reasoning"), ...body(item.text)];
     }
     case "tool": {
       const summary = item.summary ?? item.output ?? "";
       if (!expanded && summary.length > 180)
         return [
-          `Tool ${item.status}: ${item.name}  [Enter to expand]`,
-          `  ${clip(summary, bodyWidth)}`,
+          heading(`Tool ${item.status}: ${item.name}  [Enter to expand]`),
+          ...body(summary).slice(0, 1),
         ];
-      return [
-        `Tool ${item.status}: ${item.name}`,
-        ...wrap(summary || "No output", bodyWidth).map((line) => `  ${line}`),
-      ];
+      return [heading(`Tool ${item.status}: ${item.name}`), ...body(summary || "No output")];
     }
     case "error":
-      return [
-        `Error: ${item.message}`,
-        ...(item.detail ? wrap(item.detail, bodyWidth).map((line) => `  ${line}`) : []),
-      ];
+      return [heading(`Error: ${item.message}`), ...(item.detail ? body(item.detail) : [])];
     case "permission":
       return [
-        `Permission ${item.resolved ? "resolved" : "needed"}: ${item.request.title}`,
-        ...(item.request.description
-          ? wrap(item.request.description, bodyWidth).map((line) => `  ${line}`)
-          : []),
+        heading(`Permission ${item.resolved ? "resolved" : "needed"}: ${item.request.title}`),
+        ...(item.request.description ? body(item.request.description) : []),
       ];
     case "turn":
-      return [`Turn ${item.status}${item.detail ? `: ${item.detail}` : ""}`];
+      return [heading(`Turn ${item.status}${item.detail ? `: ${item.detail}` : ""}`)];
     case "unknown":
-      return [`Unknown ${item.sourceType}: ${item.summary}`];
+      return [heading(`Unknown ${item.sourceType}: ${item.summary}`)];
   }
 }
 

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import type { AppState } from "../contracts/app-state.js";
 import { emptyDirectory } from "../contracts/app-state.js";
+import { terminalDisplayWidth } from "./text-safety.js";
 import { deriveTreeRows, renderDashboard, timelineDisplay } from "./view-model.js";
 
 function state(): AppState {
@@ -152,6 +153,61 @@ describe("timeline display", () => {
 
     expect(lines.join("\n")).toContain("Unknown new: payload");
     expect(lines.join("\n")).toContain("Reasoning (collapsed)");
+  });
+
+  it("keeps unsafe wide tool output inside a narrow timeline pane", () => {
+    const lines = timelineDisplay(
+      [
+        {
+          epoch: "e",
+          sequence: 1,
+          item: {
+            id: "tool",
+            type: "tool",
+            callId: "call",
+            name: "\u001b[2Jcommand",
+            status: "completed",
+            output: "\u001b[2J\tveryLongIdentifier🙂e\u0301",
+          },
+        },
+      ],
+      12,
+      new Set(),
+    );
+
+    expect(lines.join("\n")).not.toContain("\u001b");
+    expect(lines.join("\n")).toContain("␛[2J");
+    expect(lines.every((line) => terminalDisplayWidth(line) <= 12)).toBe(true);
+  });
+
+  it("renders raw SGR from non-Markdown timeline fields as inert text", () => {
+    const lines = timelineDisplay(
+      [
+        {
+          epoch: "e",
+          sequence: 1,
+          item: {
+            id: "tool",
+            type: "tool",
+            callId: "call",
+            name: "\u001b[31munsafe",
+            status: "failed",
+            output: "failed",
+          },
+        },
+        {
+          epoch: "e",
+          sequence: 2,
+          item: { id: "error", type: "error", message: "\u001b[32munsafe" },
+        },
+      ],
+      30,
+      new Set(),
+    );
+
+    expect(lines.join("\n")).not.toContain("\u001b[");
+    expect(lines.join("\n")).toContain("␛[31munsafe");
+    expect(lines.join("\n")).toContain("␛[32munsafe");
   });
 });
 

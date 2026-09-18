@@ -21,6 +21,7 @@ import type { TimelineEvent, TimelineItem } from "../contracts/domain.js";
 import { composerAvailability, selectedComposerDraft } from "../state/composer.js";
 import { DeckController, type UiIntent } from "./controller.js";
 import { TerminalLifecycle } from "./terminal.js";
+import { clipTerminalLine, sanitizeTerminalText } from "./text-safety.js";
 import { deriveTreeRows, shortAgentId, timelineItemDisplay } from "./view-model.js";
 
 const plain = (value: string): string => value;
@@ -80,13 +81,13 @@ class TimelineItemView implements Component {
   ) {
     this.item = item;
     if (item.type === "user-message" || item.type === "assistant-message")
-      this.markdown = new Markdown(item.text, 2, 0, markdownTheme);
+      this.markdown = new Markdown(sanitizeTerminalText(item.text), 2, 0, markdownTheme);
   }
   update(item: TimelineItem, expanded: boolean): void {
     this.item = item;
     this.expanded = expanded;
     if (this.markdown && (item.type === "user-message" || item.type === "assistant-message"))
-      this.markdown.setText(item.text);
+      this.markdown.setText(sanitizeTerminalText(item.text));
   }
   invalidate(): void {
     this.markdown?.invalidate();
@@ -97,8 +98,8 @@ class TimelineItemView implements Component {
       (this.item.type === "user-message" || this.item.type === "assistant-message")
     )
       return [
-        this.item.type === "user-message" ? "You" : "Assistant",
-        ...this.markdown.render(width),
+        clipTerminalLine(this.item.type === "user-message" ? "You" : "Assistant", width),
+        ...this.markdown.render(width).map((line) => clipTerminalLine(line, width)),
       ];
     return timelineItemDisplay(this.item, width, this.expanded);
   }
@@ -155,11 +156,11 @@ class TimelineView implements Component {
     const heading = width < 18 ? "Timeline" : this.heading;
     if (this.events.length === 0) return [heading, "No timeline selected."];
     return [
-      heading,
+      clipTerminalLine(heading, width),
       ...this.events.flatMap((event, index) => {
         const lines = this.itemViews.get(event.item.id)?.render(width) ?? [];
         if (index === this.selectedIndex && lines[0]) lines[0] = `> ${lines[0]}`;
-        return lines;
+        return lines.map((line) => clipTerminalLine(line, width));
       }),
     ];
   }
