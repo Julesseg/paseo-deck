@@ -37,6 +37,9 @@ function makeState(): AppState {
     selectedWorkspaceId: "w",
     selectedAgentId: "a",
     filter: "",
+    treeOrder: "attention",
+    showArchived: false,
+    attentionOnly: false,
     focus: "tree",
     modal: { type: "none" },
     timeline: { items: [], loading: false },
@@ -114,6 +117,24 @@ describe("DeckController keyboard seam", () => {
       workspaceId: "w",
       step: "provider",
     });
+  });
+
+  it("exposes tree triage controls outside editable fields", () => {
+    const intents: unknown[] = [];
+    const controller = new DeckController(
+      () => makeState(),
+      (intent) => intents.push(intent),
+    );
+
+    controller.handleKey("o");
+    controller.handleKey("v");
+    controller.handleKey("!");
+
+    expect(intents).toEqual([
+      { type: "toggle-tree-order" },
+      { type: "toggle-archived" },
+      { type: "toggle-attention-only" },
+    ]);
   });
 
   it("keeps global bindings away from editable fields", () => {

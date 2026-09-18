@@ -36,6 +36,9 @@ function state(): AppState {
     selectedAgentId: "agent-123456",
     selectedWorkspaceId: "w",
     filter: "",
+    treeOrder: "attention",
+    showArchived: false,
+    attentionOnly: false,
     focus: "tree",
     modal: { type: "none" },
     timeline: { items: [], loading: false },
@@ -133,6 +136,121 @@ describe("tree view model", () => {
       { kind: "workspace", id: "workspace-orphan", expanded: true },
       { kind: "agent", id: "agent-orphan", attention: true },
     ]);
+  });
+
+  it("orders attention work deterministically and exposes compact triage summaries", () => {
+    const baseAgent = state().directory.agents[0];
+    if (baseAgent === undefined) throw new Error("fixture requires an agent");
+    const triageState: AppState = {
+      ...state(),
+      directory: {
+        ...state().directory,
+        agents: [
+          {
+            ...baseAgent,
+            id: "running",
+            title: "Zulu running",
+            needsAttention: false,
+            lastActivityAt: "2026-09-18T10:00:00.000Z",
+          },
+          {
+            ...baseAgent,
+            id: "failed",
+            title: "Beta failed",
+            status: "failed",
+            needsAttention: false,
+            lastActivityAt: "2026-09-18T09:00:00.000Z",
+          },
+          {
+            ...baseAgent,
+            id: "permission",
+            title: "Alpha permission",
+            status: "idle",
+            needsAttention: true,
+            pendingPermissions: [{ id: "p", agentId: "permission", title: "Approve" }],
+            lastActivityAt: "2026-09-18T08:00:00.000Z",
+          },
+          {
+            ...baseAgent,
+            id: "recent",
+            title: "Gamma recent",
+            status: "idle",
+            needsAttention: false,
+            lastActivityAt: "2026-09-18T11:00:00.000Z",
+          },
+          {
+            ...baseAgent,
+            id: "older",
+            title: "Delta older",
+            status: "idle",
+            needsAttention: false,
+            lastActivityAt: "2026-09-18T07:00:00.000Z",
+          },
+        ],
+      },
+    };
+
+    const rows = deriveTreeRows(triageState);
+    expect(rows.filter((row) => row.kind === "agent").map((row) => row.id)).toEqual([
+      "permission",
+      "failed",
+      "running",
+      "recent",
+      "older",
+    ]);
+    expect(rows[0]).toMatchObject({ agentCount: 5, attentionCount: 2 });
+    expect(rows.find((row) => row.id === "permission")).toMatchObject({
+      status: "idle",
+      providerModel: "openai/gpt-5",
+      activityLabel: "09/18 08:00",
+    });
+
+    expect(
+      deriveTreeRows({ ...triageState, treeOrder: "alphabetical" })
+        .filter((row) => row.kind === "agent")
+        .map((row) => row.id),
+    ).toEqual(["permission", "failed", "older", "recent", "running"]);
+  });
+
+  it("filters to attention while retaining context, hides archived records, and omits empty groups", () => {
+    const baseAgent = state().directory.agents[0];
+    if (baseAgent === undefined) throw new Error("fixture requires an agent");
+    const filteredState: AppState = {
+      ...state(),
+      directory: {
+        ...state().directory,
+        projects: [
+          { id: "p", name: "Deck" },
+          { id: "empty", name: "Empty" },
+        ],
+        workspaces: [
+          ...state().directory.workspaces,
+          { id: "quiet", projectId: "p", title: "Quiet", directory: "/quiet", archived: false },
+        ],
+        agents: [
+          ...state().directory.agents,
+          {
+            ...baseAgent,
+            id: "archived",
+            title: "Archived alert",
+            archived: true,
+            status: "failed",
+          },
+        ],
+      },
+      attentionOnly: true,
+    };
+
+    expect(deriveTreeRows(filteredState).map((row) => row.id)).toEqual(["p", "w", "agent-123456"]);
+    expect(deriveTreeRows({ ...filteredState, showArchived: true }).map((row) => row.id)).toEqual([
+      "p",
+      "w",
+      "archived",
+      "agent-123456",
+    ]);
+    expect(
+      deriveTreeRows({ ...filteredState, attentionOnly: false }).map((row) => row.id),
+    ).not.toContain("empty");
   });
 });
 

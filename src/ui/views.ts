@@ -20,9 +20,10 @@ import type { AppState, ModalState } from "../contracts/app-state.js";
 import type { TimelineEvent, TimelineItem } from "../contracts/domain.js";
 import { composerAvailability, selectedComposerDraft } from "../state/composer.js";
 import { DeckController, type UiIntent } from "./controller.js";
+import { type RenderClock, RenderScheduler } from "./render-scheduler.js";
 import { TerminalLifecycle } from "./terminal.js";
 import { clipTerminalLine, sanitizeTerminalText } from "./text-safety.js";
-import { deriveTreeRows, shortAgentId, timelineItemDisplay } from "./view-model.js";
+import { deriveTreeRows, shortAgentId, type TreeRow, timelineItemDisplay } from "./view-model.js";
 
 const plain = (value: string): string => value;
 const markdownTheme = {
@@ -50,6 +51,11 @@ const selectTheme = {
   noMatch: plain,
 };
 
+export interface DeckTuiOptions {
+  renderClock?: RenderClock;
+  frameMilliseconds?: number;
+}
+
 class TreeView implements Component {
   constructor(private state: AppState) {}
   update(state: AppState): void {
@@ -59,17 +65,33 @@ class TreeView implements Component {
   render(width: number): string[] {
     return [
       "Projects / workspaces",
-      ...deriveTreeRows(this.state).map((row) => {
+      ...deriveTreeRows(this.state).flatMap((row) => {
         const selected = row.selected ? ">" : " ";
         const branch = row.kind === "agent" ? "•" : row.expanded ? "▾" : "▸";
         const flags =
           row.kind === "agent"
             ? `${row.permissionCount ? " ✓" : ""}${row.attention ? " !" : ""}${row.status ? ` ${row.status}` : ""}`
             : "";
-        return clip(`${selected}${"  ".repeat(row.depth)}${branch} ${row.label}${flags}`, width);
+        const secondary = row.kind === "agent" || width < 30 ? "" : treeSecondary(row);
+        const primary = clip(
+          `${selected}${"  ".repeat(row.depth)}${branch} ${row.label}${flags}${secondary}`,
+          width,
+        );
+        if (row.kind !== "agent" || width < 30) return [primary];
+        const metadata = [row.providerModel, row.activityLabel].filter(Boolean).join(" · ");
+        return metadata
+          ? [primary, clip(`${"  ".repeat(row.depth + 1)}${metadata}`, width)]
+          : [primary];
       }),
     ];
   }
+}
+
+function treeSecondary(row: TreeRow): string {
+  if (row.kind === "agent") return "";
+  if (row.agentCount === undefined) return "";
+  const agents = `${row.agentCount} agent${row.agentCount === 1 ? "" : "s"}`;
+  return ` · ${agents}${row.attentionCount ? ` · !${row.attentionCount}` : ""}`;
 }
 
 class TimelineItemView implements Component {
@@ -327,6 +349,7 @@ export class DeckTui {
   private readonly timeline = new TimelineView();
   private readonly composer: ComposerView;
   private readonly status: StatusView;
+  private readonly renderScheduler: RenderScheduler;
   private overlay: OverlayHandle | undefined;
   private modalKey = "";
   private state: AppState;
@@ -335,12 +358,18 @@ export class DeckTui {
     terminal: Terminal,
     initialState: AppState,
     private readonly emit: (intent: UiIntent) => void,
+    options: DeckTuiOptions = {},
   ) {
     this.state = initialState;
     this.tui = new TuiAltScreen(terminal, undefined, undefined, {
       scrollToEndIndicator: () => "↓ End",
     });
     this.lifecycle = new TerminalLifecycle(this.tui, terminal);
+    this.renderScheduler = new RenderScheduler(
+      () => this.tui.requestRender(),
+      options.renderClock,
+      options.frameMilliseconds,
+    );
     this.controller = new DeckController(
       () => this.state,
       (intent) => this.handleControllerIntent(intent),
@@ -382,9 +411,11 @@ export class DeckTui {
     this.lifecycle.start();
   }
   async stop(): Promise<void> {
+    this.renderScheduler.stop();
     await this.lifecycle.stop();
   }
   update(state: AppState): void {
+    const timelineChanged = state.timeline.items !== this.state.timeline.items;
     this.state = state;
     this.tree.update(state);
     this.timeline.update(state.timeline.items);
@@ -393,23 +424,24 @@ export class DeckTui {
     this.status.update(state);
     this.tui.setFocus(state.focus === "composer" ? this.composer : null);
     this.syncModal();
-    this.tui.requestRender();
+    if (timelineChanged) this.renderScheduler.request();
+    else this.renderScheduler.requestImmediate();
   }
   toggleTimelineItem(itemId: string): void {
     this.timeline.toggle(itemId);
     this.emit({ type: "toggle-timeline-item", itemId });
-    this.tui.requestRender();
+    this.renderScheduler.requestImmediate();
   }
 
   private handleControllerIntent(intent: UiIntent): void {
     if (intent.type === "move-timeline-selection") {
       this.timeline.moveSelection(intent.direction);
-      this.tui.requestRender();
+      this.renderScheduler.requestImmediate();
       return;
     }
     if (intent.type === "toggle-selected-timeline-item") {
       this.timeline.toggleSelected();
-      this.tui.requestRender();
+      this.renderScheduler.requestImmediate();
       return;
     }
     this.emit(intent);
@@ -432,6 +464,7 @@ export class DeckTui {
           "Paseo Deck keys",
           "j/k move · h/l collapse/expand · Enter open · Tab focus",
           "i compose · n new · / filter · p permissions · r refresh",
+          "o order · v archived · ! attention-only",
           "x stop · A archive · d detach · e rename · m mode · t thinking",
           "? help · E error details · q quit · Esc cancel",
         ],

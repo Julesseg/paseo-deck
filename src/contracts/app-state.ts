@@ -9,6 +9,7 @@ import type {
 } from "./domain.js";
 
 export type FocusArea = "tree" | "timeline" | "composer";
+export type TreeOrder = "attention" | "alphabetical";
 
 export type ModalState =
   | { type: "none" }
@@ -68,6 +69,9 @@ export interface AppState {
   selectedAgentId?: string;
   expandedIds: ReadonlySet<string>;
   filter: string;
+  treeOrder: TreeOrder;
+  showArchived: boolean;
+  attentionOnly: boolean;
   focus: FocusArea;
   modal: ModalState;
   timeline: FocusedTimelineState;

@@ -152,6 +152,48 @@ describe("ProductionPaseoGateway", () => {
     expect(fixture.client.providers.listModes).toHaveBeenCalledWith("codex");
   });
 
+  it("projects the SDK updatedAt activity timestamp without manufacturing one", async () => {
+    const fixture = testClient();
+    fixture.client.agents.list.mockResolvedValueOnce({
+      entries: [
+        {
+          agent: {
+            id: "agent-1",
+            workspaceId: "workspace-1",
+            title: "Agent",
+            status: "idle",
+            updatedAt: "2026-09-18T12:34:56.000Z",
+            availableModes: [],
+            pendingPermissions: [],
+          },
+        },
+        {
+          agent: {
+            id: "agent-2",
+            workspaceId: "workspace-1",
+            title: "No timestamp",
+            status: "idle",
+            availableModes: [],
+            pendingPermissions: [],
+          },
+        },
+      ],
+    } as never);
+    const gateway = new ProductionPaseoGateway({
+      host: "127.0.0.1:6767",
+      createClient: () => fixture.client as never,
+    });
+
+    await gateway.connect();
+    const directory = await gateway.getDirectorySnapshot();
+
+    expect(directory.agents).toMatchObject([
+      { id: "agent-1", lastActivityAt: "2026-09-18T12:34:56.000Z" },
+      { id: "agent-2" },
+    ]);
+    expect(directory.agents[1]).not.toHaveProperty("lastActivityAt");
+  });
+
   it("keeps remote workspace IDs while exposing only readable remote projects", async () => {
     const fixture = testClient();
     fixture.client.projects.list.mockResolvedValueOnce({

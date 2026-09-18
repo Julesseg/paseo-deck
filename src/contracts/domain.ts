@@ -55,6 +55,8 @@ export interface AgentRecord {
   needsAttention: boolean;
   parentAgentId?: string;
   archived: boolean;
+  /** The daemon's most recent agent update timestamp, when it provides one. */
+  lastActivityAt?: string;
   lastUsage?: UsageSummary;
 }
 

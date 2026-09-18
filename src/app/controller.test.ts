@@ -119,6 +119,21 @@ function event(sequence: number, text: string): TimelineEvent {
 }
 
 describe("ApplicationController", () => {
+  it("applies the explicit tree triage intents", async () => {
+    const app = new ApplicationController(new FakePaseoGateway(snapshot));
+    await app.start();
+
+    await app.handleIntent({ type: "toggle-tree-order" });
+    await app.handleIntent({ type: "toggle-archived" });
+    await app.handleIntent({ type: "toggle-attention-only" });
+
+    expect(app.state).toMatchObject({
+      treeOrder: "alphabetical",
+      showArchived: true,
+      attentionOnly: true,
+    });
+  });
+
   it("reaches resolved and orphan remote agents through tree keyboard intents", async () => {
     const gateway = new FakePaseoGateway(remoteSnapshot);
     const app = new ApplicationController(gateway);

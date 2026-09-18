@@ -14,8 +14,11 @@ export interface TreeRow {
   selected: boolean;
   status?: string;
   providerModel?: string;
+  activityLabel?: string;
   attention: boolean;
   permissionCount: number;
+  agentCount?: number;
+  attentionCount?: number;
 }
 
 const OTHER_ID = "__paseo_deck_other__";
@@ -26,11 +29,52 @@ function agentMatches(agent: AgentRecord, filter: string): boolean {
     .includes(filter);
 }
 
+function needsIntervention(agent: AgentRecord): boolean {
+  return agent.pendingPermissions.length > 0 || agent.needsAttention || agent.status === "failed";
+}
+
+function activityRank(agent: AgentRecord): number {
+  if (agent.pendingPermissions.length > 0) return 4;
+  if (agent.status === "failed") return 3;
+  if (agent.needsAttention) return 2;
+  return agent.status === "running" ? 1 : 0;
+}
+
+function activityTimestamp(agent: AgentRecord): number {
+  if (agent.lastActivityAt === undefined) return Number.NEGATIVE_INFINITY;
+  const timestamp = Date.parse(agent.lastActivityAt);
+  return Number.isNaN(timestamp) ? Number.NEGATIVE_INFINITY : timestamp;
+}
+
+function compareAgents(
+  left: AgentRecord,
+  right: AgentRecord,
+  order: AppState["treeOrder"],
+): number {
+  if (order === "alphabetical")
+    return left.title.localeCompare(right.title) || left.id.localeCompare(right.id);
+  return (
+    activityRank(right) - activityRank(left) ||
+    activityTimestamp(right) - activityTimestamp(left) ||
+    left.title.localeCompare(right.title) ||
+    left.id.localeCompare(right.id)
+  );
+}
+
+function compactActivity(timestamp: string | undefined): string | undefined {
+  if (timestamp === undefined || Number.isNaN(Date.parse(timestamp))) return undefined;
+  const [date, time] = timestamp.split("T");
+  if (date === undefined || time === undefined) return undefined;
+  return `${date.slice(5).replace("-", "/")} ${time.slice(0, 5)}`;
+}
+
 export function deriveTreeRows(state: AppState): TreeRow[] {
   const rows: TreeRow[] = [];
   const filter = state.filter.trim().toLocaleLowerCase();
   const workspacesByProject = new Map<string, typeof state.directory.workspaces>();
-  for (const workspace of state.directory.workspaces.filter((item) => !item.archived)) {
+  for (const workspace of state.directory.workspaces.filter(
+    (item) => state.showArchived || !item.archived,
+  )) {
     const key =
       workspace.projectId &&
       state.directory.projects.some((project) => project.id === workspace.projectId)
@@ -39,7 +83,14 @@ export function deriveTreeRows(state: AppState): TreeRow[] {
     workspacesByProject.set(key, [...(workspacesByProject.get(key) ?? []), workspace]);
   }
   const groups = [
-    ...state.directory.projects.map((project) => ({ id: project.id, name: project.name })),
+    ...state.directory.projects
+      .filter(
+        (project) =>
+          workspacesByProject.has(project.id) ||
+          state.selectedProjectId === project.id ||
+          (Boolean(filter) && project.name.toLocaleLowerCase().includes(filter)),
+      )
+      .map((project) => ({ id: project.id, name: project.name })),
     ...(workspacesByProject.has(OTHER_ID) ? [{ id: OTHER_ID, name: "Other" }] : []),
   ];
 
@@ -47,15 +98,19 @@ export function deriveTreeRows(state: AppState): TreeRow[] {
     const workspaces = workspacesByProject.get(group.id) ?? [];
     const visibleWorkspaces = workspaces.filter((workspace) => {
       const agents = state.directory.agents.filter(
-        (agent) => agent.workspaceId === workspace.id && !agent.archived,
+        (agent) =>
+          agent.workspaceId === workspace.id &&
+          (state.showArchived || !agent.archived) &&
+          (!state.attentionOnly || needsIntervention(agent)) &&
+          (!filter || agentMatches(agent, filter)),
       );
-      return (
-        !filter ||
-        workspace.title.toLocaleLowerCase().includes(filter) ||
-        agents.some((agent) => agentMatches(agent, filter))
-      );
+      const workspaceMatches = workspace.title.toLocaleLowerCase().includes(filter);
+      if (state.attentionOnly) return agents.length > 0;
+      return !filter || workspaceMatches || agents.length > 0;
     });
-    if (filter && visibleWorkspaces.length === 0) continue;
+    const groupMatches = Boolean(filter) && group.name.toLocaleLowerCase().includes(filter);
+    const selected = state.selectedProjectId === group.id;
+    if (visibleWorkspaces.length === 0 && !groupMatches && !selected) continue;
     // Orphaned workspaces should remain discoverable; unlike a user project the
     // synthetic Other group has no persisted expansion identity.
     const expanded = Boolean(filter) || group.id === OTHER_ID || state.expandedIds.has(group.id);
@@ -66,14 +121,28 @@ export function deriveTreeRows(state: AppState): TreeRow[] {
       depth: 0,
       expanded,
       selected:
-        state.selectedProjectId === group.id &&
-        state.selectedWorkspaceId === undefined &&
-        state.selectedAgentId === undefined,
+        selected && state.selectedWorkspaceId === undefined && state.selectedAgentId === undefined,
       attention: false,
       permissionCount: 0,
+      agentCount: visibleWorkspaces.flatMap((workspace) =>
+        state.directory.agents.filter(
+          (agent) => agent.workspaceId === workspace.id && (state.showArchived || !agent.archived),
+        ),
+      ).length,
+      attentionCount: visibleWorkspaces.flatMap((workspace) =>
+        state.directory.agents.filter(
+          (agent) =>
+            agent.workspaceId === workspace.id &&
+            needsIntervention(agent) &&
+            (state.showArchived || !agent.archived),
+        ),
+      ).length,
     });
     if (!expanded) continue;
     for (const workspace of visibleWorkspaces) {
+      const workspaceAllAgents = state.directory.agents.filter(
+        (agent) => agent.workspaceId === workspace.id && (state.showArchived || !agent.archived),
+      );
       const workspaceExpanded = Boolean(filter) || state.expandedIds.has(workspace.id);
       rows.push({
         id: workspace.id,
@@ -84,14 +153,20 @@ export function deriveTreeRows(state: AppState): TreeRow[] {
         selected: state.selectedWorkspaceId === workspace.id && state.selectedAgentId === undefined,
         attention: false,
         permissionCount: 0,
+        agentCount: workspaceAllAgents.length,
+        attentionCount: workspaceAllAgents.filter(needsIntervention).length,
       });
       if (!workspaceExpanded) continue;
-      for (const agent of state.directory.agents.filter(
-        (item) =>
-          item.workspaceId === workspace.id &&
-          !item.archived &&
-          (!filter || agentMatches(item, filter)),
-      )) {
+      const workspaceAgents = state.directory.agents
+        .filter(
+          (item) =>
+            item.workspaceId === workspace.id &&
+            (state.showArchived || !item.archived) &&
+            (!state.attentionOnly || needsIntervention(item)) &&
+            (!filter || agentMatches(item, filter)),
+        )
+        .sort((left, right) => compareAgents(left, right, state.treeOrder));
+      for (const agent of workspaceAgents) {
         rows.push(agentRow(agent, state.selectedAgentId));
       }
     }
@@ -100,6 +175,7 @@ export function deriveTreeRows(state: AppState): TreeRow[] {
 }
 
 function agentRow(agent: AgentRecord, selectedAgentId: string | undefined): TreeRow {
+  const activityLabel = compactActivity(agent.lastActivityAt);
   return {
     id: agent.id,
     kind: "agent",
@@ -108,8 +184,9 @@ function agentRow(agent: AgentRecord, selectedAgentId: string | undefined): Tree
     selected: agent.id === selectedAgentId,
     status: agent.status,
     providerModel: [agent.providerId, agent.modelId].filter(Boolean).join("/"),
-    attention: agent.needsAttention,
+    attention: needsIntervention(agent),
     permissionCount: agent.pendingPermissions.length,
+    ...(activityLabel === undefined ? {} : { activityLabel }),
   };
 }
 

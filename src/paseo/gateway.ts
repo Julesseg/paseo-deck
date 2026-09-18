@@ -702,6 +702,9 @@ function agentRecord(value: UnknownRecord): AgentRecord {
     pendingPermissions: pending,
     needsAttention: value.requiresAttention === true || pending.length > 0,
     archived: value.archivedAt !== null && value.archivedAt !== undefined,
+    ...(stringValue(value.updatedAt) === undefined
+      ? {}
+      : { lastActivityAt: stringValue(value.updatedAt) as string }),
     ...(asRecord(value.lastUsage) === undefined
       ? {}
       : { lastUsage: usageSummary(value.lastUsage) }),

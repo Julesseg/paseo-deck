@@ -1,7 +1,8 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import type { AppState } from "../contracts/app-state.js";
 import { emptyDirectory } from "../contracts/app-state.js";
+import type { RenderClock } from "./render-scheduler.js";
 import { RecordingTerminal } from "./terminal.js";
 import { terminalDisplayWidth } from "./text-safety.js";
 import { agentChoices, creationChoices, DeckTui, highlightFencedCode } from "./views.js";
@@ -33,6 +34,9 @@ function state(): AppState {
     },
     expandedIds: new Set(),
     filter: "",
+    treeOrder: "attention",
+    showArchived: false,
+    attentionOnly: false,
     focus: "tree",
     modal: { type: "none" },
     timeline: { items: [], loading: false },
@@ -45,6 +49,32 @@ function state(): AppState {
       detachedAgentIds: new Set(),
     },
   };
+}
+
+class FakeRenderClock implements RenderClock {
+  current = 0;
+  private readonly timers = new Map<number, { at: number; callback: () => void }>();
+  private nextId = 1;
+
+  now(): number {
+    return this.current;
+  }
+  setTimeout(callback: () => void, delay: number): number {
+    const id = this.nextId++;
+    this.timers.set(id, { at: this.current + delay, callback });
+    return id;
+  }
+  clearTimeout(handle: unknown): void {
+    if (typeof handle === "number") this.timers.delete(handle);
+  }
+  advance(milliseconds: number): void {
+    this.current += milliseconds;
+    for (const [id, timer] of this.timers) {
+      if (timer.at > this.current) continue;
+      this.timers.delete(id);
+      timer.callback();
+    }
+  }
 }
 
 describe("creation picker choices", () => {
@@ -146,6 +176,103 @@ describe("creation prompt", () => {
 });
 
 describe("DeckTui viewport and focus", () => {
+  it("shows tree counts and agent metadata only when the tree has room", async () => {
+    const terminal = new RecordingTerminal(100, 16);
+    const base = state();
+    const treeState: AppState = {
+      ...base,
+      directory: {
+        ...base.directory,
+        projects: [{ id: "project", name: "Deck" }],
+        workspaces: [
+          {
+            id: "workspace",
+            projectId: "project",
+            title: "Main",
+            directory: "/deck",
+            archived: false,
+          },
+        ],
+        agents: [
+          {
+            id: "agent",
+            workspaceId: "workspace",
+            title: "Build",
+            status: "running",
+            providerId: "openai",
+            modelId: "gpt",
+            lastActivityAt: "2026-09-18T10:30:00Z",
+            availableModeIds: [],
+            availableThinkingLevels: [],
+            pendingPermissions: [{ id: "permission", agentId: "agent", title: "Review" }],
+            needsAttention: true,
+            archived: false,
+          },
+        ],
+      },
+      expandedIds: new Set(["project", "workspace"]),
+    };
+    const deck = new DeckTui(terminal, treeState, () => undefined);
+
+    deck.start();
+    await terminal.waitForRender();
+    const wideViewport = terminal.viewport().join("\n");
+    expect(wideViewport).toContain("1 agent");
+    expect(wideViewport).toContain("!1");
+    expect(wideViewport).toContain("openai/gpt");
+    expect(wideViewport).toContain("09/18 10:30");
+    terminal.setSize(42, 16);
+    await terminal.waitForRender();
+    const narrowViewport = terminal.viewport().join("\n");
+    expect(narrowViewport).not.toContain("!1");
+    expect(narrowViewport).not.toContain("openai/gpt");
+    expect(narrowViewport).not.toContain("09/18 10:30");
+    await deck.stop();
+  });
+
+  it("batches streamed redraws while rendering the latest delta and focus change promptly", async () => {
+    const terminal = new RecordingTerminal(80, 16);
+    const clock = new FakeRenderClock();
+    const deck = new DeckTui(terminal, state(), () => undefined, { renderClock: clock });
+    const requestRender = vi.spyOn(deck.tui, "requestRender");
+    const streamed = (text: string): AppState => ({
+      ...state(),
+      timeline: {
+        loading: false,
+        items: [
+          {
+            epoch: "e",
+            sequence: 1,
+            item: {
+              id: "message",
+              type: "assistant-message",
+              messageId: "message",
+              text,
+            },
+          },
+        ],
+      },
+    });
+
+    deck.start();
+    await terminal.waitForRender();
+    requestRender.mockClear();
+    deck.update(streamed("first"));
+    deck.update(streamed("second"));
+    const latest = streamed("latest");
+    deck.update(latest);
+    expect(requestRender).toHaveBeenCalledTimes(1);
+
+    clock.advance(16);
+    await terminal.waitForRender();
+    expect(requestRender).toHaveBeenCalledTimes(2);
+    expect(terminal.viewport().join("\n")).toContain("latest");
+
+    deck.update({ ...latest, focus: "composer" });
+    expect(requestRender).toHaveBeenCalledTimes(3);
+    await deck.stop();
+  });
+
   it("names the composer destination and its disabled reason", async () => {
     const terminal = new RecordingTerminal(80, 14);
     const base = state();
@@ -401,5 +528,17 @@ describe("DeckTui viewport and focus", () => {
     await deck.stop();
 
     expect(intents).toContainEqual({ type: "set-composer-text", text: "x" });
+  });
+
+  it("lists session triage keys in help", async () => {
+    const terminal = new RecordingTerminal();
+    const deck = new DeckTui(terminal, { ...state(), modal: { type: "help" } }, () => undefined);
+
+    deck.start();
+    await terminal.waitForRender();
+    deck.update({ ...state(), modal: { type: "help" } });
+    await terminal.waitForRender();
+    expect(terminal.viewport().join("\n")).toContain("o order · v archived · ! attention-only");
+    await deck.stop();
   });
 });

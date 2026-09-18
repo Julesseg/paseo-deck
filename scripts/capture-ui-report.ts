@@ -182,6 +182,9 @@ function syntheticState(): AppState {
     selectedAgentId: "agent-atlas-1234",
     expandedIds: new Set(["project-deck", "workspace-main", "workspace-theme"]),
     filter: "",
+    treeOrder: "attention",
+    showArchived: false,
+    attentionOnly: false,
     focus: "tree",
     modal: { type: "none" },
     timeline: {

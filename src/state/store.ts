@@ -1,4 +1,4 @@
-import type { AppState, FocusArea, ModalState } from "../contracts/app-state.js";
+import type { AppState, FocusArea, ModalState, TreeOrder } from "../contracts/app-state.js";
 import { emptyDirectory } from "../contracts/app-state.js";
 import type {
   AgentRecord,
@@ -19,6 +19,9 @@ export type AppAction =
   | { type: "select-workspace"; workspaceId?: string }
   | { type: "select-project"; projectId?: string }
   | { type: "set-filter"; filter: string }
+  | { type: "set-tree-order"; order: TreeOrder }
+  | { type: "toggle-archived" }
+  | { type: "toggle-attention-only" }
   | { type: "set-focus"; focus: FocusArea }
   | { type: "set-composer"; text: string }
   | { type: "navigate-composer-history"; direction: -1 | 1 }
@@ -47,6 +50,9 @@ export function createInitialState(): AppState {
     directory: emptyDirectory(),
     expandedIds: new Set(),
     filter: "",
+    treeOrder: "attention",
+    showArchived: false,
+    attentionOnly: false,
     focus: "tree",
     modal: { type: "none" },
     timeline: { items: [], loading: false },
@@ -466,6 +472,12 @@ export function reduceApp(state: AppState, action: AppAction): AppState {
     }
     case "set-filter":
       return { ...state, filter: action.filter };
+    case "set-tree-order":
+      return { ...state, treeOrder: action.order };
+    case "toggle-archived":
+      return { ...state, showArchived: !state.showArchived };
+    case "toggle-attention-only":
+      return { ...state, attentionOnly: !state.attentionOnly };
     case "set-focus":
       return { ...state, focus: action.focus };
     case "set-composer": {

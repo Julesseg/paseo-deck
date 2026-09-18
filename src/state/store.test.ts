@@ -109,6 +109,23 @@ describe("application store", () => {
     });
   });
 
+  it("keeps tree triage preferences explicit and independently toggleable", () => {
+    let state = createInitialState();
+    expect(state).toMatchObject({
+      treeOrder: "attention",
+      showArchived: false,
+      attentionOnly: false,
+    });
+    state = reduceApp(state, { type: "set-tree-order", order: "alphabetical" });
+    state = reduceApp(state, { type: "toggle-archived" });
+    state = reduceApp(state, { type: "toggle-attention-only" });
+    expect(state).toMatchObject({
+      treeOrder: "alphabetical",
+      showArchived: true,
+      attentionOnly: true,
+    });
+  });
+
   it("keeps drafts and prompt history isolated by selected agent", () => {
     let state = reduceApp(createInitialState(), {
       type: "directory",

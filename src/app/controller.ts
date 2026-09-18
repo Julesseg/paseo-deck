@@ -132,6 +132,18 @@ export class ApplicationController {
       case "open-filter":
         this.apply({ type: "open-modal", modal: { type: "filter", query: this.#state.filter } });
         return;
+      case "toggle-tree-order":
+        this.apply({
+          type: "set-tree-order",
+          order: this.#state.treeOrder === "alphabetical" ? "attention" : "alphabetical",
+        });
+        return;
+      case "toggle-archived":
+        this.apply({ type: "toggle-archived" });
+        return;
+      case "toggle-attention-only":
+        this.apply({ type: "toggle-attention-only" });
+        return;
       case "open-create-agent":
         if (this.activeWorkspace(intent.workspaceId)) {
           this.apply({
