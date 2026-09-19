@@ -1,4 +1,4 @@
-import { createPaseoClient } from "@getpaseo/client";
+import { createPaseoClient, type PaseoClient } from "@getpaseo/client";
 import type { AgentCommand, CommandResult } from "../contracts/commands.js";
 import type {
   AgentRecord,
@@ -26,53 +26,12 @@ interface Releasable {
   release?: () => Promise<void> | void;
 }
 
-interface DirectorySubscription extends Releasable {
-  subscribe: (handlers: {
-    snapshot: Listener<UnknownRecord>;
-    update: Listener<UnknownRecord>;
-    error?: Listener<unknown>;
-  }) => void;
-}
-
 interface TimelineSubscription extends Releasable {
   (): void;
   ready: Promise<void>;
 }
 
-interface ClientSurface {
-  connect(): Promise<void>;
-  close(): Promise<void>;
-  subscribeConnectionStatus(listener: (status: UnknownRecord) => void): () => void;
-  projects: {
-    list(): Promise<UnknownRecord>;
-    subscribe(listener: Listener<UnknownRecord>): () => void;
-  };
-  workspaces: {
-    list(options?: UnknownRecord): Promise<UnknownRecord>;
-    subscribe(listener: Listener<UnknownRecord>): () => void;
-    ref(id: string): { agents: { create(options: UnknownRecord): Promise<{ id: string }> } };
-  };
-  agents: {
-    list(options?: UnknownRecord): Promise<UnknownRecord>;
-    subscribe(listener: Listener<UnknownRecord>): () => void;
-    ref(id: string): {
-      send(text: string): Promise<void>;
-      respondToPermission(options: UnknownRecord): Promise<void>;
-      archive(): Promise<unknown>;
-      detach(): Promise<void>;
-      timeline: {
-        subscribe(listener: Listener<UnknownRecord>): TimelineSubscription;
-        refetch(options?: UnknownRecord): Promise<UnknownRecord>;
-      };
-    };
-  };
-  providers: {
-    waitForReady(): Promise<UnknownRecord>;
-    listModels(provider: string, options?: UnknownRecord): Promise<UnknownRecord>;
-    listModes(provider: string, options?: UnknownRecord): Promise<UnknownRecord>;
-    subscribe(listener: Listener<UnknownRecord>): () => void;
-  };
-}
+type ClientSurface = PaseoClient;
 
 export interface PaseoGatewayOptions extends PaseoTargetInput {
   cliRunner?: CliRunner;
@@ -86,8 +45,6 @@ export class ProductionPaseoGateway implements PaseoGateway {
   private target: PaseoTarget | undefined;
   private focused: Observation | undefined;
   private focusGeneration = 0;
-  private connectionRelease: (() => void) | undefined;
-  private readonly directoryConnectionListeners = new Set<Listener<DirectoryUpdate>>();
 
   public constructor(private readonly options: PaseoGatewayOptions = {}) {
     this.cliRunner = options.cliRunner ?? createCliRunner();
@@ -102,7 +59,7 @@ export class ProductionPaseoGateway implements PaseoGateway {
           // after the alternate screen has been restored. Request failures and
           // owned observation errors are surfaced through the gateway instead.
           logger: quietPaseoLogger,
-        }) as unknown as ClientSurface);
+        }));
   }
 
   public async connect(): Promise<void> {
@@ -117,14 +74,8 @@ export class ProductionPaseoGateway implements PaseoGateway {
     this.target = targetFromDaemonStatus(targetInput, status);
     this.client = this.createClient(this.target);
     try {
-      this.connectionRelease = this.client.subscribeConnectionStatus((status) => {
-        const update = connectionUpdate(status);
-        for (const listener of this.directoryConnectionListeners) listener(update);
-      });
       await this.client.connect();
     } catch (error) {
-      this.connectionRelease?.();
-      this.connectionRelease = undefined;
       try {
         await this.client.close();
       } catch {
@@ -140,9 +91,6 @@ export class ProductionPaseoGateway implements PaseoGateway {
     this.focusGeneration += 1;
     await this.focused?.release();
     this.focused = undefined;
-    this.connectionRelease?.();
-    this.connectionRelease = undefined;
-    this.directoryConnectionListeners.clear();
     if (this.client !== undefined) await this.client.close();
     this.client = undefined;
   }
@@ -165,10 +113,6 @@ export class ProductionPaseoGateway implements PaseoGateway {
   public async observeDirectory(listener: Listener<DirectoryUpdate>): Promise<Observation> {
     const client = this.requireClient();
     const releases: Array<() => Promise<void> | void> = [];
-    this.directoryConnectionListeners.add(listener);
-    releases.push(() => {
-      this.directoryConnectionListeners.delete(listener);
-    });
     // `connect()` has already settled before a directory observation exists;
     // ApplicationController establishes its initial connected state after the
     // snapshot. Forward only later transitions so startup does not refetch the
@@ -176,9 +120,8 @@ export class ProductionPaseoGateway implements PaseoGateway {
     // Stable 0.8.0 exposes the server-issued subscriptionId but no public release
     // handle. Local listeners below are released here; server demand ends on close().
     releases.push(client.agents.subscribe((message) => emitDirectoryMessage(message, listener)));
-    let agentDirectory: UnknownRecord;
     try {
-      agentDirectory = await client.agents.list({ subscribe: {} });
+      await client.agents.list({ subscribe: {} });
       releases.push(
         client.workspaces.subscribe((message) => emitDirectoryMessage(message, listener)),
       );
@@ -186,40 +129,11 @@ export class ProductionPaseoGateway implements PaseoGateway {
       await releaseAll(releases);
       throw paseoFailure(error, "subscription");
     }
-    let workspaceDirectory: UnknownRecord;
     try {
-      workspaceDirectory = await client.workspaces.list({ subscribe: {} });
+      await client.workspaces.list({ subscribe: {} });
     } catch (error) {
       await releaseAll(releases);
       throw paseoFailure(error, "subscription");
-    }
-    const agentSubscription = getSubscription(agentDirectory);
-    const workspaceSubscription = getSubscription(workspaceDirectory);
-    if (agentSubscription !== undefined) {
-      agentSubscription.subscribe({
-        snapshot: (snapshot) => {
-          for (const entry of recordEntries(snapshot)) {
-            listener({
-              type: "agent-upserted",
-              agent: agentRecord(asRecord(entry.agent) ?? entry),
-            });
-          }
-        },
-        update: (message) => emitDirectoryMessage(message, listener),
-        error: (error) => listener(directoryError(error)),
-      });
-      releases.push(() => releaseDirectorySubscription(agentSubscription));
-    }
-    if (workspaceSubscription !== undefined) {
-      workspaceSubscription.subscribe({
-        snapshot: (snapshot) => {
-          for (const entry of recordEntries(snapshot))
-            listener({ type: "workspace-upserted", workspace: workspaceRecord(entry) });
-        },
-        update: (message) => emitDirectoryMessage(message, listener),
-        error: (error) => listener(directoryError(error)),
-      });
-      releases.push(() => releaseDirectorySubscription(workspaceSubscription));
     }
     releases.push(client.projects.subscribe((message) => emitDirectoryMessage(message, listener)));
     releases.push(
@@ -281,12 +195,6 @@ export class ProductionPaseoGateway implements PaseoGateway {
         );
         return;
       }
-      if (replacement?.type === "subscription_restored") {
-        void restoreTimeline(listener, agentId, agent.timeline, cursor, isCurrent, (nextCursor) => {
-          cursor = latestCursor(cursor, nextCursor);
-        });
-        return;
-      }
       if (replacement?.type === "error") {
         const detail = stringValue(replacement.error);
         listener({
@@ -308,7 +216,7 @@ export class ProductionPaseoGateway implements PaseoGateway {
       activeEpoch = epoch;
       // Control events such as turn_started and turn_completed intentionally
       // carry no daemon cursor. Give them stable ordering space between real
-      // timeline entries without advancing reconnect recovery past the server.
+      // timeline entries without advancing the last server-issued cursor.
       if (wireSequence !== undefined) cursor = latestCursor(cursor, { epoch, sequence });
       if (stream.type === "usage_updated") {
         listener({ type: "usage", agentId, usage: usageSummary(stream.usage) });
@@ -445,33 +353,6 @@ export class ProductionPaseoGateway implements PaseoGateway {
   }
 }
 
-export function connectionUpdate(
-  status: UnknownRecord,
-): Extract<DirectoryUpdate, { type: "connection-changed" }> {
-  const state = stringValue(status.status);
-  const attempt = numberValue(status.attempt);
-  const detail = stringValue(status.reason);
-  if (state === "connected") return { type: "connection-changed", state: "connected" };
-  if (state === "connecting")
-    return {
-      type: "connection-changed",
-      state: attempt !== undefined && attempt > 0 ? "reconnecting" : "connecting",
-      ...(attempt === undefined ? {} : { attempt }),
-    };
-  if (state === "disconnected")
-    return {
-      type: "connection-changed",
-      state: "reconnecting",
-      ...(attempt === undefined ? {} : { attempt }),
-      ...(detail === undefined ? {} : { detail: errorDetail(detail) }),
-    };
-  return {
-    type: "connection-changed",
-    state: "disconnected",
-    ...(detail === undefined ? {} : { detail: errorDetail(detail) }),
-  };
-}
-
 function syntheticControlSequence(
   epoch: string,
   cursor: TimelineCursor | undefined,
@@ -510,21 +391,6 @@ async function releaseAll(releases: readonly (() => Promise<void> | void)[]): Pr
 async function releaseSubscription(subscription: Releasable & (() => void)): Promise<void> {
   if (subscription.release !== undefined) await subscription.release();
   else subscription();
-}
-
-async function releaseDirectorySubscription(subscription: DirectorySubscription): Promise<void> {
-  if (subscription.release !== undefined) await subscription.release();
-}
-
-function getSubscription(result: UnknownRecord): DirectorySubscription | undefined {
-  const candidate = result.subscription;
-  return typeof candidate === "object" && candidate !== null && "subscribe" in candidate
-    ? (candidate as DirectorySubscription)
-    : undefined;
-}
-
-function directoryError(error: unknown): DirectoryUpdate {
-  return { type: "connection-changed", state: "reconnecting", detail: errorDetail(error) };
 }
 
 function emitDirectoryMessage(message: UnknownRecord, listener: Listener<DirectoryUpdate>): void {
@@ -626,54 +492,26 @@ async function replaceTimeline(
   }
 }
 
-async function restoreTimeline(
-  listener: Listener<TimelineUpdate>,
-  agentId: string,
-  timeline: ClientSurface["agents"]["ref"] extends (...args: never[]) => infer Agent
-    ? Agent extends { timeline: infer T }
-      ? T
-      : never
-    : never,
-  cursor: TimelineCursor | undefined,
-  isCurrent: () => boolean,
-  setCursor: (cursor: TimelineCursor | undefined) => void,
-): Promise<void> {
-  if (cursor === undefined) return;
-  try {
-    const page = await timeline.refetch({
-      direction: "after",
-      cursor: { epoch: cursor.epoch, seq: cursor.sequence },
-      projection: "projected",
-    });
-    if (!isCurrent()) return;
-    const epoch = stringValue(page.epoch) ?? cursor.epoch;
-    const nextCursor = pageCursor(page) ?? cursor;
-    setCursor(nextCursor);
-    listener({ type: "restored", agentId, missed: timelineEntries(page, epoch, agentId) });
-  } catch (error) {
-    listener({
-      type: "error",
-      agentId,
-      message: "Could not recover missed timeline events.",
-      detail: errorDetail(error),
-    });
-  }
-}
-
 async function directorySnapshot(
   client: ClientSurface,
-  projects: UnknownRecord,
-  workspaces: UnknownRecord,
-  agents: UnknownRecord,
-  providers: UnknownRecord,
+  projects: unknown,
+  workspaces: unknown,
+  agents: unknown,
+  providers: unknown,
 ): Promise<DirectorySnapshot> {
+  const projectDirectory = asRecord(projects) ?? {};
+  const workspaceDirectory = asRecord(workspaces) ?? {};
+  const agentDirectory = asRecord(agents) ?? {};
+  const providerDirectory = asRecord(providers) ?? {};
   return {
-    projects: projectEntries(projects)
+    projects: projectEntries(projectDirectory)
       .map(projectRecord)
       .filter((project): project is ProjectRecord => project !== undefined),
-    workspaces: recordEntries(workspaces).map(workspaceRecord),
-    agents: recordEntries(agents).map((entry) => agentRecord(asRecord(entry.agent) ?? entry)),
-    providers: await providerRecords(client, providers),
+    workspaces: recordEntries(workspaceDirectory).map(workspaceRecord),
+    agents: recordEntries(agentDirectory).map((entry) =>
+      agentRecord(asRecord(entry.agent) ?? entry),
+    ),
+    providers: await providerRecords(client, providerDirectory),
   };
 }
 

@@ -102,7 +102,7 @@ CI enforces one required `check` result backed by:
 - Permission allow and deny responses
 - Stop, archive, detach, and rename with confirmation for destructive actions
 - Mode and thinking changes when advertised by the provider
-- Cursor-aware timeline recovery, replacement handling, and clean observation release
+- Epoch/sequence timeline deduplication, replacement recovery, and clean observation release
 - Default local, `--home`, and direct TCP daemon targets
 - Responsive narrow-terminal layout, semantic color, no-color and ASCII fallbacks, and terminal restoration on exit
 - Versioned, target-scoped persistence for safe presentation preferences
@@ -119,7 +119,7 @@ Preferences never contain prompts, prompt history, timeline content, agent or pr
 
 - v0.1 does not include embedded PTYs, diffs, browser panes, schedules, mobile relay pairing, SSH transport, or live model switching.
 - Stop, rename, thinking, and mode changes use documented `paseo --json` commands because the public SDK does not expose them. All other operations use the public SDK.
-- The stable 0.8.0 client reports a directory subscription ID but does not expose a public per-observation release handle or connection-state stream. Paseo Deck releases all local listeners immediately and releases server demand when the client closes; refresh provides explicit reconnection.
+- The stable 0.8.0 client reports a directory subscription ID but does not expose a public per-observation release handle, connection-state stream, or guaranteed directory-demand restoration after reconnect. Paseo Deck releases all local listeners immediately and releases server demand when the client closes; press `r` to reconnect and refresh the directory explicitly after a transport interruption. Focused timeline demand is restored by the SDK, and a replacement event triggers a fresh projected-history fetch.
 - Markdown rendering and fenced-code highlighting are intentionally compact for terminal use.
 - SSH targets and relay pairing offers are rejected with an actionable error; use a local or direct TCP target.
 - Preference writes assume one Paseo Deck process at a time. Concurrent processes share the same file, so the last process to save can replace presentation changes made by another running process.

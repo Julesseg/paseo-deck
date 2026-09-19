@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { PaseoGatewayError } from "./errors.js";
-import { connectionUpdate, ProductionPaseoGateway } from "./gateway.js";
+import { ProductionPaseoGateway } from "./gateway.js";
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -17,8 +17,6 @@ function testClient(
   } = {},
 ) {
   const release = vi.fn();
-  const connectionRelease = vi.fn();
-  let connectionListener: ((status: Record<string, unknown>) => void) | undefined;
   let timelineListener: ((message: Record<string, unknown>) => void) | undefined;
   const timeline = {
     subscribe: vi.fn((listener: (message: Record<string, unknown>) => void) => {
@@ -45,11 +43,6 @@ function testClient(
     client: {
       connect: vi.fn(),
       close: vi.fn(),
-      subscribeConnectionStatus: vi.fn((listener) => {
-        connectionListener = listener;
-        listener({ status: "idle" });
-        return connectionRelease;
-      }),
       projects: {
         list: vi.fn(async () => ({
           projects: [{ projectKey: "project-1", projectName: "Project" }],
@@ -115,35 +108,11 @@ function testClient(
     emitWorkspaceDirectory: (message: Record<string, unknown>) =>
       workspaceDirectoryListener?.(message),
     emitTimeline: (message: Record<string, unknown>) => timelineListener?.(message),
-    emitConnection: (status: Record<string, unknown>) => connectionListener?.(status),
-    connectionRelease,
   };
 }
 
 describe("ProductionPaseoGateway", () => {
-  it("maps public SDK connection statuses without exposing raw reasons", () => {
-    expect(connectionUpdate({ status: "idle" })).toEqual({
-      type: "connection-changed",
-      state: "disconnected",
-    });
-    expect(connectionUpdate({ status: "connecting", attempt: 2 })).toEqual({
-      type: "connection-changed",
-      state: "reconnecting",
-      attempt: 2,
-    });
-    expect(connectionUpdate({ status: "connecting", attempt: 1 })).toEqual({
-      type: "connection-changed",
-      state: "reconnecting",
-      attempt: 1,
-    });
-    expect(connectionUpdate({ status: "disconnected", reason: "password=hunter2" })).toEqual({
-      type: "connection-changed",
-      state: "reconnecting",
-      detail: "password=[redacted]",
-    });
-  });
-
-  it("unsubscribes connection status before closing the SDK client", async () => {
+  it("connects and closes the stable SDK surface without private connection hooks", async () => {
     const fixture = testClient();
     const gateway = new ProductionPaseoGateway({
       host: "127.0.0.1:6767",
@@ -151,7 +120,8 @@ describe("ProductionPaseoGateway", () => {
     });
     await gateway.connect();
     await gateway.close();
-    expect(fixture.connectionRelease).toHaveBeenCalledBefore(fixture.client.close);
+    expect(fixture.client.connect).toHaveBeenCalledOnce();
+    expect(fixture.client.close).toHaveBeenCalledOnce();
   });
 
   it("cleans up a failed connection so a later connection can retry", async () => {
@@ -169,7 +139,6 @@ describe("ProductionPaseoGateway", () => {
     await expect(gateway.connect()).rejects.toThrow("offline");
     await expect(gateway.connect()).resolves.toBeUndefined();
     expect(failing.client.close).toHaveBeenCalledOnce();
-    expect(failing.connectionRelease).toHaveBeenCalledBefore(failing.client.close);
     expect(createClient).toHaveBeenCalledTimes(2);
   });
 
@@ -496,44 +465,6 @@ describe("ProductionPaseoGateway", () => {
     expect(serialized).not.toContain("secret-action-behavior");
   });
 
-  it("recovers after the newest buffered cursor instead of replaying it on restoration", async () => {
-    const fixture = testClient();
-    fixture.timeline.refetch
-      .mockResolvedValueOnce({
-        epoch: "epoch-1",
-        entries: [{ seqStart: 1, seqEnd: 1, item: { type: "user_message", text: "one" } }],
-        endCursor: { epoch: "epoch-1", seq: 1 },
-      })
-      .mockResolvedValueOnce({
-        epoch: "epoch-1",
-        entries: [],
-        endCursor: { epoch: "epoch-1", seq: 2 },
-      });
-    const gateway = new ProductionPaseoGateway({
-      host: "127.0.0.1:6767",
-      createClient: () => fixture.client as never,
-    });
-    await gateway.connect();
-    const opening = gateway.focusAgent("agent-1", () => undefined);
-    await vi.waitFor(() => expect(fixture.timeline.subscribe).toHaveBeenCalledOnce());
-    fixture.emitTimeline({
-      epoch: "epoch-1",
-      seq: 2,
-      event: {
-        type: "timeline",
-        item: { type: "assistant_message", messageId: "m1", text: "two" },
-      },
-    });
-    await opening;
-    fixture.emitTimeline({ event: { type: "subscription_restored" } });
-    await vi.waitFor(() => expect(fixture.timeline.refetch).toHaveBeenCalledTimes(2));
-    expect(fixture.timeline.refetch).toHaveBeenLastCalledWith({
-      direction: "after",
-      cursor: { epoch: "epoch-1", seq: 2 },
-      projection: "projected",
-    });
-  });
-
   it("orders cursorless turn events without colliding with timeline cursors", async () => {
     const fixture = testClient();
     fixture.timeline.refetch
@@ -568,14 +499,6 @@ describe("ProductionPaseoGateway", () => {
     expect(delivered[0]?.event.sequence).toBe(2);
     expect(delivered[1]?.event.item.type).toBe("turn");
     expect(delivered[1]?.event.sequence).toBeGreaterThan(2);
-
-    fixture.emitTimeline({ event: { type: "subscription_restored" } });
-    await vi.waitFor(() => expect(fixture.timeline.refetch).toHaveBeenCalledTimes(2));
-    expect(fixture.timeline.refetch).toHaveBeenLastCalledWith({
-      direction: "after",
-      cursor: { epoch: "epoch-1", seq: 2 },
-      projection: "projected",
-    });
   });
 
   it("projects only source-provided timeline timing, tool failure, and streaming fields", async () => {
