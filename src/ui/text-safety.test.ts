@@ -4,6 +4,7 @@ import {
   clipTerminalLine,
   sanitizeTerminalText,
   terminalDisplayWidth,
+  wrapTerminalProse,
   wrapTerminalText,
 } from "./text-safety.js";
 
@@ -23,6 +24,18 @@ describe("terminal text safety", () => {
 
     expect(lines).toEqual(["    cons", "tVeryLon", "gIdentif", "ier🙂"]);
     expect(lines.every((line) => terminalDisplayWidth(line) <= 8)).toBe(true);
+  });
+
+  it("wraps app-owned prose at word boundaries when words fit the pane", () => {
+    expect(wrapTerminalProse("No projects are available yet.", 14)).toEqual([
+      "No projects",
+      "are available",
+      "yet.",
+    ]);
+  });
+
+  it("preserves repeated whitespace in remote payloads", () => {
+    expect(wrapTerminalText("const  value = 1", 40)).toEqual(["const  value = 1"]);
   });
 
   it("wraps flags and keycaps by their two-cell grapheme width", () => {

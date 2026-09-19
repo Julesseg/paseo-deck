@@ -38,7 +38,7 @@ import {
 } from "./layout.js";
 import { type RenderClock, RenderScheduler } from "./render-scheduler.js";
 import { TerminalLifecycle } from "./terminal.js";
-import { clipTerminalLine, sanitizeTerminalText } from "./text-safety.js";
+import { clipTerminalLine, sanitizeTerminalText, wrapTerminalProse } from "./text-safety.js";
 import { DeckTheme } from "./theme.js";
 import { clipboardPlainText, copyTargets, findTimelineMatches } from "./timeline-search.js";
 import { deriveTreeRows, shortAgentId, type TreeRow, timelineItemDisplay } from "./view-model.js";
@@ -120,7 +120,9 @@ class TreeView implements Component {
                 : "No projects or workspaces are available yet. Press r to refresh.";
       return [
         this.theme.style("header", "Projects / workspaces"),
-        this.theme.style("muted", this.theme.clipOwnedLabel(message, width)),
+        ...wrapTerminalProse(this.theme.label(message), width).map((line) =>
+          this.theme.styleRendered("muted", line),
+        ),
       ];
     }
     return [
@@ -367,18 +369,30 @@ class TimelineView implements Component {
       width < 18 ? "Timeline" : `${this.focused ? "[TIMELINE]" : " Timeline  "} ${this.heading}`;
     if (this.events.length === 0) {
       const message =
-        this.state?.connection === "connecting"
-          ? "Connecting to Paseo. Timeline will load after an agent is selected."
-          : this.state?.timeline.loading
-            ? "Loading timeline history…"
-            : this.state?.connection === "reconnecting"
-              ? "Timeline is stale while Paseo reconnects; waiting for recovery."
-              : this.state?.selectedAgentId
-                ? "No timeline selected. New activity will appear here."
-                : "No timeline selected. Choose an agent in the tree to read its timeline.";
+        width < 18
+          ? this.state?.connection === "connecting"
+            ? "Connecting…"
+            : this.state?.timeline.loading
+              ? "Loading…"
+              : this.state?.connection === "reconnecting"
+                ? "Reconnecting…"
+                : this.state?.selectedAgentId
+                  ? "No activity yet."
+                  : "No timeline. Select agent."
+          : this.state?.connection === "connecting"
+            ? "Connecting to Paseo. Timeline will load after an agent is selected."
+            : this.state?.timeline.loading
+              ? "Loading timeline history…"
+              : this.state?.connection === "reconnecting"
+                ? "Timeline is stale while Paseo reconnects; waiting for recovery."
+                : this.state?.selectedAgentId
+                  ? "No timeline selected. New activity will appear here."
+                  : "No timeline selected. Choose an agent in the tree to read its timeline.";
       return [
         this.theme.styleRendered("header", this.theme.clipRendered(heading, width)),
-        this.theme.style("muted", this.theme.clipOwnedLabel(message, width)),
+        ...wrapTerminalProse(this.theme.label(message), width).map((line) =>
+          this.theme.styleRendered("muted", line),
+        ),
       ];
     }
     return [

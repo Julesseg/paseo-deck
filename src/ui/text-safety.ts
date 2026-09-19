@@ -31,6 +31,15 @@ export function wrapTerminalText(value: string, width: number): string[] {
     .flatMap((line) => wrapLine(line, available));
 }
 
+/** Wraps app-owned explanatory copy at words, with hard wrapping for oversized words. */
+export function wrapTerminalProse(value: string, width: number): string[] {
+  const available = Math.max(1, width);
+  return sanitizeTerminalText(value)
+    .replaceAll("\t", "    ")
+    .split("\n")
+    .flatMap((line) => wrapProseLine(line, available));
+}
+
 /** Clips a rendered line while retaining safe ANSI styling created by the UI. */
 export function clipTerminalLine(value: string, width: number, overflowSuffix = "…"): string {
   const available = Math.max(0, width);
@@ -69,6 +78,37 @@ export function clipTerminalLine(value: string, width: number, overflowSuffix = 
 }
 
 function wrapLine(value: string, width: number): string[] {
+  if (!value) return [""];
+  return hardWrapLine(value, width);
+}
+
+function wrapProseLine(value: string, width: number): string[] {
+  if (!value) return [""];
+  const words = value.split(/(\s+)/).filter(Boolean);
+  if (words.length > 1) return wrapWords(words, width);
+  return hardWrapLine(value, width);
+}
+
+function wrapWords(words: readonly string[], width: number): string[] {
+  const lines: string[] = [];
+  let line = "";
+  for (const word of words) {
+    if (/^\s+$/.test(word)) continue;
+    const candidate = line ? `${line} ${word}` : word;
+    if (terminalDisplayWidth(candidate) <= width) {
+      line = candidate;
+      continue;
+    }
+    if (line) lines.push(line);
+    const wrapped = hardWrapLine(word, width);
+    line = wrapped.pop() ?? "";
+    lines.push(...wrapped);
+  }
+  if (line || lines.length === 0) lines.push(line);
+  return lines;
+}
+
+function hardWrapLine(value: string, width: number): string[] {
   if (!value) return [""];
   const lines: string[] = [];
   let line = "";

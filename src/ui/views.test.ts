@@ -412,6 +412,27 @@ describe("terminal appearance", () => {
     expect(loadingRendered).toContain("Loading timeline history");
   });
 
+  it("keeps empty-state actions visible instead of clipping them from their panes", async () => {
+    const terminal = new RecordingTerminal(100, 18);
+    const empty = {
+      ...state(),
+      connection: "connected" as const,
+      directory: emptyDirectory(),
+      timeline: { recoveryRevision: 0, items: [], loading: false },
+    };
+    const deck = new DeckTui(terminal, empty, () => undefined);
+    deck.update(empty);
+    deck.start();
+    await terminal.waitForRender();
+    const rendered = terminal.viewport().join("\n");
+    await deck.stop();
+
+    expect(rendered).toContain("Press r to refresh");
+    expect(rendered).toContain("Choose an agent in the tree");
+    expect(rendered).not.toContain("avai\nlable");
+    expect(rendered).not.toContain("ti\nmeline");
+  });
+
   it("keeps selected Markdown and fenced code styles from becoming visible escape glyphs", async () => {
     const terminal = new RecordingTerminal();
     const event: TimelineEvent = {
