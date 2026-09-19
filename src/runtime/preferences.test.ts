@@ -15,38 +15,43 @@ import {
 } from "./preferences.js";
 
 const validScope = `v1-${"a".repeat(64)}`;
+const portablePath = (path: string): string => path.replaceAll("\\", "/");
 
 describe("preferences", () => {
   it("writes atomically with a synced file and parent directory", async () => {
     const calls: string[] = [];
-    const fs = createNodePreferenceFileSystem({
-      mkdir: async (path, options) => {
-        calls.push(`mkdir ${path} ${options.mode.toString(8)}`);
+    const fs = createNodePreferenceFileSystem(
+      {
+        mkdir: async (path, options) => {
+          calls.push(`mkdir ${portablePath(path)} ${options.mode.toString(8)}`);
+        },
+        chmod: async (path, mode) => {
+          calls.push(`chmod ${portablePath(path)} ${mode.toString(8)}`);
+        },
+        open: async (path, flags, mode) => {
+          const displayedPath = portablePath(path);
+          calls.push(`open ${displayedPath} ${flags}${mode ? ` ${mode.toString(8)}` : ""}`);
+          return {
+            writeFile: async (value, encoding) => {
+              calls.push(`write ${value} ${encoding}`);
+            },
+            sync: async () => {
+              calls.push(`sync ${displayedPath}`);
+            },
+            close: async () => {
+              calls.push(`close ${displayedPath}`);
+            },
+          };
+        },
+        rename: async (from, to) => {
+          calls.push(`rename ${portablePath(from)} ${portablePath(to)}`);
+        },
+        rm: async (path) => {
+          calls.push(`rm ${portablePath(path)}`);
+        },
       },
-      chmod: async (path, mode) => {
-        calls.push(`chmod ${path} ${mode.toString(8)}`);
-      },
-      open: async (path, flags, mode) => {
-        calls.push(`open ${path} ${flags}${mode ? ` ${mode.toString(8)}` : ""}`);
-        return {
-          writeFile: async (value, encoding) => {
-            calls.push(`write ${value} ${encoding}`);
-          },
-          sync: async () => {
-            calls.push(`sync ${path}`);
-          },
-          close: async () => {
-            calls.push(`close ${path}`);
-          },
-        };
-      },
-      rename: async (from, to) => {
-        calls.push(`rename ${from} ${to}`);
-      },
-      rm: async (path) => {
-        calls.push(`rm ${path}`);
-      },
-    });
+      "linux",
+    );
 
     await fs.writeAtomic("/prefs/preferences.json", "saved");
 
@@ -65,36 +70,40 @@ describe("preferences", () => {
 
   it("closes and removes the temporary file when an atomic write fails", async () => {
     const calls: string[] = [];
-    const fs = createNodePreferenceFileSystem({
-      mkdir: async () => {
-        calls.push("mkdir");
+    const fs = createNodePreferenceFileSystem(
+      {
+        mkdir: async () => {
+          calls.push("mkdir");
+        },
+        chmod: async () => {
+          calls.push("chmod");
+        },
+        open: async (path) => {
+          const displayedPath = portablePath(path);
+          calls.push(`open ${displayedPath}`);
+          return {
+            writeFile: async () => {
+              calls.push("write");
+              throw new Error("disk full");
+            },
+            sync: async () => {
+              calls.push("sync");
+            },
+            close: async () => {
+              calls.push(`close ${displayedPath}`);
+            },
+          };
+        },
+        rename: async () => {
+          calls.push("rename");
+        },
+        rm: async (path) => {
+          calls.push(`rm ${portablePath(path)}`);
+          throw new Error("cleanup failure");
+        },
       },
-      chmod: async () => {
-        calls.push("chmod");
-      },
-      open: async (path) => {
-        calls.push(`open ${path}`);
-        return {
-          writeFile: async () => {
-            calls.push("write");
-            throw new Error("disk full");
-          },
-          sync: async () => {
-            calls.push("sync");
-          },
-          close: async () => {
-            calls.push(`close ${path}`);
-          },
-        };
-      },
-      rename: async () => {
-        calls.push("rename");
-      },
-      rm: async (path) => {
-        calls.push(`rm ${path}`);
-        throw new Error("cleanup failure");
-      },
-    });
+      "linux",
+    );
 
     await expect(fs.writeAtomic("/prefs/preferences.json", "saved")).rejects.toThrow("disk full");
 
@@ -119,16 +128,17 @@ describe("preferences", () => {
           calls.push("chmod");
         },
         open: async (path, flags) => {
-          calls.push(`open ${path} ${flags}`);
+          const displayedPath = portablePath(path);
+          calls.push(`open ${displayedPath} ${flags}`);
           return {
             writeFile: async () => {
               calls.push("write");
             },
             sync: async () => {
-              calls.push(`sync ${path}`);
+              calls.push(`sync ${displayedPath}`);
             },
             close: async () => {
-              calls.push(`close ${path}`);
+              calls.push(`close ${displayedPath}`);
             },
           };
         },
