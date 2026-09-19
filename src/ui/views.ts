@@ -20,10 +20,16 @@ import type { AppState, ModalState } from "../contracts/app-state.js";
 import type { TimelineEvent, TimelineItem } from "../contracts/domain.js";
 import { composerAvailability, selectedComposerDraft } from "../state/composer.js";
 import { activeNotification } from "../state/store.js";
+import {
+  type CommandContext,
+  commandForKey,
+  contextualHelp,
+  type ResolvedCommand,
+  resolvedCommands,
+} from "./commands.js";
 import { DeckController, type UiIntent } from "./controller.js";
 import {
   adjustTreeWidth,
-  MAX_TREE_WIDTH,
   MIN_TERMINAL_COLUMNS,
   MIN_TERMINAL_ROWS,
   MIN_TREE_WIDTH,
@@ -692,6 +698,64 @@ class SearchableChoiceDialog implements Component, Focusable {
   }
 }
 
+class CommandPaletteDialog implements Component, Focusable {
+  focused = false;
+  private readonly query = new Input();
+  private selected = 0;
+  constructor(
+    private readonly commands: () => readonly ResolvedCommand[],
+    private readonly choose: (id: string) => void,
+    private readonly cancel: () => void,
+  ) {}
+  invalidate(): void {
+    this.query.invalidate();
+  }
+  render(width: number): string[] {
+    this.query.focused = this.focused;
+    const matches = this.matches();
+    return [
+      "Command palette",
+      ...this.query.render(width),
+      ...matches.slice(0, 9).map((command, index) => {
+        const shortcut = command.shortcuts.join(" / ");
+        const suffix = command.disabledReason ? ` — ${command.disabledReason}` : "";
+        return `${index === this.selected ? "> " : "  "}${command.label}  ${shortcut}${suffix}`;
+      }),
+      "Type to filter · ↑↓ select · Enter run · Esc close",
+    ].map((line) => clip(line, width));
+  }
+  handleInput(data: string): void {
+    if (matchesKey(data, "escape")) {
+      this.cancel();
+      return;
+    }
+    const matches = this.matches();
+    if (matchesKey(data, "up")) this.selected = Math.max(0, this.selected - 1);
+    else if (matchesKey(data, "down"))
+      this.selected = Math.min(Math.max(0, matches.length - 1), this.selected + 1);
+    else if (matchesKey(data, "enter")) {
+      const command = matches[this.selected];
+      if (command && !command.disabledReason) this.choose(command.id);
+    } else {
+      this.query.handleInput(data);
+      this.selected = 0;
+    }
+  }
+  private matches(): readonly ResolvedCommand[] {
+    const query = this.query.getValue().toLocaleLowerCase();
+    return this.commands().filter((command) =>
+      `${command.label} ${command.group} ${command.shortcuts.join(" ")}`
+        .toLocaleLowerCase()
+        .includes(query),
+    );
+  }
+}
+
+function commandHelpLine(command: ResolvedCommand): string {
+  const suffix = command.disabledReason ? ` — unavailable: ${command.disabledReason}` : "";
+  return `${command.shortcuts.join(" / ")}  ${command.label}${suffix}`;
+}
+
 /** Bridges immutable store state to reusable pi-tui components and modal overlays. */
 export class DeckTui {
   readonly tui: TuiAltScreen;
@@ -709,8 +773,11 @@ export class DeckTui {
   private readonly transcript: TimelineScrollView;
   private readonly minimumSize: MinimumSizeView;
   private treeWidth = 34;
-  private overlay: OverlayHandle | undefined;
-  private modalKey = "";
+  private appOverlay: OverlayHandle | undefined;
+  private appModalKey = "";
+  private localOverlay: OverlayHandle | undefined;
+  private localOverlayKey = "";
+  private readonly localOverlayStack: { handle: OverlayHandle; key: string }[] = [];
   private searchMatches = findTimelineMatches([], "");
   private searchIndex = 0;
   private searchQuery = "";
@@ -762,23 +829,36 @@ export class DeckTui {
     this.tui.addInputListener((data) => {
       // Local overlays have no AppState modal, so keep global bindings from
       // interpreting their editor/list input.
-      if (this.modalKey.startsWith("__timeline-")) {
+      // Help and palette are intentionally global nested overlays. They are
+      // available above an editor/dialog without handing ordinary keys through.
+      if (data === "\u0003") return this.controller.handleKey(data) ? { consume: true } : undefined;
+      const global = commandForKey(this.state, data);
+      if (global?.id === "command-palette" || global?.id === "help")
+        return this.controller.handleKey(data) ? { consume: true } : undefined;
+      if (this.localOverlayKey.startsWith("__timeline-")) {
         if (data === "\u0003")
           return this.controller.handleKey(data) ? { consume: true } : undefined;
         if (data === "\u001b") {
           this.restoreLocalOverlay();
           return { consume: true };
         }
-        if (this.modalKey === "__timeline-search" && data === "\u000e") {
+        if (this.localOverlayKey === "__timeline-search" && data === "\u000e") {
           this.moveTimelineSearch(1);
           return { consume: true };
         }
-        if (this.modalKey === "__timeline-search" && data === "\u0010") {
+        if (this.localOverlayKey === "__timeline-search" && data === "\u0010") {
           this.moveTimelineSearch(-1);
           return { consume: true };
         }
-        if (this.modalKey === "__timeline-search" && data === "\r") {
+        if (this.localOverlayKey === "__timeline-search" && data === "\r") {
           this.moveTimelineSearch(1);
+          return { consume: true };
+        }
+        return undefined;
+      }
+      if (this.localOverlayKey === "__command-palette" || this.localOverlayKey === "__help") {
+        if (data === "\u001b") {
+          this.restoreLocalOverlay();
           return { consume: true };
         }
         return undefined;
@@ -861,7 +941,7 @@ export class DeckTui {
       this.timeline.selectPermission(state.modal.requestId)
     )
       this.revealTimelineSelection();
-    if (timelineChanged && this.modalKey === "__timeline-search")
+    if (timelineChanged && this.localOverlayKey === "__timeline-search")
       this.refreshTimelineSearchResults();
     const restoredPaused =
       (previousAgentId !== state.selectedAgentId || recoveryChanged) &&
@@ -948,6 +1028,18 @@ export class DeckTui {
       this.openTimelineCopy();
       return;
     }
+    if (intent.type === "open-command-palette") {
+      this.openCommandPalette();
+      return;
+    }
+    if (intent.type === "open-help") {
+      this.openHelp();
+      return;
+    }
+    if (intent.type === "invoke-command") {
+      this.controller.invokeCommand(intent.id);
+      return;
+    }
     this.emit(intent);
   }
 
@@ -957,9 +1049,8 @@ export class DeckTui {
     this.searchIndex = 0;
     this.searchQuery = "";
     this.searchFeedback = "Type to search source text.";
-    this.modalKey = "__timeline-search";
-    this.overlay?.hide();
-    this.overlay = this.tui.showOverlay(
+    this.showLocalOverlay(
+      "__timeline-search",
       new SearchDialog(
         () => this.searchFeedback,
         (query) => this.updateTimelineSearch(query),
@@ -968,6 +1059,49 @@ export class DeckTui {
       ),
       { width: "70%", minWidth: 28, maxHeight: "70%", margin: 1 },
     );
+  }
+
+  private openCommandPalette(): void {
+    if (this.localOverlayKey === "__command-palette") return;
+    this.captureLocalSnapshot();
+    this.showLocalOverlay(
+      "__command-palette",
+      new CommandPaletteDialog(
+        () => resolvedCommands(this.state).filter((command) => command.palette !== false),
+        (id) => {
+          this.restoreLocalOverlay();
+          this.controller.invokeCommand(id);
+        },
+        () => this.restoreLocalOverlay(),
+      ),
+      { width: "70%", minWidth: 32, maxHeight: "70%", margin: 1 },
+    );
+  }
+
+  private openHelp(): void {
+    if (this.localOverlayKey === "__help") return;
+    this.captureLocalSnapshot();
+    const context = this.topInteractionContext();
+    this.showLocalOverlay(
+      "__help",
+      new Dialog(
+        [
+          `Paseo Deck keys · ${context}`,
+          ...contextualHelp(this.state, context).map((command) => commandHelpLine(command)),
+        ],
+        (data) => {
+          if (matchesKey(data, "escape") || data === "?") this.restoreLocalOverlay();
+          return true;
+        },
+      ),
+      { width: "70%", minWidth: 28, maxHeight: "70%", margin: 1 },
+    );
+  }
+
+  private topInteractionContext(): CommandContext {
+    if (this.localOverlayKey === "__command-palette") return "palette";
+    if (this.state.modal.type !== "none") return this.state.modal.type;
+    return this.state.focus;
   }
 
   private updateTimelineSearch(query: string): void {
@@ -1004,9 +1138,8 @@ export class DeckTui {
       return;
     }
     this.captureLocalSnapshot();
-    this.modalKey = "__timeline-copy";
-    this.overlay?.hide();
-    this.overlay = this.tui.showOverlay(
+    this.showLocalOverlay(
+      "__timeline-copy",
       new ChoiceDialog(
         "Copy selected timeline item",
         targets.map((target, index) => ({ value: String(index), label: target.label })),
@@ -1032,23 +1165,55 @@ export class DeckTui {
   }
 
   private restoreLocalOverlay(): void {
+    if (this.localOverlayStack.length > 0) {
+      this.localOverlay?.hide();
+      const previous = this.localOverlayStack.pop();
+      if (previous) {
+        this.localOverlay = previous.handle;
+        this.localOverlayKey = previous.key;
+        this.localOverlay.setHidden(false);
+        this.localOverlay.focus();
+      }
+      this.renderScheduler.requestImmediate();
+      return;
+    }
     const snapshot = this.localSnapshot;
     this.disposeLocalOverlay();
+    this.appOverlay?.setHidden(false);
+    this.appOverlay?.focus();
     if (snapshot) {
       if (snapshot.itemId) this.timeline.selectEvent(snapshot.itemId);
       if (snapshot.following) this.transcript.scrollToEnd();
       else this.transcript.scrollTo(snapshot.scrollTop, { disableFollow: true });
       this.setTimelineFollowing(snapshot.following, snapshot.anchor);
     }
-    this.tui.setFocus(this.state.focus === "composer" ? this.composer : null);
+    if (!this.appOverlay) this.tui.setFocus(this.state.focus === "composer" ? this.composer : null);
     this.renderScheduler.requestImmediate();
   }
 
   private disposeLocalOverlay(): void {
-    this.overlay?.hide();
-    this.overlay = undefined;
-    this.modalKey = "";
+    this.localOverlay?.hide();
+    for (const overlay of this.localOverlayStack) overlay.handle.hide();
+    this.localOverlayStack.length = 0;
+    this.localOverlay = undefined;
+    this.localOverlayKey = "";
     this.localSnapshot = undefined;
+  }
+
+  private showLocalOverlay(
+    key: string,
+    component: Component,
+    options: Parameters<TUI["showOverlay"]>[1],
+  ): void {
+    if (this.localOverlay) {
+      this.localOverlay.setHidden(true);
+      this.localOverlayStack.push({ handle: this.localOverlay, key: this.localOverlayKey });
+    }
+    this.appModalKey = JSON.stringify(this.state.modal);
+    if (this.localOverlayStack.length === 0) this.appOverlay?.setHidden(true);
+    this.localOverlayKey = key;
+    this.localOverlay = this.tui.showOverlay(component, options);
+    this.localOverlay.focus();
   }
 
   private captureLocalSnapshot(): void {
@@ -1168,16 +1333,13 @@ export class DeckTui {
   }
 
   private syncModal(): void {
-    if (this.modalKey.startsWith("__timeline-")) {
-      if (this.state.modal.type === "none") return;
-      this.disposeLocalOverlay();
-    }
     const key = JSON.stringify(this.state.modal);
-    if (key === this.modalKey) return;
-    this.overlay?.unfocus({ target: this.state.focus === "composer" ? this.composer : null });
-    this.overlay?.hide();
-    this.overlay = undefined;
-    this.modalKey = key;
+    if (key === this.appModalKey) return;
+    this.disposeLocalOverlay();
+    this.appOverlay?.unfocus({ target: this.state.focus === "composer" ? this.composer : null });
+    this.appOverlay?.hide();
+    this.appOverlay = undefined;
+    this.appModalKey = key;
     const modal = this.state.modal;
     if (modal.type === "none") return;
     const close = (): void => this.emit({ type: "close-modal" });
@@ -1185,15 +1347,8 @@ export class DeckTui {
     if (modal.type === "help")
       component = new Dialog(
         [
-          "Paseo Deck keys",
-          "↑↓/j k move · ←→/h l collapse/expand · g/G ends · [/] turns · {} errors · Enter open · Tab focus",
-          "i compose · n new · / filter · p permissions · r refresh",
-          "N notification history · R retry selected failure",
-          "o order · v archived · ! attention-only",
-          "Timeline: Ctrl-F search · y copy selected source",
-          `[ / ] tree width (${MIN_TREE_WIDTH}–${MAX_TREE_WIDTH})`,
-          "x stop · A archive · d detach · e rename · m mode · t thinking",
-          "? help · E error details · q quit · Esc cancel",
+          `Paseo Deck keys · ${this.state.focus}`,
+          ...contextualHelp(this.state).map((command) => commandHelpLine(command)),
         ],
         (data) => {
           if (matchesKey(data, "escape") || data === "?") close();
@@ -1301,7 +1456,7 @@ export class DeckTui {
         );
       }
     }
-    this.overlay = this.tui.showOverlay(component, {
+    this.appOverlay = this.tui.showOverlay(component, {
       width: "70%",
       minWidth: 28,
       maxHeight: "70%",

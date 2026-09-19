@@ -1874,7 +1874,7 @@ describe("DeckTui viewport and focus", () => {
     expect(intents).toContainEqual({ type: "set-composer-text", text: "x" });
   });
 
-  it("lists session triage keys in help", async () => {
+  it("lists focus and session navigation keys in help", async () => {
     const terminal = new RecordingTerminal();
     const deck = new DeckTui(terminal, { ...state(), modal: { type: "help" } }, () => undefined);
 
@@ -1882,7 +1882,8 @@ describe("DeckTui viewport and focus", () => {
     await terminal.waitForRender();
     deck.update({ ...state(), modal: { type: "help" } });
     await terminal.waitForRender();
-    expect(terminal.viewport().join("\n")).toContain("o order · v archived · ! attention-only");
+    expect(terminal.viewport().join("\n")).toContain("Tab  Focus next pane");
+    expect(terminal.viewport().join("\n")).toContain("h / Left  Collapse selected branch");
     await deck.stop();
   });
 
@@ -1895,7 +1896,8 @@ describe("DeckTui viewport and focus", () => {
     await terminal.waitForRender();
     await deck.stop();
 
-    expect(terminal.viewport().join("\n")).toContain("[ / ] tree width (18–48)");
+    expect(terminal.viewport().join("\n")).toContain("[  Narrow session tree");
+    expect(terminal.viewport().join("\n")).toContain("]  Widen session tree");
   });
 
   it("applies tree-width keys locally and restores the expanded tree view", async () => {
@@ -1957,5 +1959,136 @@ describe("DeckTui viewport and focus", () => {
     await deck.stop();
 
     expect(intents).toContainEqual({ type: "set-composer-text", text: "draftx" });
+  });
+
+  it("opens the command palette from an editor and restores the composer without key leakage", async () => {
+    const terminal = new RecordingTerminal();
+    const intents: unknown[] = [];
+    const base = state();
+    const composerState: AppState = {
+      ...base,
+      selectedAgentId: "agent",
+      focus: "composer",
+      composer: { ...base.composer, drafts: { agent: "preserve me" } },
+    };
+    const deck = new DeckTui(terminal, composerState, (intent) => intents.push(intent));
+    deck.start();
+    terminal.sendInput("\u000b");
+    await terminal.waitForRender();
+    expect(terminal.viewport().join("\n")).toContain("Command palette");
+    terminal.sendInput("\u001b");
+    await terminal.waitForRender();
+    terminal.sendInput("x");
+    await deck.stop();
+
+    expect(intents).toContainEqual({ type: "set-composer-text", text: "preserve mex" });
+    expect(intents).not.toContainEqual(
+      expect.objectContaining({ type: "open-confirmation", action: "stop" }),
+    );
+  });
+
+  it.each([
+    {
+      name: "rename",
+      modal: { type: "rename" as const, agentId: "agent", value: "" },
+      text: "Renamed",
+      expected: {
+        type: "command",
+        command: { type: "rename-agent", agentId: "agent", name: "Renamed" },
+      },
+    },
+    {
+      name: "filter",
+      modal: { type: "filter" as const, query: "" },
+      text: "needle",
+      expected: { type: "create-choice", choice: "needle" },
+    },
+    {
+      name: "creation prompt",
+      modal: {
+        type: "create-agent" as const,
+        workspaceId: "w",
+        step: "prompt" as const,
+        providerId: "ready",
+        modelId: "one",
+      },
+      text: "preserve prompt",
+      expected: { type: "create-choice", choice: "preserve prompt" },
+    },
+  ])(
+    "restores unsaved $name text after palette and help close",
+    async ({ modal, text, expected }) => {
+      const terminal = new RecordingTerminal();
+      const intents: unknown[] = [];
+      const deck = new DeckTui(terminal, { ...state(), modal }, (intent) => intents.push(intent));
+      deck.start();
+      deck.update({ ...state(), modal });
+      await terminal.waitForRender();
+      terminal.sendInput(text);
+      terminal.sendInput("\u000b");
+      await terminal.waitForRender();
+      expect(terminal.viewport().join("\n")).toContain("Command palette");
+      terminal.sendInput("?");
+      await terminal.waitForRender();
+      expect(terminal.viewport().join("\n")).toContain("Paseo Deck keys");
+      terminal.sendInput("\u001b");
+      await terminal.waitForRender();
+      expect(terminal.viewport().join("\n")).toContain("Command palette");
+      terminal.sendInput("\u001b");
+      terminal.sendInput("\r");
+      await deck.stop();
+
+      expect(intents).toContainEqual(expected);
+    },
+  );
+
+  it("does not stack a palette over itself and keeps disabled palette actions inert", async () => {
+    const terminal = new RecordingTerminal();
+    const intents: unknown[] = [];
+    const base = state();
+    const deck = new DeckTui(terminal, base, (intent) => intents.push(intent));
+    deck.start();
+    terminal.sendInput("\u000b");
+    terminal.sendInput("stop");
+    await terminal.waitForRender();
+    expect(terminal.viewport().join("\n")).toContain("Select an agent first");
+    terminal.sendInput("\r");
+    terminal.sendInput("\u000b");
+    terminal.sendInput("\u001b");
+    await terminal.waitForRender();
+    expect(terminal.viewport().join("\n")).not.toContain("Command palette");
+    expect(intents).not.toContainEqual(expect.objectContaining({ type: "open-confirmation" }));
+    await deck.stop();
+  });
+
+  it("recomputes palette availability without reconstructing the open overlay", async () => {
+    const terminal = new RecordingTerminal();
+    const base = state();
+    const deck = new DeckTui(terminal, base, () => undefined);
+    deck.start();
+    terminal.sendInput("\u000b");
+    terminal.sendInput("stop");
+    await terminal.waitForRender();
+    expect(terminal.viewport().join("\n")).toContain("Select an agent first");
+    const agent = {
+      id: "agent",
+      workspaceId: "w",
+      title: "Agent",
+      status: "idle" as const,
+      availableModeIds: [],
+      availableThinkingLevels: [],
+      pendingPermissions: [],
+      needsAttention: false,
+      archived: false,
+    };
+    deck.update({
+      ...base,
+      selectedAgentId: "agent",
+      directory: { ...base.directory, agents: [agent] },
+    });
+    await terminal.waitForRender();
+    expect(terminal.viewport().join("\n")).not.toContain("Select an agent first");
+    terminal.sendInput("\u001b");
+    await deck.stop();
   });
 });

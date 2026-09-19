@@ -1,6 +1,6 @@
 import type { AppState, FocusArea, ModalState } from "../contracts/app-state.js";
 import type { AgentCommand } from "../contracts/commands.js";
-import { activeNotification } from "../state/store.js";
+import { commandById, commandForKey } from "./commands.js";
 
 export type UiIntent =
   | { type: "select-next"; direction: -1 | 1 }
@@ -9,6 +9,8 @@ export type UiIntent =
   | { type: "select-or-open" }
   | { type: "set-focus"; focus: FocusArea }
   | { type: "open-help" }
+  | { type: "open-command-palette" }
+  | { type: "invoke-command"; id: string }
   | { type: "open-filter" }
   | { type: "toggle-tree-order" }
   | { type: "toggle-archived" }
@@ -63,72 +65,38 @@ export class DeckController {
     // ProcessTerminal enables raw mode, so Ctrl+C is delivered as input rather
     // than raising SIGINT. It must remain a global escape hatch even while an
     // editor or modal owns the keyboard.
-    if (data === "\u0003") return this.send({ type: "quit" });
+    const global = commandForKey(state, data);
+    if (data === "\u0003" && global?.id === "quit") return this.send(global.intent(state));
+    // These two overlays are safe global escapes. They are intercepted before
+    // every dialog/editor so opening and closing them cannot mutate its draft.
+    if (global?.id === "command-palette" || global?.id === "help")
+      return this.send(global.intent(state));
     if (state.modal.type === "permission") {
       if (state.modal.submitting) return true;
-      const { agentId, requestId } = state.modal;
-      if (data === "a")
-        this.emit({
-          type: "respond-permission",
-          agentId,
-          requestId,
-          allow: true,
-        });
-      else if (data === "d")
-        this.emit({
-          type: "respond-permission",
-          agentId,
-          requestId,
-          allow: false,
-        });
-      else if (data === "\u001b") this.emit({ type: "close-modal" });
-      else if (data === "h" || data === "\u001b[D")
-        this.emit({ type: "move-permission", direction: -1 });
-      else if (data === "l" || data === "\u001b[C")
-        this.emit({ type: "move-permission", direction: 1 });
-      else if (data === "r" && state.modal.error && state.modal.lastDecision)
-        this.emit({
-          type: "retry-permission",
-          agentId,
-          requestId,
-          allow: state.modal.lastDecision === "allow",
-        });
-      else return false;
-      return true;
+      return this.sendResolved(global, state);
     }
     if (state.modal.type === "notifications") {
-      if (data === "j" || data === "\u001b[B")
-        this.emit({ type: "move-notification", direction: 1 });
-      else if (data === "k" || data === "\u001b[A")
-        this.emit({ type: "move-notification", direction: -1 });
-      else if (data === "\r") {
-        const notification = activeNotification(state);
-        if (notification) this.emit({ type: "select-notification", id: notification.id });
-      } else if (data === "E") {
-        const notification = activeNotification(state);
-        if (notification?.detail)
-          this.emit({
-            type: "open-error-details",
-            message: notification.message,
-            detail: notification.detail,
-          });
-      } else if (data === "R") {
-        const notification = activeNotification(state);
-        if (notification?.retry) this.emit({ type: "retry-notification", id: notification.id });
-      } else if (data === "\u001b") this.emit({ type: "close-modal" });
-      else return false;
-      return true;
+      return this.sendResolved(global, state);
     }
-    if (state.focus === "composer" && data === "\u001b")
-      return this.send({ type: "set-focus", focus: "tree" });
-    if (state.focus === "composer" && data === "\u0010")
-      return this.send({ type: "navigate-composer-history", direction: -1 });
-    if (state.focus === "composer" && data === "\u000e")
-      return this.send({ type: "navigate-composer-history", direction: 1 });
-    if (state.focus === "composer" && data === "\t")
-      return this.send({ type: "set-focus", focus: nextFocus(state.focus, 1) });
-    if (state.focus === "composer" && data === "\u001b[Z")
-      return this.send({ type: "set-focus", focus: nextFocus(state.focus, -1) });
+    if (
+      state.focus === "composer" &&
+      global &&
+      [
+        "composer-leave",
+        "composer-history-previous",
+        "composer-history-next",
+        "focus-next",
+        "focus-previous",
+      ].includes(global.id)
+    )
+      return this.send(global.intent(state));
+    // Ctrl-K/Cmd-P are deliberately available while editing; all other normal
+    // shortcuts belong to the editor until it yields focus.
+    if (
+      (isTextEditing(state.modal) || state.focus === "composer") &&
+      global?.id === "command-palette"
+    )
+      return this.send(global.intent(state));
     if (isTextEditing(state.modal) || state.focus === "composer") return false;
     if (data === "\u001b") {
       if (state.modal.type !== "none") this.emit({ type: "close-modal" });
@@ -137,95 +105,16 @@ export class DeckController {
     // Every non-text modal owns its own navigation (SelectList, confirmation,
     // and help), rather than letting tree bindings leak through the overlay.
     if (state.modal.type !== "none") return false;
-    if (data === "j" || data === "\u001b[B")
-      return state.focus === "timeline"
-        ? this.send({ type: "move-timeline-selection", direction: 1 })
-        : this.send({ type: "select-next", direction: 1 });
-    if (data === "k" || data === "\u001b[A")
-      return state.focus === "timeline"
-        ? this.send({ type: "move-timeline-selection", direction: -1 })
-        : this.send({ type: "select-next", direction: -1 });
-    if ((data === "h" || data === "\u001b[D") && state.focus === "tree")
-      return this.send({ type: "collapse-or-expand", direction: -1 });
-    if ((data === "l" || data === "\u001b[C") && state.focus === "tree")
-      return this.send({ type: "collapse-or-expand", direction: 1 });
-    if (data === "g")
-      return state.focus === "timeline"
-        ? this.send({ type: "move-timeline-selection-boundary", boundary: "start" })
-        : this.send({ type: "select-boundary", boundary: "start" });
-    if (data === "G")
-      return state.focus === "timeline"
-        ? this.send({ type: "move-timeline-selection-boundary", boundary: "end" })
-        : this.send({ type: "select-boundary", boundary: "end" });
-    if (state.focus === "timeline" && data === "[")
-      return this.send({ type: "move-timeline-landmark", direction: -1, kind: "turn" });
-    if (state.focus === "timeline" && data === "]")
-      return this.send({ type: "move-timeline-landmark", direction: 1, kind: "turn" });
-    if (state.focus === "timeline" && data === "{")
-      return this.send({ type: "move-timeline-landmark", direction: -1, kind: "error" });
-    if (state.focus === "timeline" && data === "}")
-      return this.send({ type: "move-timeline-landmark", direction: 1, kind: "error" });
-    if (data === "\r")
-      return state.focus === "timeline"
-        ? this.send({ type: "toggle-selected-timeline-item" })
-        : this.send({ type: "select-or-open" });
-    if (data === "\t") return this.send({ type: "set-focus", focus: nextFocus(state.focus, 1) });
-    if (data === "\u001b[Z")
-      return this.send({ type: "set-focus", focus: nextFocus(state.focus, -1) });
-    if (data === "i") return this.send({ type: "set-focus", focus: "composer" });
-    if (state.focus === "timeline" && data === "\u0006")
-      return this.send({ type: "open-timeline-search" });
-    if (state.focus === "timeline" && data === "y")
-      return this.send({ type: "open-timeline-copy" });
-    if (data === "n" && state.selectedWorkspaceId)
-      return this.send({
-        type: "open-create-agent",
-        workspaceId: state.selectedWorkspaceId,
-        step: "provider",
-      });
-    if (data === "/") return this.send({ type: "open-filter" });
-    if (data === "o") return this.send({ type: "toggle-tree-order" });
-    if (data === "v") return this.send({ type: "toggle-archived" });
-    if (data === "!") return this.send({ type: "toggle-attention-only" });
-    if (data === "[") return this.send({ type: "adjust-tree-width", delta: -2 });
-    if (data === "]") return this.send({ type: "adjust-tree-width", delta: 2 });
-    if (data === "p") return this.send({ type: "open-permissions" });
-    if (data === "N") return this.send({ type: "open-notifications" });
-    if (data === "r") return this.send({ type: "refresh" });
-    if (data === "?") return this.send({ type: "open-help" });
-    const notification = activeNotification(state);
-    if (data === "E" && notification?.detail)
-      return this.send({
-        type: "open-error-details",
-        message: notification.message,
-        detail: notification.detail,
-      });
-    if (data === "R" && notification?.retry)
-      return this.send({ type: "retry-notification", id: notification.id });
-    if (data === "q") return this.send({ type: "quit" });
-    if (!state.selectedAgentId) return false;
-    if (data === "x")
-      return this.send({
-        type: "open-confirmation",
-        action: "stop",
-        agentId: state.selectedAgentId,
-      });
-    if (data === "A")
-      return this.send({
-        type: "open-confirmation",
-        action: "archive",
-        agentId: state.selectedAgentId,
-      });
-    if (data === "d")
-      return this.send({
-        type: "open-confirmation",
-        action: "detach",
-        agentId: state.selectedAgentId,
-      });
-    if (data === "e") return this.send({ type: "open-rename", agentId: state.selectedAgentId });
-    if (data === "m") return this.send({ type: "open-mode", agentId: state.selectedAgentId });
-    if (data === "t") return this.send({ type: "open-thinking", agentId: state.selectedAgentId });
+    if (global) {
+      return this.sendResolved(global, state);
+    }
     return false;
+  }
+
+  invokeCommand(id: string): boolean {
+    const command = commandById(this.getState(), id);
+    if (!command || command.disabledReason) return false;
+    return this.send(command.intent(this.getState()));
   }
 
   confirm(modal: Extract<ModalState, { type: "confirm" }>): void {
@@ -237,12 +126,12 @@ export class DeckController {
     this.emit(intent);
     return true;
   }
-}
 
-function nextFocus(focus: FocusArea, direction: -1 | 1): FocusArea {
-  const order: FocusArea[] = ["tree", "timeline", "composer"];
-  const index = order.indexOf(focus);
-  return order[(index + direction + order.length) % order.length] ?? "tree";
+  private sendResolved(command: ReturnType<typeof commandForKey>, state: AppState): boolean {
+    if (!command) return false;
+    if (command.disabledReason) return true;
+    return this.send(command.intent(state));
+  }
 }
 
 function isTextEditing(modal: ModalState): boolean {
