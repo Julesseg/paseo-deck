@@ -69,7 +69,6 @@ export function normalizePermission(value: unknown, agentId: string): Permission
     title: text(source.title, text(source.name, "Permission required")),
     ...(text(source.description) ? { description: text(source.description) } : {}),
     choices: strings(source.choices ?? source.actions),
-    raw: value,
   };
 }
 

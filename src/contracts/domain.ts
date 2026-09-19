@@ -34,10 +34,17 @@ export type AgentStatus =
 export interface PermissionRequest {
   id: string;
   agentId: string;
+  provider?: string;
+  name?: string;
+  kind?: string;
   title: string;
+  /** Display-safe operation name derived at the gateway boundary. */
+  operation?: string;
+  workingDirectory?: string;
+  arguments?: readonly string[];
+  actions?: readonly { id: string; label: string; behavior?: string }[];
   description?: string;
   choices?: readonly string[];
-  raw?: unknown;
 }
 
 export interface AgentRecord {
@@ -55,6 +62,8 @@ export interface AgentRecord {
   needsAttention: boolean;
   parentAgentId?: string;
   archived: boolean;
+  /** The daemon's most recent agent update timestamp, when it provides one. */
+  lastActivityAt?: string;
   lastUsage?: UsageSummary;
 }
 
@@ -63,6 +72,8 @@ export interface ModelOption {
   name: string;
   selectable: boolean;
   thinkingLevels: readonly string[];
+  unavailableReason?: string;
+  defaultThinkingLevel?: string;
 }
 
 export interface ProviderOption {
@@ -73,6 +84,7 @@ export interface ProviderOption {
   modeIds: readonly string[];
   defaultModelId?: string;
   defaultModeId?: string;
+  unavailableReason?: string;
 }
 
 export interface DirectorySnapshot {
@@ -91,7 +103,16 @@ export type DirectoryUpdate =
   | { type: "agent-upserted"; agent: AgentRecord }
   | { type: "agent-removed"; agentId: string }
   | { type: "providers-replaced"; providers: readonly ProviderOption[] }
-  | { type: "connection-changed"; state: ConnectionState; detail?: string };
+  | {
+      type: "connection-changed";
+      state: ConnectionState;
+      /** Retry ordinal supplied by a transport, when it has one. */
+      attempt?: number;
+      /** Local observation time, supplied by the application rather than a reducer. */
+      at?: number;
+      /** Safe, user-displayable reason only. */
+      detail?: string;
+    };
 
 export interface TimelineCursor {
   epoch: string;
@@ -100,12 +121,19 @@ export interface TimelineCursor {
 
 interface TimelineBase {
   id: string;
+  timestamp?: string;
   raw?: unknown;
 }
 
 export type TimelineItem =
   | (TimelineBase & { type: "user-message"; text: string })
-  | (TimelineBase & { type: "assistant-message"; messageId: string; text: string })
+  | (TimelineBase & {
+      type: "assistant-message";
+      messageId: string;
+      text: string;
+      streaming?: boolean;
+      turnId?: string;
+    })
   | (TimelineBase & { type: "reasoning"; text: string; collapsed?: boolean })
   | (TimelineBase & {
       type: "tool";
@@ -114,6 +142,8 @@ export type TimelineItem =
       status: "running" | "completed" | "failed" | "canceled";
       summary?: string;
       output?: string;
+      durationMs?: number;
+      failureSummary?: string;
     })
   | (TimelineBase & { type: "error"; message: string; detail?: string })
   | (TimelineBase & { type: "permission"; request: PermissionRequest; resolved?: boolean })
@@ -121,6 +151,9 @@ export type TimelineItem =
       type: "turn";
       status: "started" | "completed" | "failed" | "canceled";
       detail?: string;
+      startedAt?: string;
+      completedAt?: string;
+      durationMs?: number;
     })
   | (TimelineBase & { type: "unknown"; sourceType: string; summary: string });
 

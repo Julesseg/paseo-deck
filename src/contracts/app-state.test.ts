@@ -9,6 +9,8 @@ describe("application state contracts", () => {
   it("finds the selected agent by its stable id", () => {
     const state: AppState = {
       connection: "connected",
+      recovery: { attempt: 0, directoryStale: false, timelineStale: false },
+      notifications: [],
       directory: {
         projects: [],
         workspaces: [],
@@ -30,10 +32,22 @@ describe("application state contracts", () => {
       selectedAgentId: "agent-1",
       expandedIds: new Set(),
       filter: "",
+      treeOrder: "attention",
+      showArchived: false,
+      attentionOnly: false,
       focus: "tree",
       modal: { type: "none" },
-      timeline: { items: [], loading: false },
-      composerText: "",
+      timeline: { recoveryRevision: 0, items: [], loading: false },
+      timelineNavigation: {},
+      creationDefaults: {},
+      composer: {
+        drafts: {},
+        histories: {},
+        historyIndexes: {},
+        historyDrafts: {},
+        sendingAgentIds: new Set(),
+        detachedAgentIds: new Set(),
+      },
     };
 
     expect(findSelectedAgent(state)?.title).toBe("Review");

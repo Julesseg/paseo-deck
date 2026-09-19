@@ -2,28 +2,45 @@ import type {
   AgentRecord,
   ConnectionState,
   DirectorySnapshot,
-  PermissionRequest,
   TimelineCursor,
   TimelineEvent,
   UsageSummary,
 } from "./domain.js";
 
 export type FocusArea = "tree" | "timeline" | "composer";
+export type TreeOrder = "attention" | "alphabetical";
 
 export type ModalState =
   | { type: "none" }
   | { type: "help" }
+  | { type: "notifications"; index: number }
   | { type: "filter"; query: string }
-  | { type: "confirm"; action: "stop" | "archive" | "detach"; agentId: string }
-  | { type: "permission"; request: PermissionRequest }
+  | {
+      type: "confirm";
+      action: "stop" | "archive" | "detach";
+      agentId: string;
+      draftWarning?: boolean;
+    }
+  | {
+      type: "permission";
+      agentId: string;
+      requestId: string;
+      queueIndex: number;
+      submitting: boolean;
+      lastDecision?: "allow" | "deny";
+      error?: string;
+    }
   | {
       type: "create-agent";
       workspaceId: string;
-      step: "provider" | "model" | "mode" | "thinking" | "prompt";
+      step: "provider" | "model" | "mode" | "thinking" | "prompt" | "confirm";
       providerId?: string;
       modelId?: string;
       modeId?: string;
       thinkingLevel?: string;
+      prompt?: string;
+      error?: string;
+      submitting?: boolean;
     }
   | { type: "rename"; agentId: string; value: string }
   | { type: "mode"; agentId: string }
@@ -37,28 +54,83 @@ export interface FocusedTimelineState {
   items: readonly TimelineEvent[];
   usage?: UsageSummary;
   loading: boolean;
+  /** Advances only when recovery replaces or restores history ordering. */
+  recoveryRevision: number;
   error?: string;
 }
 
+/** Semantic scrollback intent, retained per agent without terminal line coordinates. */
+export interface TimelineNavigationState {
+  following: boolean;
+  unread: number;
+  anchor?: TimelineCursor;
+}
+
+export type RetryDescriptor = { type: "reconnect" } | { type: "operation"; token: number };
+
+export type PaseoFailureKind =
+  | "daemon-unavailable"
+  | "authentication"
+  | "protocol"
+  | "subscription"
+  | "command";
+
 export interface NotificationState {
+  id: number;
   message: string;
   detail?: string;
   kind: "info" | "error";
+  retry?: RetryDescriptor;
+  failureKind?: PaseoFailureKind;
+}
+
+/** Connection information owned by the application, not the transport. */
+export interface ConnectionRecoveryState {
+  attempt: number;
+  since?: number;
+  detail?: string;
+  directoryStale: boolean;
+  timelineStale: boolean;
+}
+
+export interface ComposerState {
+  drafts: Readonly<Record<string, string>>;
+  histories: Readonly<Record<string, readonly string[]>>;
+  historyIndexes: Readonly<Record<string, number>>;
+  historyDrafts: Readonly<Record<string, string>>;
+  sendingAgentIds: ReadonlySet<string>;
+  detachedAgentIds: ReadonlySet<string>;
+}
+
+export interface CreationDefaults {
+  providerId: string;
+  modelId: string;
+  modeId?: string;
+  thinkingLevel?: string;
 }
 
 export interface AppState {
   connection: ConnectionState;
+  recovery: ConnectionRecoveryState;
   directory: DirectorySnapshot;
   selectedProjectId?: string;
   selectedWorkspaceId?: string;
   selectedAgentId?: string;
   expandedIds: ReadonlySet<string>;
   filter: string;
+  treeOrder: TreeOrder;
+  showArchived: boolean;
+  attentionOnly: boolean;
   focus: FocusArea;
   modal: ModalState;
   timeline: FocusedTimelineState;
-  composerText: string;
-  notification?: NotificationState;
+  timelineNavigation: Readonly<Record<string, TimelineNavigationState>>;
+  composer: ComposerState;
+  /** Successful creation choices, isolated by workspace for the current run. */
+  creationDefaults: Readonly<Record<string, CreationDefaults>>;
+  /** Bounded FIFO; notification is retained as the currently selected entry. */
+  notifications: readonly NotificationState[];
+  activeNotificationId?: number;
 }
 
 export function emptyDirectory(): DirectorySnapshot {

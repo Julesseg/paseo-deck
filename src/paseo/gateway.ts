@@ -1,10 +1,11 @@
-import { createPaseoClient } from "@getpaseo/client";
+import { createPaseoClient, type PaseoClient } from "@getpaseo/client";
 import type { AgentCommand, CommandResult } from "../contracts/commands.js";
 import type {
   AgentRecord,
   DirectorySnapshot,
   DirectoryUpdate,
   PermissionRequest,
+  ProjectRecord,
   ProviderOption,
   TimelineCursor,
   TimelineEvent,
@@ -15,7 +16,7 @@ import type {
 } from "../contracts/domain.js";
 import type { Observation, PaseoGateway } from "../contracts/gateway.js";
 import { type CliRunner, createCliRunner, runJson } from "./cli.js";
-import { PaseoGatewayError } from "./errors.js";
+import { PaseoGatewayError, paseoFailure } from "./errors.js";
 import { type PaseoTarget, type PaseoTargetInput, targetFromDaemonStatus } from "./target.js";
 
 type UnknownRecord = Record<string, unknown>;
@@ -25,52 +26,12 @@ interface Releasable {
   release?: () => Promise<void> | void;
 }
 
-interface DirectorySubscription extends Releasable {
-  subscribe: (handlers: {
-    snapshot: Listener<UnknownRecord>;
-    update: Listener<UnknownRecord>;
-    error?: Listener<unknown>;
-  }) => void;
-}
-
 interface TimelineSubscription extends Releasable {
   (): void;
   ready: Promise<void>;
 }
 
-interface ClientSurface {
-  connect(): Promise<void>;
-  close(): Promise<void>;
-  projects: {
-    list(): Promise<UnknownRecord>;
-    subscribe(listener: Listener<UnknownRecord>): () => void;
-  };
-  workspaces: {
-    list(options?: UnknownRecord): Promise<UnknownRecord>;
-    subscribe(listener: Listener<UnknownRecord>): () => void;
-    ref(id: string): { agents: { create(options: UnknownRecord): Promise<{ id: string }> } };
-  };
-  agents: {
-    list(options?: UnknownRecord): Promise<UnknownRecord>;
-    subscribe(listener: Listener<UnknownRecord>): () => void;
-    ref(id: string): {
-      send(text: string): Promise<void>;
-      respondToPermission(options: UnknownRecord): Promise<void>;
-      archive(): Promise<unknown>;
-      detach(): Promise<void>;
-      timeline: {
-        subscribe(listener: Listener<UnknownRecord>): TimelineSubscription;
-        refetch(options?: UnknownRecord): Promise<UnknownRecord>;
-      };
-    };
-  };
-  providers: {
-    waitForReady(): Promise<UnknownRecord>;
-    listModels(provider: string, options?: UnknownRecord): Promise<UnknownRecord>;
-    listModes(provider: string, options?: UnknownRecord): Promise<UnknownRecord>;
-    subscribe(listener: Listener<UnknownRecord>): () => void;
-  };
-}
+type ClientSurface = PaseoClient;
 
 export interface PaseoGatewayOptions extends PaseoTargetInput {
   cliRunner?: CliRunner;
@@ -98,7 +59,7 @@ export class ProductionPaseoGateway implements PaseoGateway {
           // after the alternate screen has been restored. Request failures and
           // owned observation errors are surfaced through the gateway instead.
           logger: quietPaseoLogger,
-        }) as unknown as ClientSurface);
+        }));
   }
 
   public async connect(): Promise<void> {
@@ -122,7 +83,7 @@ export class ProductionPaseoGateway implements PaseoGateway {
       }
       this.client = undefined;
       this.target = undefined;
-      throw error;
+      throw paseoFailure(error, "daemon-unavailable");
     }
   }
 
@@ -135,66 +96,44 @@ export class ProductionPaseoGateway implements PaseoGateway {
   }
 
   public async getDirectorySnapshot(): Promise<DirectorySnapshot> {
-    const client = this.requireClient();
-    const [projects, workspaces, agents, providers] = await Promise.all([
-      client.projects.list(),
-      client.workspaces.list(),
-      client.agents.list(),
-      client.providers.waitForReady(),
-    ]);
-    return directorySnapshot(client, projects, workspaces, agents, providers);
+    try {
+      const client = this.requireClient();
+      const [projects, workspaces, agents, providers] = await Promise.all([
+        client.projects.list(),
+        client.workspaces.list(),
+        client.agents.list(),
+        client.providers.waitForReady(),
+      ]);
+      return directorySnapshot(client, projects, workspaces, agents, providers);
+    } catch (error) {
+      throw paseoFailure(error, "protocol");
+    }
   }
 
   public async observeDirectory(listener: Listener<DirectoryUpdate>): Promise<Observation> {
     const client = this.requireClient();
     const releases: Array<() => Promise<void> | void> = [];
+    // `connect()` has already settled before a directory observation exists;
+    // ApplicationController establishes its initial connected state after the
+    // snapshot. Forward only later transitions so startup does not refetch the
+    // directory a second time.
     // Stable 0.8.0 exposes the server-issued subscriptionId but no public release
     // handle. Local listeners below are released here; server demand ends on close().
     releases.push(client.agents.subscribe((message) => emitDirectoryMessage(message, listener)));
-    let agentDirectory: UnknownRecord;
     try {
-      agentDirectory = await client.agents.list({ subscribe: {} });
+      await client.agents.list({ subscribe: {} });
       releases.push(
         client.workspaces.subscribe((message) => emitDirectoryMessage(message, listener)),
       );
     } catch (error) {
       await releaseAll(releases);
-      throw error;
+      throw paseoFailure(error, "subscription");
     }
-    let workspaceDirectory: UnknownRecord;
     try {
-      workspaceDirectory = await client.workspaces.list({ subscribe: {} });
+      await client.workspaces.list({ subscribe: {} });
     } catch (error) {
       await releaseAll(releases);
-      throw error;
-    }
-    const agentSubscription = getSubscription(agentDirectory);
-    const workspaceSubscription = getSubscription(workspaceDirectory);
-    if (agentSubscription !== undefined) {
-      agentSubscription.subscribe({
-        snapshot: (snapshot) => {
-          for (const entry of recordEntries(snapshot)) {
-            listener({
-              type: "agent-upserted",
-              agent: agentRecord(asRecord(entry.agent) ?? entry),
-            });
-          }
-        },
-        update: (message) => emitDirectoryMessage(message, listener),
-        error: (error) => listener(directoryError(error)),
-      });
-      releases.push(() => releaseDirectorySubscription(agentSubscription));
-    }
-    if (workspaceSubscription !== undefined) {
-      workspaceSubscription.subscribe({
-        snapshot: (snapshot) => {
-          for (const entry of recordEntries(snapshot))
-            listener({ type: "workspace-upserted", workspace: workspaceRecord(entry) });
-        },
-        update: (message) => emitDirectoryMessage(message, listener),
-        error: (error) => listener(directoryError(error)),
-      });
-      releases.push(() => releaseDirectorySubscription(workspaceSubscription));
+      throw paseoFailure(error, "subscription");
     }
     releases.push(client.projects.subscribe((message) => emitDirectoryMessage(message, listener)));
     releases.push(
@@ -256,12 +195,6 @@ export class ProductionPaseoGateway implements PaseoGateway {
         );
         return;
       }
-      if (replacement?.type === "subscription_restored") {
-        void restoreTimeline(listener, agentId, agent.timeline, cursor, isCurrent, (nextCursor) => {
-          cursor = latestCursor(cursor, nextCursor);
-        });
-        return;
-      }
       if (replacement?.type === "error") {
         const detail = stringValue(replacement.error);
         listener({
@@ -278,12 +211,12 @@ export class ProductionPaseoGateway implements PaseoGateway {
       const epoch = stringValue(message.epoch) ?? activeEpoch ?? "live";
       const wireSequence = numberValue(message.seq);
       const sequence = wireSequence ?? syntheticControlSequence(epoch, cursor, ++syntheticSequence);
-      const event = timelineEvent(epoch, sequence, stream, agentId);
+      const event = timelineEvent(epoch, sequence, stream, agentId, sourceTimestamp(message));
       if (event === undefined) return;
       activeEpoch = epoch;
       // Control events such as turn_started and turn_completed intentionally
       // carry no daemon cursor. Give them stable ordering space between real
-      // timeline entries without advancing reconnect recovery past the server.
+      // timeline entries without advancing the last server-issued cursor.
       if (wireSequence !== undefined) cursor = latestCursor(cursor, { epoch, sequence });
       if (stream.type === "usage_updated") {
         listener({ type: "usage", agentId, usage: usageSummary(stream.usage) });
@@ -341,55 +274,59 @@ export class ProductionPaseoGateway implements PaseoGateway {
   }
 
   public async execute(command: AgentCommand): Promise<CommandResult> {
-    const client = this.requireClient();
-    switch (command.type) {
-      case "send-prompt":
-        await client.agents.ref(command.agentId).send(command.prompt);
-        return { type: "ok" };
-      case "create-agent": {
-        const agent = await client.workspaces.ref(command.workspaceId).agents.create({
-          title: command.title,
-          prompt: command.prompt,
-          config: {
-            provider: `${command.providerId}/${command.modelId}`,
-            ...(command.modeId === undefined ? {} : { modeId: command.modeId }),
-            ...(command.thinkingLevel === undefined
-              ? {}
-              : { thinkingOptionId: command.thinkingLevel }),
-          },
-        });
-        return { type: "agent-created", agentId: agent.id };
+    try {
+      const client = this.requireClient();
+      switch (command.type) {
+        case "send-prompt":
+          await client.agents.ref(command.agentId).send(command.prompt);
+          return { type: "ok" };
+        case "create-agent": {
+          const agent = await client.workspaces.ref(command.workspaceId).agents.create({
+            title: command.title,
+            prompt: command.prompt,
+            config: {
+              provider: `${command.providerId}/${command.modelId}`,
+              ...(command.modeId === undefined ? {} : { modeId: command.modeId }),
+              ...(command.thinkingLevel === undefined
+                ? {}
+                : { thinkingOptionId: command.thinkingLevel }),
+            },
+          });
+          return { type: "agent-created", agentId: agent.id };
+        }
+        case "respond-permission":
+          await client.agents.ref(command.agentId).respondToPermission({
+            requestId: command.requestId,
+            response: command.allow ? { behavior: "allow" } : { behavior: "deny" },
+          });
+          return { type: "permission-resolved", requestId: command.requestId };
+        case "archive-agent":
+          await client.agents.ref(command.agentId).archive();
+          return { type: "ok" };
+        case "detach-agent":
+          await client.agents.ref(command.agentId).detach();
+          return { type: "ok" };
+        case "stop-agent":
+          await this.runFallback(["stop", command.agentId]);
+          return { type: "ok" };
+        case "rename-agent":
+          await this.runFallback(["agent", "update", command.agentId, "--name", command.name]);
+          return { type: "ok" };
+        case "set-thinking-level":
+          await this.runFallback([
+            "agent",
+            "update",
+            command.agentId,
+            "--thinking",
+            command.thinkingLevel,
+          ]);
+          return { type: "ok" };
+        case "set-agent-mode":
+          await this.runFallback(["agent", "mode", command.agentId, command.modeId]);
+          return { type: "ok" };
       }
-      case "respond-permission":
-        await client.agents.ref(command.agentId).respondToPermission({
-          requestId: command.requestId,
-          response: command.allow ? { behavior: "allow" } : { behavior: "deny" },
-        });
-        return { type: "permission-resolved", requestId: command.requestId };
-      case "archive-agent":
-        await client.agents.ref(command.agentId).archive();
-        return { type: "ok" };
-      case "detach-agent":
-        await client.agents.ref(command.agentId).detach();
-        return { type: "ok" };
-      case "stop-agent":
-        await this.runFallback(["stop", command.agentId]);
-        return { type: "ok" };
-      case "rename-agent":
-        await this.runFallback(["agent", "update", command.agentId, "--name", command.name]);
-        return { type: "ok" };
-      case "set-thinking-level":
-        await this.runFallback([
-          "agent",
-          "update",
-          command.agentId,
-          "--thinking",
-          command.thinkingLevel,
-        ]);
-        return { type: "ok" };
-      case "set-agent-mode":
-        await this.runFallback(["agent", "mode", command.agentId, command.modeId]);
-        return { type: "ok" };
+    } catch (error) {
+      throw paseoFailure(error, "command");
     }
   }
 
@@ -456,21 +393,6 @@ async function releaseSubscription(subscription: Releasable & (() => void)): Pro
   else subscription();
 }
 
-async function releaseDirectorySubscription(subscription: DirectorySubscription): Promise<void> {
-  if (subscription.release !== undefined) await subscription.release();
-}
-
-function getSubscription(result: UnknownRecord): DirectorySubscription | undefined {
-  const candidate = result.subscription;
-  return typeof candidate === "object" && candidate !== null && "subscribe" in candidate
-    ? (candidate as DirectorySubscription)
-    : undefined;
-}
-
-function directoryError(error: unknown): DirectoryUpdate {
-  return { type: "connection-changed", state: "reconnecting", detail: errorDetail(error) };
-}
-
 function emitDirectoryMessage(message: UnknownRecord, listener: Listener<DirectoryUpdate>): void {
   const payload = asRecord(message.payload) ?? message;
   if (message.type === "agent_update" || "agent" in payload) {
@@ -490,7 +412,10 @@ function emitDirectoryMessage(message: UnknownRecord, listener: Listener<Directo
     const project = asRecord(payload.project) ?? payload;
     if (payload.kind === "remove")
       listener({ type: "project-removed", projectId: String(payload.projectId) });
-    else listener({ type: "project-upserted", project: projectRecord(project) });
+    else {
+      const normalized = projectRecord(project);
+      if (normalized !== undefined) listener({ type: "project-upserted", project: normalized });
+    }
   }
 }
 
@@ -567,63 +492,59 @@ async function replaceTimeline(
   }
 }
 
-async function restoreTimeline(
-  listener: Listener<TimelineUpdate>,
-  agentId: string,
-  timeline: ClientSurface["agents"]["ref"] extends (...args: never[]) => infer Agent
-    ? Agent extends { timeline: infer T }
-      ? T
-      : never
-    : never,
-  cursor: TimelineCursor | undefined,
-  isCurrent: () => boolean,
-  setCursor: (cursor: TimelineCursor | undefined) => void,
-): Promise<void> {
-  if (cursor === undefined) return;
-  try {
-    const page = await timeline.refetch({
-      direction: "after",
-      cursor: { epoch: cursor.epoch, seq: cursor.sequence },
-      projection: "projected",
-    });
-    if (!isCurrent()) return;
-    const epoch = stringValue(page.epoch) ?? cursor.epoch;
-    const nextCursor = pageCursor(page) ?? cursor;
-    setCursor(nextCursor);
-    listener({ type: "restored", agentId, missed: timelineEntries(page, epoch, agentId) });
-  } catch (error) {
-    listener({
-      type: "error",
-      agentId,
-      message: "Could not recover missed timeline events.",
-      detail: errorDetail(error),
-    });
-  }
-}
-
 async function directorySnapshot(
   client: ClientSurface,
-  projects: UnknownRecord,
-  workspaces: UnknownRecord,
-  agents: UnknownRecord,
-  providers: UnknownRecord,
+  projects: unknown,
+  workspaces: unknown,
+  agents: unknown,
+  providers: unknown,
 ): Promise<DirectorySnapshot> {
+  const projectDirectory = asRecord(projects) ?? {};
+  const workspaceDirectory = asRecord(workspaces) ?? {};
+  const agentDirectory = asRecord(agents) ?? {};
+  const providerDirectory = asRecord(providers) ?? {};
   return {
-    projects: projectEntries(projects).map(projectRecord),
-    workspaces: recordEntries(workspaces).map(workspaceRecord),
-    agents: recordEntries(agents).map((entry) => agentRecord(asRecord(entry.agent) ?? entry)),
-    providers: await providerRecords(client, providers),
+    projects: projectEntries(projectDirectory)
+      .map(projectRecord)
+      .filter((project): project is ProjectRecord => project !== undefined),
+    workspaces: recordEntries(workspaceDirectory).map(workspaceRecord),
+    agents: recordEntries(agentDirectory).map((entry) =>
+      agentRecord(asRecord(entry.agent) ?? entry),
+    ),
+    providers: await providerRecords(client, providerDirectory),
   };
 }
 
-function projectRecord(value: UnknownRecord) {
+function projectRecord(value: UnknownRecord): ProjectRecord | undefined {
+  const id = nonBlankString(value.id ?? value.projectKey);
+  if (id === undefined) return undefined;
+  const sourceName = nonBlankString(value.name ?? value.projectName);
+  const remoteName = readableRemoteProjectName(id);
+  const name = id.startsWith("remote:")
+    ? sourceName?.startsWith("remote:")
+      ? remoteName
+      : (sourceName ?? remoteName)
+    : (sourceName ?? id);
+  if (name === undefined) return undefined;
   return {
-    id: String(value.id ?? value.projectKey ?? "unknown-project"),
-    name: String(value.name ?? value.projectName ?? value.projectKey ?? "Project"),
+    id,
+    name,
     ...(stringValue(value.path ?? value.directory) === undefined
       ? {}
       : { path: stringValue(value.path ?? value.directory) as string }),
   };
+}
+
+function readableRemoteProjectName(id: string): string | undefined {
+  if (!id.startsWith("remote:")) return undefined;
+  const location = id.slice("remote:".length).replace(/^https?:\/\//, "");
+  const match = /^github\.com[/:]([^/]+)\/([^/]+?)(?:\.git)?\/?$/.exec(location);
+  return match ? `${match[1]}/${match[2]}` : undefined;
+}
+
+function nonBlankString(value: unknown): string | undefined {
+  const result = stringValue(value);
+  return result?.trim() ? result : undefined;
 }
 
 function workspaceRecord(value: UnknownRecord): WorkspaceRecord {
@@ -674,6 +595,9 @@ function agentRecord(value: UnknownRecord): AgentRecord {
     pendingPermissions: pending,
     needsAttention: value.requiresAttention === true || pending.length > 0,
     archived: value.archivedAt !== null && value.archivedAt !== undefined,
+    ...(stringValue(value.updatedAt) === undefined
+      ? {}
+      : { lastActivityAt: stringValue(value.updatedAt) as string }),
     ...(asRecord(value.lastUsage) === undefined
       ? {}
       : { lastUsage: usageSummary(value.lastUsage) }),
@@ -687,7 +611,8 @@ async function providerRecords(
   return Promise.all(
     recordEntries(value).map(async (entry) => {
       const provider = String(entry.provider ?? entry.id);
-      const ready = entry.status === "ready" && entry.enabled !== false;
+      const entryError = stringValue(entry.error);
+      const ready = entry.status === "ready" && entry.enabled !== false && entryError === undefined;
       if (!ready)
         return {
           id: provider,
@@ -695,6 +620,11 @@ async function providerRecords(
           ready: false,
           models: [],
           modeIds: [],
+          unavailableReason:
+            entryError ??
+            (entry.enabled === false
+              ? "disabled by daemon"
+              : `status: ${String(entry.status ?? "unknown")}`),
         };
       let modelsResponse: UnknownRecord;
       let modesResponse: UnknownRecord;
@@ -703,24 +633,49 @@ async function providerRecords(
           client.providers.listModels(provider),
           client.providers.listModes(provider),
         ]);
-      } catch {
+        const discoveryError =
+          stringValue(modelsResponse.error) ?? stringValue(modesResponse.error);
+        if (discoveryError)
+          return {
+            id: provider,
+            name: String(entry.label ?? provider),
+            ready: false,
+            models: [],
+            modeIds: [],
+            unavailableReason: discoveryError,
+          };
+      } catch (error) {
         return {
           id: provider,
           name: String(entry.label ?? provider),
           ready: false,
           models: [],
           modeIds: [],
+          unavailableReason: error instanceof Error ? error.message : "discovery failed",
         };
       }
       const modelEntries = arrayRecords(modelsResponse.models);
-      const models = modelEntries.map((record) => ({
-        id: String(record.id),
-        name: String(record.label ?? record.id),
-        selectable: record.isSelectable !== false,
-        thinkingLevels: Array.isArray(record.thinkingOptions)
-          ? record.thinkingOptions.map((option) => String(asRecord(option)?.id ?? option))
-          : [],
-      }));
+      const models = modelEntries.map((record) => {
+        const defaultThinking =
+          stringValue(record.defaultThinkingOptionId) ??
+          (Array.isArray(record.thinkingOptions)
+            ? record.thinkingOptions
+                .map((option) => asRecord(option))
+                .find((option) => option?.isDefault === true)?.id
+            : undefined);
+        return {
+          id: String(record.id),
+          name: String(record.label ?? record.id),
+          selectable: record.isSelectable !== false,
+          thinkingLevels: Array.isArray(record.thinkingOptions)
+            ? record.thinkingOptions.map((option) => String(asRecord(option)?.id ?? option))
+            : [],
+          ...(record.isSelectable === false ? { unavailableReason: "not selectable" } : {}),
+          ...(defaultThinking === undefined
+            ? {}
+            : { defaultThinkingLevel: String(defaultThinking) }),
+        };
+      });
       const modes = arrayRecords(modesResponse.modes).map((mode) => String(mode.id));
       const defaultModel = modelEntries.find((model) => model.isDefault === true)?.id;
       return {
@@ -742,7 +697,9 @@ function timelineEntries(page: UnknownRecord, epoch: string, agentId: string): T
   return recordEntries(page).flatMap((entry) => {
     const item = timelineItem(asRecord(entry.item) ?? {}, agentId);
     const sequence = numberValue(entry.seqEnd) ?? numberValue(entry.seqStart);
-    return item === undefined || sequence === undefined ? [] : [{ epoch, sequence, item }];
+    return item === undefined || sequence === undefined
+      ? []
+      : [{ epoch, sequence, item: timestamped(item, sourceTimestamp(entry)) }];
   });
 }
 
@@ -751,27 +708,34 @@ function timelineEvent(
   sequence: number,
   stream: UnknownRecord,
   agentId: string,
+  timestamp?: string,
 ): TimelineEvent | undefined {
   const item =
     stream.type === "timeline"
       ? timelineItem(asRecord(stream.item) ?? {}, agentId)
-      : streamItem(stream, agentId);
-  return item === undefined ? undefined : { epoch, sequence, item };
+      : streamItem(stream, agentId, timestamp);
+  return item === undefined ? undefined : { epoch, sequence, item: timestamped(item, timestamp) };
 }
 
-function streamItem(stream: UnknownRecord, agentId: string): TimelineItem | undefined {
+function streamItem(
+  stream: UnknownRecord,
+  agentId: string,
+  timestamp: string | undefined,
+): TimelineItem | undefined {
   switch (stream.type) {
     case "turn_started":
       return {
         id: `turn:${agentId}:${stringValue(stream.turnId) ?? "current"}`,
         type: "turn",
         status: "started",
+        ...(timestamp === undefined ? {} : { startedAt: timestamp }),
       };
     case "turn_completed":
       return {
         id: `turn:${agentId}:${stringValue(stream.turnId) ?? "current"}`,
         type: "turn",
         status: "completed",
+        ...(timestamp === undefined ? {} : { completedAt: timestamp }),
       };
     case "turn_failed":
       return {
@@ -779,6 +743,7 @@ function streamItem(stream: UnknownRecord, agentId: string): TimelineItem | unde
         type: "turn",
         status: "failed",
         detail: String(stream.error ?? ""),
+        ...(timestamp === undefined ? {} : { completedAt: timestamp }),
       };
     case "turn_canceled":
       return {
@@ -786,6 +751,7 @@ function streamItem(stream: UnknownRecord, agentId: string): TimelineItem | unde
         type: "turn",
         status: "canceled",
         detail: String(stream.reason ?? ""),
+        ...(timestamp === undefined ? {} : { completedAt: timestamp }),
       };
     case "permission_requested":
       return {
@@ -827,22 +793,15 @@ function timelineItem(value: UnknownRecord, agentId: string): TimelineItem | und
       text: String(value.text ?? ""),
       collapsed: true,
     };
-  if (type === "tool_call")
-    return {
-      id: `tool:${String(value.callId)}`,
-      type: "tool",
-      callId: String(value.callId),
-      name: String(value.name ?? "tool"),
-      status: toolStatus(value.status),
-      ...(stringValue(asRecord(value.detail)?.output) === undefined
-        ? {}
-        : { output: stringValue(asRecord(value.detail)?.output) as string }),
-    };
+  if (type === "tool_call") return toolTimelineItem(value);
   if (type === "error")
     return {
       id: `error:${String(value.message)}`,
       type: "error",
       message: String(value.message ?? "Unknown error"),
+      ...(stringValue(value.detail ?? value.error) === undefined
+        ? {}
+        : { detail: stringValue(value.detail ?? value.error) as string }),
     };
   if (type === "permission")
     return {
@@ -859,19 +818,172 @@ function timelineItem(value: UnknownRecord, agentId: string): TimelineItem | und
   };
 }
 
-function permissionRequest(value: UnknownRecord, agentId: string): PermissionRequest {
+function toolTimelineItem(value: UnknownRecord): TimelineItem {
+  const detail = asRecord(value.detail) ?? {};
+  const type = stringValue(detail.type);
+  const output =
+    type === "shell"
+      ? stringValue(detail.output)
+      : type === "read" || type === "edit" || type === "write"
+        ? stringValue(detail.content ?? detail.unifiedDiff)
+        : type === "search"
+          ? stringValue(detail.content)
+          : type === "fetch"
+            ? stringValue(detail.result)
+            : type === "worktree_setup" || type === "sub_agent"
+              ? stringValue(detail.log)
+              : type === "plain_text" || type === "plan"
+                ? stringValue(detail.text)
+                : type === "unknown"
+                  ? stringValue(detail.output)
+                  : undefined;
+  const durationMs =
+    type === "search" || type === "fetch" ? numberValue(detail.durationMs) : undefined;
+  const summary =
+    type === "shell"
+      ? stringValue(detail.command)
+      : type === "read" || type === "edit" || type === "write"
+        ? stringValue(detail.filePath)
+        : type === "search"
+          ? stringValue(detail.query)
+          : type === "fetch"
+            ? stringValue(detail.url)
+            : type === "sub_agent"
+              ? stringValue(detail.description)
+              : type === "plain_text"
+                ? stringValue(detail.label)
+                : undefined;
+  const failureSummary = stringValue(value.error);
   return {
+    id: `tool:${String(value.callId)}`,
+    type: "tool",
+    callId: String(value.callId),
+    name: String(value.name ?? "tool"),
+    status: toolStatus(value.status),
+    ...(summary === undefined ? {} : { summary }),
+    ...(output === undefined ? {} : { output }),
+    ...(durationMs === undefined ? {} : { durationMs }),
+    ...(failureSummary === undefined ? {} : { failureSummary }),
+  };
+}
+
+function sourceTimestamp(value: UnknownRecord): string | undefined {
+  return stringValue(value.timestamp);
+}
+
+function timestamped(item: TimelineItem, timestamp: string | undefined): TimelineItem {
+  return timestamp === undefined ? item : { ...item, timestamp };
+}
+
+function permissionRequest(value: UnknownRecord, agentId: string): PermissionRequest {
+  const operation =
+    safePermissionText(value.operation) ??
+    safePermissionText(value.name) ??
+    safePermissionText(value.title);
+  const workingDirectory =
+    safePermissionText(value.workingDirectory) ?? safePermissionText(value.cwd);
+  const argumentsValue = asRecord(value.arguments) ?? asRecord(value.args);
+  const argumentsSafe = argumentsValue
+    ? Object.entries(argumentsValue)
+        .filter(
+          ([key]) =>
+            !/(token|secret|password|credential|authorization|cookie|api[-_]?key)/i.test(key),
+        )
+        .flatMap(([key, item]) => {
+          if (typeof item !== "string" && typeof item !== "number" && typeof item !== "boolean")
+            return [];
+          return [
+            `${scrubPermissionText(key)}: ${scrubPermissionText(String(item)).slice(0, 160)}`,
+          ];
+        })
+    : undefined;
+  const detail = asRecord(value.detail);
+  const detailType = safePermissionText(detail?.type);
+  const shell = asRecord(detail?.shell) ?? detail;
+  const command = safePermissionText(shell?.command);
+  const filePath = safePermissionText(detail?.filePath) ?? safePermissionText(detail?.path);
+  const scrubbedCommand = command === undefined ? undefined : scrubPermissionText(command);
+  const actionItems = Array.isArray(value.actions)
+    ? value.actions.map((action) => {
+        const record = asRecord(action);
+        return {
+          // IDs are opaque protocol operands, never terminal display text.
+          id: String(record?.id ?? record?.value ?? action),
+          label: scrubPermissionText(String(record?.label ?? action)),
+          ...(safePermissionText(record?.behavior)
+            ? { behavior: safePermissionText(record?.behavior) as string }
+            : {}),
+        };
+      })
+    : undefined;
+  return {
+    // Preserve the daemon's opaque request identity exactly for the response API.
     id: String(value.id ?? "unknown-permission"),
     agentId,
-    title: String(value.title ?? value.name ?? "Permission requested"),
-    ...(stringValue(value.description) === undefined
-      ? {}
-      : { description: stringValue(value.description) as string }),
-    ...(Array.isArray(value.actions)
-      ? { choices: value.actions.map((action) => String(asRecord(action)?.label ?? action)) }
+    title: scrubPermissionText(String(value.title ?? value.name ?? "Permission requested")),
+    ...(operation === undefined ? {} : { operation }),
+    ...(safePermissionText(value.provider)
+      ? { provider: safePermissionText(value.provider) as string }
       : {}),
-    raw: value,
+    ...(safePermissionText(value.name) ? { name: safePermissionText(value.name) as string } : {}),
+    ...(safePermissionText(value.kind) ? { kind: safePermissionText(value.kind) as string } : {}),
+    ...(workingDirectory === undefined ? {} : { workingDirectory }),
+    ...(argumentsSafe === undefined || argumentsSafe.length === 0
+      ? {}
+      : { arguments: argumentsSafe }),
+    ...(actionItems === undefined ? {} : { actions: actionItems }),
+    ...(detailType === undefined
+      ? {}
+      : {
+          description: [
+            safePermissionText(value.description) === undefined
+              ? undefined
+              : safePermissionText(value.description),
+            `operation: ${detailType}`,
+            ...(scrubbedCommand ? [`command: ${scrubbedCommand}`] : []),
+            ...(filePath ? [`file: ${filePath}`] : []),
+          ]
+            .filter(Boolean)
+            .join("\n"),
+        }),
+    ...(detailType === undefined && safePermissionText(value.description) !== undefined
+      ? { description: safePermissionText(value.description) as string }
+      : {}),
+    ...(Array.isArray(value.actions)
+      ? {
+          choices: value.actions.map((action) =>
+            scrubPermissionText(String(asRecord(action)?.label ?? action)),
+          ),
+        }
+      : {}),
   };
+}
+
+function safePermissionText(value: unknown): string | undefined {
+  return typeof value === "string" && value.length > 0 ? scrubPermissionText(value) : undefined;
+}
+
+/**
+ * Permission text crosses from daemon-owned protocol data into the terminal.
+ * Preserve useful command context while redacting common credential encodings
+ * before it can reach state, logs, tests, or rendering.
+ */
+function scrubPermissionText(value: string): string {
+  return value
+    .replace(/\b(bearer|basic)\s+[A-Za-z0-9._~+/=-]+/gi, "$1 [redacted]")
+    .replace(
+      /((?:--?[\w-]*)?(?:token|secret|password|credential|authorization|cookie|api[-_]?key)[\w-]*(?:=|\s+))[^\s,;]+/gi,
+      "$1[redacted]",
+    )
+    .replace(
+      /([?&](?:token|secret|password|credential|authorization|cookie|api[-_]?key)=[^&#\s]*)/gi,
+      (match) => `${match.slice(0, match.indexOf("=") + 1)}[redacted]`,
+    )
+    .replace(
+      /(["'](?:token|secret|password|credential|authorization|cookie|api[-_]?key)["']\s*:\s*["'])[^"']*(["'])/gi,
+      "$1[redacted]$2",
+    )
+    .replace(/(https?:\/\/)[^\s/@]+:[^\s/@]+@/gi, "$1[redacted]@");
 }
 
 function pageCursor(page: UnknownRecord): TimelineCursor | undefined {
@@ -961,7 +1073,7 @@ function numberValue(value: unknown): number | undefined {
   return typeof value === "number" ? value : undefined;
 }
 function errorDetail(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
+  return paseoFailure(error, "protocol").detail ?? paseoFailure(error, "protocol").message;
 }
 function status(value: unknown): AgentRecord["status"] {
   return value === "initializing"

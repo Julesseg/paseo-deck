@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import type { PaseoGatewayError } from "./errors.js";
 import { ProductionPaseoGateway } from "./gateway.js";
 
 function deferred<T>() {
@@ -111,6 +112,18 @@ function testClient(
 }
 
 describe("ProductionPaseoGateway", () => {
+  it("connects and closes the stable SDK surface without private connection hooks", async () => {
+    const fixture = testClient();
+    const gateway = new ProductionPaseoGateway({
+      host: "127.0.0.1:6767",
+      createClient: () => fixture.client as never,
+    });
+    await gateway.connect();
+    await gateway.close();
+    expect(fixture.client.connect).toHaveBeenCalledOnce();
+    expect(fixture.client.close).toHaveBeenCalledOnce();
+  });
+
   it("cleans up a failed connection so a later connection can retry", async () => {
     const failing = testClient();
     const succeeding = testClient();
@@ -127,6 +140,20 @@ describe("ProductionPaseoGateway", () => {
     await expect(gateway.connect()).resolves.toBeUndefined();
     expect(failing.client.close).toHaveBeenCalledOnce();
     expect(createClient).toHaveBeenCalledTimes(2);
+  });
+
+  it("maps SDK failures to safe closed gateway failures", async () => {
+    const fixture = testClient();
+    fixture.client.projects.list.mockRejectedValueOnce(new Error("ECONNREFUSED password=hunter2"));
+    const gateway = new ProductionPaseoGateway({
+      host: "127.0.0.1:6767",
+      createClient: () => fixture.client as never,
+    });
+    await gateway.connect();
+    await expect(gateway.getDirectorySnapshot()).rejects.toMatchObject({
+      kind: "authentication",
+      detail: expect.not.stringContaining("hunter2"),
+    } satisfies Partial<PaseoGatewayError>);
   });
 
   it("normalizes an initial snapshot from the SDK", async () => {
@@ -150,6 +177,90 @@ describe("ProductionPaseoGateway", () => {
     });
     expect(fixture.client.providers.listModels).toHaveBeenCalledWith("codex");
     expect(fixture.client.providers.listModes).toHaveBeenCalledWith("codex");
+  });
+
+  it("projects the SDK updatedAt activity timestamp without manufacturing one", async () => {
+    const fixture = testClient();
+    fixture.client.agents.list.mockResolvedValueOnce({
+      entries: [
+        {
+          agent: {
+            id: "agent-1",
+            workspaceId: "workspace-1",
+            title: "Agent",
+            status: "idle",
+            updatedAt: "2026-09-18T12:34:56.000Z",
+            availableModes: [],
+            pendingPermissions: [],
+          },
+        },
+        {
+          agent: {
+            id: "agent-2",
+            workspaceId: "workspace-1",
+            title: "No timestamp",
+            status: "idle",
+            availableModes: [],
+            pendingPermissions: [],
+          },
+        },
+      ],
+    } as never);
+    const gateway = new ProductionPaseoGateway({
+      host: "127.0.0.1:6767",
+      createClient: () => fixture.client as never,
+    });
+
+    await gateway.connect();
+    const directory = await gateway.getDirectorySnapshot();
+
+    expect(directory.agents).toMatchObject([
+      { id: "agent-1", lastActivityAt: "2026-09-18T12:34:56.000Z" },
+      { id: "agent-2" },
+    ]);
+    expect(directory.agents[1]).not.toHaveProperty("lastActivityAt");
+  });
+
+  it("keeps remote workspace IDs while exposing only readable remote projects", async () => {
+    const fixture = testClient();
+    fixture.client.projects.list.mockResolvedValueOnce({
+      projects: [
+        {
+          projectKey: "remote:github.com/acme/paseo-deck",
+          projectName: "remote:github.com/acme/paseo-deck",
+        },
+        { projectKey: "remote:unknown" },
+        {},
+        { projectKey: "", projectName: "" },
+      ],
+    } as never);
+    fixture.client.workspaces.list.mockResolvedValueOnce({
+      entries: [
+        {
+          id: "workspace-remote",
+          projectId: "remote:github.com/acme/paseo-deck",
+          workspaceDirectory: "/tmp/paseo-deck",
+        },
+        {
+          id: "workspace-orphan",
+          projectId: "remote:unknown",
+          workspaceDirectory: "/tmp/orphan",
+        },
+      ],
+    } as never);
+    const gateway = new ProductionPaseoGateway({
+      host: "127.0.0.1:6767",
+      createClient: () => fixture.client as never,
+    });
+
+    await gateway.connect();
+    await expect(gateway.getDirectorySnapshot()).resolves.toMatchObject({
+      projects: [{ id: "remote:github.com/acme/paseo-deck", name: "acme/paseo-deck" }],
+      workspaces: [
+        { id: "workspace-remote", projectId: "remote:github.com/acme/paseo-deck" },
+        { id: "workspace-orphan", projectId: "remote:unknown" },
+      ],
+    });
   });
 
   it("attaches and releases stable SDK local directory listeners after establishing server demand", async () => {
@@ -244,42 +355,114 @@ describe("ProductionPaseoGateway", () => {
     ]);
   });
 
-  it("recovers after the newest buffered cursor instead of replaying it on restoration", async () => {
+  it("projects permission requests through a narrow display-safe boundary", async () => {
     const fixture = testClient();
-    fixture.timeline.refetch
-      .mockResolvedValueOnce({
-        epoch: "epoch-1",
-        entries: [{ seqStart: 1, seqEnd: 1, item: { type: "user_message", text: "one" } }],
-        endCursor: { epoch: "epoch-1", seq: 1 },
-      })
-      .mockResolvedValueOnce({
-        epoch: "epoch-1",
-        entries: [],
-        endCursor: { epoch: "epoch-1", seq: 2 },
-      });
     const gateway = new ProductionPaseoGateway({
       host: "127.0.0.1:6767",
       createClient: () => fixture.client as never,
     });
     await gateway.connect();
-    const opening = gateway.focusAgent("agent-1", () => undefined);
-    await vi.waitFor(() => expect(fixture.timeline.subscribe).toHaveBeenCalledOnce());
+    const seen: unknown[] = [];
+    await gateway.focusAgent("agent-1", (update) => seen.push(update));
+
     fixture.emitTimeline({
       epoch: "epoch-1",
       seq: 2,
       event: {
-        type: "timeline",
-        item: { type: "assistant_message", messageId: "m1", text: "two" },
+        type: "permission_requested",
+        request: {
+          id: "permission-token=secret-request-id",
+          title: "Run Bearer secret-title",
+          operation: "shell --token secret-operation",
+          name: "name?apiKey=secret-name",
+          provider: "Bearer secret-provider",
+          kind: "kind password=secret-kind",
+          cwd: "/safe/workspace?token=secret-cwd",
+          arguments: {
+            command:
+              "curl -H 'Authorization: Bearer secret-header' https://user:secret-url@example.test/?token=secret-query",
+            token: "never-project-this",
+            metadata: { token: "nested-secret" },
+          },
+          description: 'payload {"apiKey":"secret-json"} password=secret-inline',
+          detail: {
+            type: "shell authorization secret-detail",
+            filePath: "/tmp?token=secret-path",
+            shell: { command: "echo --secret secret-command" },
+          },
+          actions: [
+            {
+              id: "action-token=secret-action-id",
+              label: "Bearer secret-action-label",
+              behavior: "password=secret-action-behavior",
+            },
+          ],
+          raw: { input: "private prompt", metadata: { token: "secret" } },
+          input: "private input",
+          content: "private content",
+          log: "private log",
+          token: "private token",
+        },
       },
     });
-    await opening;
-    fixture.emitTimeline({ event: { type: "subscription_restored" } });
-    await vi.waitFor(() => expect(fixture.timeline.refetch).toHaveBeenCalledTimes(2));
-    expect(fixture.timeline.refetch).toHaveBeenLastCalledWith({
-      direction: "after",
-      cursor: { epoch: "epoch-1", seq: 2 },
-      projection: "projected",
+
+    expect(seen).toContainEqual({
+      type: "event",
+      agentId: "agent-1",
+      event: expect.objectContaining({
+        item: expect.objectContaining({
+          type: "permission",
+          request: expect.objectContaining({
+            id: "permission-token=secret-request-id",
+            operation: "shell --token [redacted]",
+            workingDirectory: "/safe/workspace?token=[redacted]",
+            arguments: [
+              "command: curl -H 'Authorization: Bearer [redacted]' https://[redacted]@example.test/?token=[redacted]",
+            ],
+          }),
+        }),
+      }),
     });
+    const projectedRequest = (
+      seen.at(-1) as {
+        event: { item: { request: { id: string; actions?: readonly { id: string }[] } } };
+      }
+    ).event.item.request;
+    expect(projectedRequest.id).toBe("permission-token=secret-request-id");
+    expect(projectedRequest.actions?.[0]?.id).toBe("action-token=secret-action-id");
+    await gateway.execute({
+      type: "respond-permission",
+      agentId: "agent-1",
+      requestId: projectedRequest.id,
+      allow: true,
+    });
+    expect(fixture.agent.respondToPermission).toHaveBeenCalledWith({
+      requestId: "permission-token=secret-request-id",
+      response: { behavior: "allow" },
+    });
+    const serialized = JSON.stringify({ ...projectedRequest, id: undefined, actions: undefined });
+    expect(serialized).not.toContain("private prompt");
+    expect(serialized).not.toContain("private input");
+    expect(serialized).not.toContain("private content");
+    expect(serialized).not.toContain("private log");
+    expect(serialized).not.toContain("private token");
+    expect(serialized).not.toContain("never-project-this");
+    expect(serialized).not.toContain("secret-header");
+    expect(serialized).not.toContain("secret-url");
+    expect(serialized).not.toContain("secret-query");
+    expect(serialized).not.toContain("secret-json");
+    expect(serialized).not.toContain("secret-inline");
+    expect(serialized).not.toContain("secret-title");
+    expect(serialized).not.toContain("secret-operation");
+    expect(serialized).not.toContain("secret-name");
+    expect(serialized).not.toContain("secret-provider");
+    expect(serialized).not.toContain("secret-kind");
+    expect(serialized).not.toContain("secret-cwd");
+    expect(serialized).not.toContain("secret-detail");
+    expect(serialized).not.toContain("secret-path");
+    expect(serialized).not.toContain("secret-command");
+    expect(serialized).not.toContain("secret-action-label");
+    expect(serialized).not.toContain("secret-action-behavior");
   });
 
   it("orders cursorless turn events without colliding with timeline cursors", async () => {
@@ -316,14 +499,71 @@ describe("ProductionPaseoGateway", () => {
     expect(delivered[0]?.event.sequence).toBe(2);
     expect(delivered[1]?.event.item.type).toBe("turn");
     expect(delivered[1]?.event.sequence).toBeGreaterThan(2);
+  });
 
-    fixture.emitTimeline({ event: { type: "subscription_restored" } });
-    await vi.waitFor(() => expect(fixture.timeline.refetch).toHaveBeenCalledTimes(2));
-    expect(fixture.timeline.refetch).toHaveBeenLastCalledWith({
-      direction: "after",
-      cursor: { epoch: "epoch-1", seq: 2 },
-      projection: "projected",
+  it("projects only source-provided timeline timing, tool failure, and streaming fields", async () => {
+    const fixture = testClient();
+    const gateway = new ProductionPaseoGateway({
+      host: "127.0.0.1:6767",
+      createClient: () => fixture.client as never,
     });
+    await gateway.connect();
+    const updates: Array<Record<string, unknown>> = [];
+    await gateway.focusAgent("agent-1", (update) => updates.push(update as never));
+
+    fixture.emitTimeline({
+      epoch: "epoch-1",
+      seq: 1,
+      timestamp: "2026-09-18T10:00:00Z",
+      event: {
+        type: "timeline",
+        item: {
+          type: "assistant_message",
+          messageId: "m1",
+          text: "partial",
+        },
+      },
+    });
+    fixture.emitTimeline({
+      epoch: "epoch-1",
+      seq: 2,
+      timestamp: "2026-09-18T10:00:01Z",
+      event: {
+        type: "timeline",
+        item: {
+          type: "tool_call",
+          callId: "call-1",
+          name: "git",
+          status: "failed",
+          error: "permission denied",
+          detail: { type: "fetch", url: "https://example.test", result: "bad", durationMs: 1200 },
+        },
+      },
+    });
+    fixture.emitTimeline({
+      event: {
+        type: "turn_completed",
+        turnId: "turn-1",
+      },
+      timestamp: "2026-09-18T10:00:03Z",
+    });
+
+    const items = updates
+      .filter((update) => update.type === "event")
+      .map((update) => (update.event as { item: unknown }).item);
+    expect(items).toContainEqual(
+      expect.objectContaining({ type: "assistant-message", timestamp: "2026-09-18T10:00:00Z" }),
+    );
+    expect(items).toContainEqual(
+      expect.objectContaining({
+        type: "tool",
+        durationMs: 1200,
+        failureSummary: "permission denied",
+      }),
+    );
+    expect(items).toContainEqual(
+      expect.objectContaining({ type: "turn", completedAt: "2026-09-18T10:00:03Z" }),
+    );
   });
 
   it("does not deliver late hydration after closing the focused observation", async () => {
@@ -396,6 +636,69 @@ describe("ProductionPaseoGateway", () => {
       projects: [{ id: "project-1" }],
       agents: [{ id: "agent-1" }],
       providers: [{ id: "codex", ready: false, models: [], modeIds: [] }],
+    });
+  });
+
+  it("uses documented discovery errors and default thinking metadata without projecting model internals", async () => {
+    const fixture = testClient();
+    fixture.client.providers.listModels.mockResolvedValueOnce({
+      models: [
+        {
+          id: "blocked",
+          label: "Blocked",
+          isSelectable: false,
+          reason: "internal daemon detail",
+        },
+        {
+          id: "gpt-5",
+          label: "GPT-5",
+          isSelectable: true,
+          defaultThinkingOptionId: "high",
+          thinkingOptions: [{ id: "low" }, { id: "high" }],
+        },
+      ],
+    } as never);
+    const gateway = new ProductionPaseoGateway({
+      host: "127.0.0.1:6767",
+      createClient: () => fixture.client as never,
+    });
+    await gateway.connect();
+
+    const directory = await gateway.getDirectorySnapshot();
+    expect(directory.providers[0]?.models).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "blocked",
+          selectable: false,
+          unavailableReason: "not selectable",
+        }),
+        expect.objectContaining({ id: "gpt-5", defaultThinkingLevel: "high" }),
+      ]),
+    );
+    expect(JSON.stringify(directory)).not.toContain("internal daemon detail");
+  });
+
+  it("projects a resolved provider-list error as an unavailable provider", async () => {
+    const fixture = testClient();
+    fixture.client.providers.listModels.mockResolvedValueOnce({
+      error: "models unavailable",
+    } as never);
+    const gateway = new ProductionPaseoGateway({
+      host: "127.0.0.1:6767",
+      createClient: () => fixture.client as never,
+    });
+    await gateway.connect();
+
+    await expect(gateway.getDirectorySnapshot()).resolves.toMatchObject({
+      providers: [
+        {
+          id: "codex",
+          ready: false,
+          unavailableReason: "models unavailable",
+          models: [],
+          modeIds: [],
+        },
+      ],
     });
   });
 

@@ -1,3 +1,10 @@
+export {
+  commandById,
+  commandForKey,
+  contextualHelp,
+  deckCommands,
+  resolvedCommands,
+} from "./commands.js";
 export { DeckController, type UiIntent } from "./controller.js";
 export { RecordingTerminal, TerminalLifecycle } from "./terminal.js";
 export {

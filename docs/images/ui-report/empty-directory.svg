@@ -1,0 +1,39 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="932" height="568" viewBox="0 0 932 568">
+  <title>Paseo Deck empty directory</title>
+  <rect width="932" height="568" rx="12" fill="#1c1917"/>
+  <rect width="932" height="32" rx="12" fill="#292524"/>
+  <rect y="20" width="932" height="12" fill="#292524"/>
+  <circle cx="18" cy="16" r="5" fill="#ef4444"/>
+  <circle cx="36" cy="16" r="5" fill="#f59e0b"/>
+  <circle cx="54" cy="16" r="5" fill="#22c55e"/>
+  <g fill="#f5f5f4" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="14" xml:space="preserve">
+<text x="16" y="62">Projects / workspaces                Timeline   Selected agent timeline                             </text>
+<text x="16" y="80">No projects or workspaces are       No timeline selected. Choose an agent in the tree to read its   </text>
+<text x="16" y="98">available yet. Press r to refresh.  timeline.                                                       </text>
+<text x="16" y="116"></text>
+<text x="16" y="134"></text>
+<text x="16" y="152"></text>
+<text x="16" y="170"></text>
+<text x="16" y="188"></text>
+<text x="16" y="206"></text>
+<text x="16" y="224"></text>
+<text x="16" y="242"></text>
+<text x="16" y="260"></text>
+<text x="16" y="278"></text>
+<text x="16" y="296"></text>
+<text x="16" y="314"></text>
+<text x="16" y="332"></text>
+<text x="16" y="350"></text>
+<text x="16" y="368"></text>
+<text x="16" y="386"></text>
+<text x="16" y="404"></text>
+<text x="16" y="422"></text>
+<text x="16" y="440"></text>
+<text x="16" y="458"></text>
+<text x="16" y="476"> Composer   Prompt → no agent selected · missing</text>
+<text x="16" y="494">────────────────────────────────────────────────────────────────────────────────────────────────────</text>
+<text x="16" y="512">                                                                                                    </text>
+<text x="16" y="530">────────────────────────────────────────────────────────────────────────────────────────────────────</text>
+<text x="16" y="548">Tree: ↑↓ ←→ g/G Tab · connected · no agent selected · permissions 0</text>
+  </g>
+</svg>
