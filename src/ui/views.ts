@@ -80,6 +80,14 @@ export interface DeckTuiOptions {
   frameMilliseconds?: number;
   copyText?: (text: string) => Promise<void> | void;
   appearance?: TerminalAppearance;
+  treeWidth?: number;
+  requestedTheme?: "ember" | "plain";
+  requestedSymbolSet?: "unicode" | "ascii";
+  onPreferencesChanged?: (preference: {
+    treeWidth: number;
+    theme?: "ember" | "plain";
+    symbolSet?: "unicode" | "ascii";
+  }) => void;
 }
 
 const systemRenderClock: RenderClock = {
@@ -951,7 +959,7 @@ export class DeckTui {
   private readonly treeTranscript: ScrollView;
   private readonly transcript: TimelineScrollView;
   private readonly minimumSize: MinimumSizeView;
-  private treeWidth = 34;
+  private treeWidth: number;
   private appOverlay: OverlayHandle | undefined;
   private appModalKey = "";
   private localOverlay: OverlayHandle | undefined;
@@ -971,6 +979,10 @@ export class DeckTui {
     | undefined;
   private state: AppState;
   private readonly theme: DeckTheme;
+  private readonly detectedAppearance: TerminalAppearance;
+  private readonly onPreferencesChanged?: DeckTuiOptions["onPreferencesChanged"];
+  private requestedTheme: "ember" | "plain" | undefined;
+  private requestedSymbolSet: "unicode" | "ascii" | undefined;
 
   constructor(
     private readonly terminal: Terminal,
@@ -978,8 +990,13 @@ export class DeckTui {
     private readonly emit: (intent: UiIntent) => void,
     options: DeckTuiOptions = {},
   ) {
+    this.treeWidth = adjustTreeWidth(options.treeWidth ?? 34, 0);
     this.state = initialState;
-    this.theme = new DeckTheme(options.appearance ?? defaultTerminalAppearance);
+    this.detectedAppearance = options.appearance ?? defaultTerminalAppearance;
+    this.requestedTheme = options.requestedTheme;
+    this.requestedSymbolSet = options.requestedSymbolSet;
+    this.onPreferencesChanged = options.onPreferencesChanged;
+    this.theme = new DeckTheme(this.effectiveAppearance());
     this.reconnectClock = options.renderClock ?? systemRenderClock;
     this.tui = new TuiAltScreen(terminal, undefined, undefined, {
       scrollToEndIndicator: () => this.scrollToEndIndicator(),
@@ -1198,7 +1215,28 @@ export class DeckTui {
     }
     if (intent.type === "adjust-tree-width") {
       this.treeWidth = adjustTreeWidth(this.treeWidth, intent.delta);
+      this.emitPreferences();
       this.setShellLayout();
+      this.renderScheduler.requestImmediate();
+      return;
+    }
+    if (intent.type === "toggle-theme") {
+      this.requestedTheme =
+        (this.requestedTheme ?? this.detectedAppearance.theme) === "ember" ? "plain" : "ember";
+      this.theme.setAppearance(this.effectiveAppearance());
+      this.emitPreferences();
+      this.renderScheduler.requestImmediate();
+      return;
+    }
+    if (intent.type === "toggle-symbol-set") {
+      if (!this.detectedAppearance.unicode) {
+        this.emit({ type: "notify", message: "ASCII symbols are required by this terminal." });
+        return;
+      }
+      this.requestedSymbolSet =
+        this.effectiveAppearance().symbols === "unicode" ? "ascii" : "unicode";
+      this.theme.setAppearance(this.effectiveAppearance());
+      this.emitPreferences();
       this.renderScheduler.requestImmediate();
       return;
     }
@@ -1223,6 +1261,27 @@ export class DeckTui {
       return;
     }
     this.emit(intent);
+  }
+
+  private emitPreferences(): void {
+    this.onPreferencesChanged?.({
+      treeWidth: this.treeWidth,
+      ...(this.requestedTheme ? { theme: this.requestedTheme } : {}),
+      ...(this.requestedSymbolSet ? { symbolSet: this.requestedSymbolSet } : {}),
+    });
+  }
+
+  private effectiveAppearance(): TerminalAppearance {
+    return {
+      ...this.detectedAppearance,
+      theme:
+        this.detectedAppearance.color === "none"
+          ? "plain"
+          : (this.requestedTheme ?? this.detectedAppearance.theme),
+      symbols: this.detectedAppearance.unicode
+        ? (this.requestedSymbolSet ?? this.detectedAppearance.symbols)
+        : "ascii",
+    };
   }
 
   private openTimelineSearch(): void {

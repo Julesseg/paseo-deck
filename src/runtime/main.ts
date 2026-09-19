@@ -11,6 +11,7 @@ import {
   type TargetArgument,
 } from "./arguments.js";
 import { ShutdownCoordinator } from "./lifecycle.js";
+import { type PreferenceFileSystem, PreferenceSession } from "./preferences.js";
 
 const VERSION = "0.1.0";
 
@@ -47,6 +48,10 @@ export interface InteractiveDependencies {
   terminal?: Terminal;
   bindExitHandlers?: (handlers: RuntimeExitHandlers) => () => void;
   environment?: TerminalEnvironment;
+  preferences?: PreferenceFileSystem;
+  preferencesPath?: string;
+  setTimeout?: (callback: () => void, delay: number) => unknown;
+  clearTimeout?: (handle: unknown) => void;
 }
 
 export async function runCli(
@@ -89,9 +94,25 @@ export async function runInteractive(
 ): Promise<number> {
   const gateway = dependencies.gateway ?? createPaseoGateway(gatewayOptions(target));
   const terminal = dependencies.terminal ?? new ProcessTerminal();
+  const preferenceSession = await PreferenceSession.open(target, {
+    ...(dependencies.preferences ? { fs: dependencies.preferences } : {}),
+    ...(dependencies.preferencesPath ? { path: dependencies.preferencesPath } : {}),
+    ...(dependencies.setTimeout ? { setTimeout: dependencies.setTimeout } : {}),
+    ...(dependencies.clearTimeout ? { clearTimeout: dependencies.clearTimeout } : {}),
+    onWarning: (message) => io.stderr(`paseo-deck: ${message}\n`),
+  });
+  if (preferenceSession.warning) io.stderr(`paseo-deck: ${preferenceSession.warning}\n`);
+  const detected = detectTerminalAppearance(dependencies.environment ?? process.env);
+  const requested = preferenceSession.requestedGlobal();
+  const appearance = {
+    ...detected,
+    theme: detected.color === "none" ? "plain" : (requested.theme ?? detected.theme),
+    symbols: detected.unicode ? (requested.symbolSet ?? detected.symbols) : "ascii",
+  } as const;
   let requestShutdown: (code?: number, error?: unknown) => Promise<void> = async () => undefined;
   const app = new ApplicationController(gateway, {
     onQuit: () => requestShutdown(0),
+    initialState: preferenceSession.initialState(),
   });
   // Capability detection is deliberately a runtime concern: views are pure of
   // environment reads and receive a stable appearance for their whole run.
@@ -101,15 +122,29 @@ export async function runInteractive(
     (intent) => {
       void app.handleIntent(intent).catch((error: unknown) => requestShutdown(1, error));
     },
-    { appearance: detectTerminalAppearance(dependencies.environment ?? process.env) },
+    {
+      appearance,
+      treeWidth: preferenceSession.treeWidth(),
+      ...(requested.theme ? { requestedTheme: requested.theme } : {}),
+      ...(requested.symbolSet ? { requestedSymbolSet: requested.symbolSet } : {}),
+      onPreferencesChanged: (value) => {
+        preferenceSession.present(value);
+      },
+    },
   );
-  const unsubscribeState = app.subscribe((state) => deck.update(state));
+  const unsubscribeState = app.subscribe((state) => {
+    deck.update(state);
+    preferenceSession.observe(state);
+  });
   const shutdown = new ShutdownCoordinator({
     releaseObservations: async () => {
       unsubscribeState();
       await app.releaseObservations();
     },
-    closeGateway: () => gateway.close(),
+    closeGateway: async () => {
+      await preferenceSession.flush();
+      await gateway.close();
+    },
     drainInput: async () => undefined,
     restoreTerminal: () => deck.stop(),
   });

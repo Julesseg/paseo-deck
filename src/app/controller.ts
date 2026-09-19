@@ -16,6 +16,7 @@ import { deriveTreeRows, type TreeRow } from "../ui/view-model.js";
 
 export interface ApplicationControllerOptions {
   onQuit?: () => void | Promise<void>;
+  initialState?: AppState;
 }
 
 type RetryOperation =
@@ -27,7 +28,7 @@ type RetryOperation =
   | { type: "recovery-timeline"; agentId: string };
 
 export class ApplicationController {
-  #state = createInitialState();
+  #state: AppState;
   readonly #listeners = new Set<(state: AppState) => void>();
   #directoryObservation: Observation | undefined;
   #timelineObservation: Observation | undefined;
@@ -45,7 +46,9 @@ export class ApplicationController {
   constructor(
     private readonly gateway: PaseoGateway,
     private readonly options: ApplicationControllerOptions = {},
-  ) {}
+  ) {
+    this.#state = options.initialState ?? createInitialState();
+  }
 
   get state(): AppState {
     return this.#state;

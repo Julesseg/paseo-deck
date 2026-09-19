@@ -57,6 +57,11 @@ function state(): AppState {
 }
 
 describe("command registry", () => {
+  it("exposes preference controls in the command palette", () => {
+    expect(resolvedCommands(state()).map((command) => command.id)).toEqual(
+      expect.arrayContaining(["toggle-theme", "toggle-symbol-set"]),
+    );
+  });
   it("has unique ids and shortcut/context pairs", () => {
     expect(new Set(deckCommands.map((command) => command.id)).size).toBe(deckCommands.length);
     const pairs = deckCommands.flatMap((command) =>

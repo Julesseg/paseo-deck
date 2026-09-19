@@ -4,6 +4,7 @@ import type { AppState } from "../contracts/app-state.js";
 import { emptyDirectory } from "../contracts/app-state.js";
 import type { TimelineEvent } from "../contracts/domain.js";
 import { reduceApp } from "../state/store.js";
+import type { TerminalAppearance } from "./capabilities.js";
 import type { RenderClock } from "./render-scheduler.js";
 import { RecordingTerminal } from "./terminal.js";
 import { terminalDisplayWidth } from "./text-safety.js";
@@ -2358,5 +2359,136 @@ describe("DeckTui viewport and focus", () => {
     expect(terminal.viewport().join("\n")).not.toContain("Select an agent first");
     terminal.sendInput("\u001b");
     await deck.stop();
+  });
+
+  it("restores a clamped tree width and reports subsequent width changes", async () => {
+    const terminal = new RecordingTerminal(100, 16);
+    const preferences: Array<{
+      treeWidth: number;
+      theme?: "ember" | "plain";
+      symbolSet?: "unicode" | "ascii";
+    }> = [];
+    const deck = new DeckTui(terminal, state(), () => undefined, {
+      treeWidth: 999,
+      onPreferencesChanged: (value) => preferences.push(value),
+    });
+
+    deck.start();
+    terminal.sendInput("[");
+    await terminal.waitForRender();
+    await deck.stop();
+
+    expect(preferences).toEqual([{ treeWidth: 46 }]);
+  });
+
+  it("invokes palette-visible presentation commands", async () => {
+    const terminal = new RecordingTerminal(100, 16);
+    const preferences: Array<{
+      treeWidth: number;
+      theme?: "ember" | "plain";
+      symbolSet?: "unicode" | "ascii";
+    }> = [];
+    const deck = new DeckTui(terminal, state(), () => undefined, {
+      onPreferencesChanged: (value) => preferences.push(value),
+    });
+
+    deck.start();
+    terminal.sendInput("\u000b");
+    terminal.sendInput("toggle theme");
+    terminal.sendInput("\r");
+    await terminal.waitForRender();
+    terminal.sendInput("\u000b");
+    terminal.sendInput("toggle symbol set");
+    terminal.sendInput("\r");
+    await terminal.waitForRender();
+    await deck.stop();
+
+    expect(preferences).toEqual([
+      { treeWidth: 34, theme: "plain" },
+      { treeWidth: 34, theme: "plain", symbolSet: "ascii" },
+    ]);
+  });
+
+  it("keeps saved rich choices requested while rendering safe low-capability chrome", async () => {
+    const lowAppearance: TerminalAppearance = {
+      color: "none",
+      unicode: false,
+      theme: "plain",
+      symbols: "ascii",
+    };
+    const lowTerminal = new RecordingTerminal(100, 16);
+    const lowDeck = new DeckTui(lowTerminal, state(), () => undefined, {
+      appearance: lowAppearance,
+      requestedTheme: "ember",
+      requestedSymbolSet: "unicode",
+    });
+    lowDeck.start();
+    await lowTerminal.waitForRender();
+    await lowDeck.stop();
+
+    expect(lowTerminal.writes.join("")).not.toContain("\u001b[38;");
+    expect(lowTerminal.writes.join("")).not.toContain("·");
+    expect(lowTerminal.writes.join("")).not.toContain("•");
+
+    const richTerminal = new RecordingTerminal(100, 16);
+    const richDeck = new DeckTui(richTerminal, state(), () => undefined, {
+      appearance: { color: "truecolor", unicode: true, theme: "ember", symbols: "unicode" },
+      requestedTheme: "ember",
+      requestedSymbolSet: "unicode",
+    });
+    richDeck.start();
+    await richTerminal.waitForRender();
+    await richDeck.stop();
+
+    expect(richTerminal.writes.join("")).toContain("\u001b[38;2;");
+    expect(richTerminal.writes.join("")).toContain("·");
+  });
+
+  it("toggles the requested theme under NO_COLOR without changing no-color rendering", async () => {
+    const terminal = new RecordingTerminal(100, 16);
+    const preferences: Array<{ treeWidth: number; theme?: "ember" | "plain" }> = [];
+    const deck = new DeckTui(terminal, state(), () => undefined, {
+      appearance: { color: "none", unicode: false, theme: "plain", symbols: "ascii" },
+      requestedTheme: "ember",
+      onPreferencesChanged: (value) => preferences.push(value),
+    });
+
+    deck.start();
+    for (let index = 0; index < 2; index += 1) {
+      terminal.sendInput("\u000b");
+      terminal.sendInput("toggle theme");
+      terminal.sendInput("\r");
+      await terminal.waitForRender();
+    }
+    await deck.stop();
+
+    expect(preferences).toEqual([
+      { treeWidth: 34, theme: "plain" },
+      { treeWidth: 34, theme: "ember" },
+    ]);
+    expect(terminal.writes.join("")).not.toContain("\u001b[38;");
+  });
+
+  it("explains why Unicode cannot be selected and never renders it on an ASCII terminal", async () => {
+    const terminal = new RecordingTerminal(100, 16);
+    const intents: unknown[] = [];
+    const deck = new DeckTui(terminal, state(), (intent) => intents.push(intent), {
+      appearance: { color: "none", unicode: false, theme: "plain", symbols: "ascii" },
+      requestedSymbolSet: "unicode",
+    });
+
+    deck.start();
+    terminal.sendInput("\u000b");
+    terminal.sendInput("toggle symbol set");
+    terminal.sendInput("\r");
+    await terminal.waitForRender();
+    await deck.stop();
+
+    expect(intents).toContainEqual({
+      type: "notify",
+      message: "ASCII symbols are required by this terminal.",
+    });
+    expect(terminal.writes.join("")).not.toContain("·");
+    expect(terminal.writes.join("")).not.toContain("•");
   });
 });

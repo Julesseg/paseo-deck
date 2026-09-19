@@ -16,6 +16,8 @@ export type UiIntent =
   | { type: "toggle-archived" }
   | { type: "toggle-attention-only" }
   | { type: "adjust-tree-width"; delta: -2 | 2 }
+  | { type: "toggle-theme" }
+  | { type: "toggle-symbol-set" }
   | { type: "open-create-agent"; workspaceId: string; step: "provider" }
   | { type: "creation-back" }
   | { type: "open-confirmation"; action: "stop" | "archive" | "detach"; agentId: string }

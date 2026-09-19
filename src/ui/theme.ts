@@ -98,7 +98,13 @@ const asciiGlyphs: Readonly<Record<DeckGlyph, string>> = {
 
 /** Semantic styling boundary. It sanitizes content before adding only its own SGR. */
 export class DeckTheme {
-  constructor(readonly appearance: TerminalAppearance) {}
+  constructor(private _appearance: TerminalAppearance) {}
+  get appearance(): TerminalAppearance {
+    return this._appearance;
+  }
+  setAppearance(appearance: TerminalAppearance): void {
+    this._appearance = appearance;
+  }
 
   /** Styles a Deck-owned label after making it inert and normalising its symbols. */
   style(tone: SemanticTone, value: string): string {

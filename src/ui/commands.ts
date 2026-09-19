@@ -451,6 +451,20 @@ export const deckCommands: readonly DeckCommand[] = [
     intent: () => ({ type: "open-command-palette" }),
   },
   {
+    id: "toggle-theme",
+    label: "Toggle theme",
+    group: "Application",
+    shortcuts: [],
+    intent: () => ({ type: "toggle-theme" }),
+  },
+  {
+    id: "toggle-symbol-set",
+    label: "Toggle symbol set",
+    group: "Application",
+    shortcuts: [],
+    intent: () => ({ type: "toggle-symbol-set" }),
+  },
+  {
     id: "help",
     label: "Show contextual help",
     group: "Application",
