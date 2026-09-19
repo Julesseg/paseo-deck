@@ -7,6 +7,7 @@ import { reduceApp } from "../state/store.js";
 import type { RenderClock } from "./render-scheduler.js";
 import { RecordingTerminal } from "./terminal.js";
 import { terminalDisplayWidth } from "./text-safety.js";
+import { DeckTheme } from "./theme.js";
 import { agentChoices, creationChoices, DeckTui, highlightFencedCode } from "./views.js";
 
 function state(): AppState {
@@ -181,6 +182,266 @@ describe("fenced code highlighter", () => {
     expect(line).toContain("\u001b[");
     expect(line).toContain("const");
     expect(line).toContain("READY");
+  });
+
+  it("keeps fenced code readable without SGR when the theme is plain", () => {
+    const [line] = highlightFencedCode(
+      'const answer = "READY";',
+      "ts",
+      new DeckTheme({ color: "none", unicode: false, theme: "plain", symbols: "ascii" }),
+    );
+
+    expect(line).toBe('const answer = "READY";');
+  });
+});
+
+describe("terminal appearance", () => {
+  it("renders semantic empty states without colour or Unicode dependencies", async () => {
+    const terminal = new RecordingTerminal(80, 18);
+    const uiState = { ...state(), filter: "missing" };
+    const deck = new DeckTui(terminal, uiState, () => undefined, {
+      appearance: { color: "none", unicode: false, theme: "plain", symbols: "ascii" },
+    });
+    deck.update(uiState);
+    deck.start();
+    await terminal.waitForRender();
+    const rendered = terminal.viewport().join("\n");
+    await deck.stop();
+
+    expect(rendered).toContain("No sessions match");
+    expect(rendered).toContain("No timeline selected");
+    expect(rendered).not.toMatch(/[▾▸•✓]/u);
+    // pi-tui emits its own reset/reverse-video housekeeping for cursor focus.
+    // Deck's semantic style boundary is asserted SGR-free in theme.test.ts.
+    expect(terminal.writes.join("")).not.toContain("\u001b[38;");
+  });
+
+  it("prioritises the tree and timeline over secondary details at narrow widths", async () => {
+    const terminal = new RecordingTerminal(52, 18);
+    const deck = new DeckTui(terminal, state(), () => undefined);
+    deck.start();
+    await terminal.waitForRender();
+    const rendered = terminal.viewport().join("\n");
+    await deck.stop();
+
+    expect(rendered).toContain("Projects / workspaces");
+    expect(rendered).toContain("Timeline");
+    expect(rendered).not.toContain("context ");
+  });
+
+  it("uses ASCII-only chrome inside a creation modal and minimum-size state", async () => {
+    const appearance = {
+      color: "none" as const,
+      unicode: true,
+      theme: "plain" as const,
+      symbols: "ascii" as const,
+    };
+    const terminal = new RecordingTerminal(52, 18);
+    const modalState = {
+      ...state(),
+      modal: { type: "create-agent" as const, workspaceId: "w", step: "provider" as const },
+    };
+    const deck = new DeckTui(terminal, modalState, () => undefined, { appearance });
+    deck.update(modalState);
+    deck.start();
+    await terminal.waitForRender();
+    const modalLines = terminal.viewport();
+    terminal.setSize(20, 10);
+    await terminal.waitForRender();
+    const tinyLines = terminal.viewport();
+    await deck.stop();
+
+    expect(modalLines.join("\n")).not.toMatch(/[▾▸•✓…─↑↓←→—]/u);
+    expect(tinyLines.join("\n")).toContain("Terminal too small");
+    expect(modalLines.every((line) => terminalDisplayWidth(line) <= 52)).toBe(true);
+    expect(tinyLines.every((line) => terminalDisplayWidth(line) <= 20)).toBe(true);
+  });
+
+  it("keeps permission payload text intact while ASCII-normalising Deck chrome", async () => {
+    const terminal = new RecordingTerminal(52, 18);
+    const base = state();
+    const uiState: AppState = {
+      ...base,
+      directory: {
+        ...base.directory,
+        agents: [
+          {
+            id: "agent",
+            workspaceId: "w",
+            title: "Agent",
+            status: "idle",
+            pendingPermissions: [
+              {
+                id: "permission",
+                agentId: "agent",
+                title: "Run → command with a very long remote payload that needs clipping",
+                description: "Payload • must remain unchanged and also needs clipping",
+              },
+            ],
+            needsAttention: true,
+            archived: false,
+            availableModeIds: [],
+            availableThinkingLevels: [],
+          },
+        ],
+      },
+      selectedAgentId: "agent",
+      modal: {
+        type: "permission",
+        agentId: "agent",
+        requestId: "permission",
+        queueIndex: 0,
+        submitting: false,
+      },
+    };
+    const deck = new DeckTui(terminal, uiState, () => undefined, {
+      appearance: { color: "none", unicode: true, theme: "plain", symbols: "ascii" },
+    });
+    deck.update(uiState);
+    deck.start();
+    await terminal.waitForRender();
+    const rendered = terminal.viewport().join("\n");
+    await deck.stop();
+
+    expect(rendered).toContain("Run → command");
+    expect(rendered).toContain("Payload • must remain");
+    expect(rendered).toContain("a allow - d deny");
+    expect(rendered).toContain("...");
+    expect(rendered).not.toContain("…");
+    expect(terminal.viewport().every((line) => terminalDisplayWidth(line) <= 52)).toBe(true);
+  });
+
+  it("preserves remote tree, status, composer, and notification labels in ASCII mode", async () => {
+    const terminal = new RecordingTerminal(100, 18);
+    const base = state();
+    const uiState: AppState = {
+      ...base,
+      directory: {
+        ...base.directory,
+        workspaces: [{ id: "w", title: "Workspace → •", directory: "/workspace", archived: false }],
+        agents: [
+          {
+            id: "agent",
+            workspaceId: "w",
+            title: "Agent → •",
+            status: "running",
+            providerId: "Provider →",
+            modelId: "Model •",
+            pendingPermissions: [],
+            needsAttention: false,
+            archived: false,
+            availableModeIds: [],
+            availableThinkingLevels: [],
+          },
+        ],
+      },
+      selectedWorkspaceId: "w",
+      selectedAgentId: "agent",
+      expandedIds: new Set(["w"]),
+      notifications: [{ id: 1, kind: "info", message: "Notice → •" }],
+      activeNotificationId: 1,
+    };
+    const deck = new DeckTui(terminal, uiState, () => undefined, {
+      appearance: { color: "none", unicode: true, theme: "plain", symbols: "ascii" },
+    });
+    deck.update(uiState);
+    deck.start();
+    await terminal.waitForRender();
+    const rendered = terminal.viewport().join("\n");
+    await deck.stop();
+
+    expect(rendered).toContain("Workspace → •");
+    expect(rendered).toContain("Agent → •");
+    expect(rendered).toContain("Provider →/Model •");
+    expect(rendered).toContain("Notice → •");
+    expect(terminal.viewport().every((line) => terminalDisplayWidth(line) <= 100)).toBe(true);
+  });
+
+  it("uses the ASCII overflow suffix for a full-width selected timeline row", async () => {
+    const terminal = new RecordingTerminal(52, 18);
+    const event: TimelineEvent = {
+      epoch: "epoch",
+      sequence: 1,
+      item: {
+        id: "tool",
+        type: "tool",
+        callId: "tool",
+        name: "a deliberately long tool name that fills the selected timeline row",
+        status: "completed",
+      },
+    };
+    const uiState = {
+      ...state(),
+      focus: "timeline" as const,
+      timeline: { recoveryRevision: 0, items: [event], loading: false },
+    };
+    const deck = new DeckTui(terminal, uiState, () => undefined, {
+      appearance: { color: "none", unicode: true, theme: "plain", symbols: "ascii" },
+    });
+    deck.update(uiState);
+    deck.start();
+    await terminal.waitForRender();
+    const rendered = terminal.viewport().join("\n");
+    await deck.stop();
+
+    expect(rendered).toContain("...");
+    expect(rendered).not.toContain("…");
+    expect(terminal.viewport().every((line) => terminalDisplayWidth(line) <= 52)).toBe(true);
+  });
+
+  it("shows actionable connecting and loading states", async () => {
+    const terminal = new RecordingTerminal();
+    const connecting = {
+      ...state(),
+      connection: "connecting" as const,
+      timeline: { recoveryRevision: 0, items: [], loading: false },
+    };
+    const deck = new DeckTui(terminal, connecting, () => undefined);
+    deck.update(connecting);
+    deck.start();
+    await terminal.waitForRender();
+    const connectingRendered = terminal.viewport().join("\n");
+    const loading = { ...state(), timeline: { recoveryRevision: 0, items: [], loading: true } };
+    deck.update(loading);
+    await terminal.waitForRender();
+    const loadingRendered = terminal.viewport().join("\n");
+    await deck.stop();
+
+    expect(connectingRendered).toContain("Connecting to Paseo");
+    expect(loadingRendered).toContain("Loading timeline history");
+  });
+
+  it("keeps selected Markdown and fenced code styles from becoming visible escape glyphs", async () => {
+    const terminal = new RecordingTerminal();
+    const event: TimelineEvent = {
+      epoch: "demo",
+      sequence: 1,
+      item: {
+        id: "message",
+        type: "assistant-message",
+        messageId: "message",
+        text: "**Bold** [link](https://example.test)\n```ts\nconst ready = 'yes';\n```",
+      },
+    };
+    const uiState = {
+      ...state(),
+      focus: "timeline" as const,
+      selectedAgentId: "agent",
+      timeline: { recoveryRevision: 0, agentId: "agent", items: [event], loading: false },
+    };
+    const deck = new DeckTui(terminal, uiState, () => undefined);
+    deck.update(uiState);
+    deck.start();
+    await terminal.waitForRender();
+    const rendered = terminal.viewport().join("\n");
+    await deck.stop();
+
+    expect(rendered).toContain("Bold");
+    expect(rendered).toContain("const ready");
+    expect(rendered).not.toContain("␛[");
+    expect(highlightFencedCode("const ready = 'yes';", "ts").join("\n")).not.toContain("␛[");
+    expect(terminal.writes.join("")).toContain("\u001b[38;");
+    expect(terminal.writes.join("")).toContain("\u001b[0m");
   });
 });
 
@@ -1090,16 +1351,23 @@ describe("DeckTui viewport and focus", () => {
       timelineNavigation: { agent: { following: true, unread: 0 } },
     };
     let current: AppState = initial;
-    const deck = new DeckTui(terminal, initial, (intent) => {
-      if (intent.type !== "set-timeline-navigation") return;
-      current = reduceApp(current, {
-        type: "set-timeline-navigation",
-        agentId: intent.agentId,
-        following: intent.following,
-        ...(intent.anchor === undefined ? {} : { anchor: intent.anchor }),
-      });
-      deck.update(current);
-    });
+    const deck = new DeckTui(
+      terminal,
+      initial,
+      (intent) => {
+        if (intent.type !== "set-timeline-navigation") return;
+        current = reduceApp(current, {
+          type: "set-timeline-navigation",
+          agentId: intent.agentId,
+          following: intent.following,
+          ...(intent.anchor === undefined ? {} : { anchor: intent.anchor }),
+        });
+        deck.update(current);
+      },
+      {
+        appearance: { color: "none", unicode: true, theme: "plain", symbols: "ascii" },
+      },
+    );
     deck.start();
     await terminal.waitForRender();
     deck.tui.scrollBy(-3);
@@ -1113,7 +1381,7 @@ describe("DeckTui viewport and focus", () => {
     };
     append(10, { id: "first", type: "error", message: "first unseen" });
     await terminal.waitForRender();
-    expect(terminal.viewport().join("\n")).toContain("1 new · G end");
+    expect(terminal.viewport().join("\n")).toContain("1 new - G end");
     append(11, { id: "second", type: "turn", status: "completed" });
     append(12, {
       id: "delta",
@@ -1123,7 +1391,7 @@ describe("DeckTui viewport and focus", () => {
     });
     await terminal.waitForRender();
     expect(current.timelineNavigation.agent?.unread).toBe(2);
-    expect(terminal.viewport().join("\n")).toContain("2 new · G end");
+    expect(terminal.viewport().join("\n")).toContain("2 new - G end");
     terminal.sendInput("G");
     await terminal.waitForRender();
     await deck.stop();

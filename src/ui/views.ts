@@ -20,6 +20,7 @@ import type { AppState, ModalState } from "../contracts/app-state.js";
 import type { TimelineEvent, TimelineItem } from "../contracts/domain.js";
 import { composerAvailability, selectedComposerDraft } from "../state/composer.js";
 import { activeNotification } from "../state/store.js";
+import { defaultTerminalAppearance, type TerminalAppearance } from "./capabilities.js";
 import {
   type CommandContext,
   commandForKey,
@@ -38,39 +39,47 @@ import {
 import { type RenderClock, RenderScheduler } from "./render-scheduler.js";
 import { TerminalLifecycle } from "./terminal.js";
 import { clipTerminalLine, sanitizeTerminalText } from "./text-safety.js";
+import { DeckTheme } from "./theme.js";
 import { clipboardPlainText, copyTargets, findTimelineMatches } from "./timeline-search.js";
 import { deriveTreeRows, shortAgentId, type TreeRow, timelineItemDisplay } from "./view-model.js";
 
-const plain = (value: string): string => value;
-const markdownTheme = {
-  heading: plain,
-  link: plain,
-  linkUrl: plain,
-  code: plain,
-  codeBlock: plain,
-  codeBlockBorder: plain,
-  quote: plain,
-  quoteBorder: plain,
-  hr: plain,
-  listBullet: plain,
-  bold: plain,
-  italic: plain,
-  strikethrough: plain,
-  underline: plain,
-  highlightCode: highlightFencedCode,
-};
-const selectTheme = {
-  selectedPrefix: plain,
-  selectedText: plain,
-  description: plain,
-  scrollInfo: plain,
-  noMatch: plain,
-};
+function markdownTheme(theme: DeckTheme) {
+  // TimelineItemView sanitizes the Markdown source before pi-tui tokenises it.
+  // The rendered boundary intentionally preserves generated SGR composition.
+  return {
+    heading: (value: string) => theme.styleRendered("header", value),
+    link: (value: string) => theme.styleRendered("focus", value),
+    linkUrl: (value: string) => theme.styleRendered("muted", value),
+    code: (value: string) => theme.styleRendered("code", value),
+    codeBlock: (value: string) => theme.styleRendered("code", value),
+    codeBlockBorder: (value: string) => theme.styleRendered("border", value),
+    quote: (value: string) => theme.styleRendered("muted", value),
+    quoteBorder: (value: string) => theme.styleRendered("border", value),
+    hr: (value: string) => theme.styleRendered("border", value),
+    listBullet: (value: string) => theme.styleRendered("focus", value),
+    bold: (value: string) => theme.styleRendered("header", value),
+    italic: (value: string) => theme.styleRendered("muted", value),
+    strikethrough: (value: string) => theme.styleRendered("muted", value),
+    underline: (value: string) => theme.styleRendered("focus", value),
+    highlightCode: (code: string, language?: string) => highlightFencedCode(code, language, theme),
+  };
+}
+
+function selectTheme(theme: DeckTheme) {
+  return {
+    selectedPrefix: (value: string) => theme.style("selection", value),
+    selectedText: (value: string) => theme.styleRemote("selection", value),
+    description: (value: string) => theme.styleRemote("muted", value),
+    scrollInfo: (value: string) => theme.style("muted", value),
+    noMatch: (value: string) => theme.style("muted", value),
+  };
+}
 
 export interface DeckTuiOptions {
   renderClock?: RenderClock;
   frameMilliseconds?: number;
   copyText?: (text: string) => Promise<void> | void;
+  appearance?: TerminalAppearance;
 }
 
 const systemRenderClock: RenderClock = {
@@ -80,31 +89,86 @@ const systemRenderClock: RenderClock = {
 };
 
 class TreeView implements Component {
-  constructor(private state: AppState) {}
+  constructor(
+    private state: AppState,
+    private readonly theme: DeckTheme,
+  ) {}
   update(state: AppState): void {
     this.state = state;
   }
   invalidate(): void {}
   render(width: number): string[] {
+    const rows = deriveTreeRows(this.state);
+    if (rows.length === 0) {
+      const message =
+        this.state.connection === "connecting"
+          ? "Connecting to Paseo. Loading projects and workspaces…"
+          : this.state.connection === "reconnecting"
+            ? "Directory is stale while Paseo reconnects. Your selection and drafts are retained."
+            : this.state.connection === "disconnected"
+              ? "Paseo is disconnected. Press r to retry."
+              : this.state.filter.trim()
+                ? `No sessions match “${sanitizeTerminalText(this.state.filter)}”. Press Esc to clear the filter.`
+                : "No projects or workspaces are available yet. Press r to refresh.";
+      return [
+        this.theme.style("header", "Projects / workspaces"),
+        this.theme.style("muted", this.theme.clipOwnedLabel(message, width)),
+      ];
+    }
     return [
-      `${this.state.focus === "tree" ? "[TREE]" : " Tree "} Projects / workspaces`,
-      ...deriveTreeRows(this.state).flatMap((row) => {
+      this.theme.style(
+        this.state.focus === "tree" ? "focus" : "header",
+        `${this.state.focus === "tree" ? "[TREE]" : " Tree "} Projects / workspaces`,
+      ),
+      ...rows.flatMap((row) => {
         const selected = row.selected ? ">" : " ";
-        const branch = row.kind === "agent" ? "•" : row.expanded ? "▾" : "▸";
+        const branch =
+          row.kind === "agent"
+            ? this.theme.glyph("agent")
+            : row.expanded
+              ? this.theme.glyph("expanded")
+              : this.theme.glyph("collapsed");
         const flags =
           row.kind === "agent"
-            ? `${row.permissionCount ? " ✓" : ""}${row.attention ? " !" : ""}${row.status ? ` ${row.status}` : ""}`
+            ? `${row.permissionCount ? ` ${this.theme.glyph("permission")}` : ""}${row.attention ? ` ${this.theme.glyph("attention")}` : ""}${row.status ? ` ${row.status}` : ""}`
             : "";
-        const secondary = row.kind === "agent" || width < 34 ? "" : treeSecondary(row);
-        const primary = clip(
-          `${selected}${"  ".repeat(row.depth)}${branch} ${row.label}${flags}${secondary}`,
+        const secondary = row.kind === "agent" || width < 34 ? "" : treeSecondary(row, this.theme);
+        const primary = this.theme.clipRendered(
+          `${selected}${"  ".repeat(row.depth)}${branch} ${sanitizeTerminalText(row.label)}${flags}${secondary}`,
           width,
         );
-        if (row.kind !== "agent" || width < 34) return [primary];
-        const metadata = [row.providerModel, row.activityLabel].filter(Boolean).join(" · ");
+        const styled = this.theme.styleRendered(
+          row.selected
+            ? "selection"
+            : row.attention
+              ? "attention"
+              : row.status === "failed"
+                ? "failure"
+                : row.status === "running"
+                  ? "running"
+                  : "muted",
+          primary,
+        );
+        if (row.kind !== "agent" || width < 34) return [styled];
+        const metadata = [row.providerModel, row.activityLabel]
+          .filter((value): value is string => value !== undefined && value !== "")
+          .map((value) => sanitizeTerminalText(value))
+          .join(` ${this.theme.glyph("bullet")} `);
         return metadata
-          ? [primary, clip(`${"  ".repeat(row.depth + 1)}${metadata}`, width)]
-          : [primary];
+          ? [
+              styled,
+              this.theme.styleRendered(
+                "muted",
+                this.theme.clipRendered(
+                  `${"  ".repeat(row.depth + 1)}${metadata
+                    .split(" · ")
+                    .map((value) => sanitizeTerminalText(value))
+                    .join(` ${this.theme.glyph("bullet")} `)}`,
+                  width,
+                ),
+              ),
+            ]
+          : [styled];
       }),
     ];
   }
@@ -122,23 +186,27 @@ class TreeView implements Component {
 }
 
 class MinimumSizeView implements Component {
+  constructor(private readonly theme: DeckTheme) {}
   invalidate(): void {}
   render(width: number): string[] {
     return [
-      clip("Terminal too small", width),
-      clip(
-        `Resize to at least ${MIN_TERMINAL_COLUMNS} columns × ${MIN_TERMINAL_ROWS} rows.`,
-        width,
+      this.theme.style("failure", this.theme.clipOwnedLabel("Terminal too small", width)),
+      this.theme.style(
+        "muted",
+        this.theme.clipOwnedLabel(
+          `Resize to at least ${MIN_TERMINAL_COLUMNS} columns × ${MIN_TERMINAL_ROWS} rows.`,
+          width,
+        ),
       ),
     ];
   }
 }
 
-function treeSecondary(row: TreeRow): string {
+function treeSecondary(row: TreeRow, theme: DeckTheme): string {
   if (row.kind === "agent") return "";
   if (row.agentCount === undefined) return "";
   const agents = `${row.agentCount} agent${row.agentCount === 1 ? "" : "s"}`;
-  return ` · ${agents}${row.attentionCount ? ` · !${row.attentionCount}` : ""}`;
+  return ` ${theme.glyph("bullet")} ${agents}${row.attentionCount ? ` ${theme.glyph("bullet")} !${row.attentionCount}` : ""}`;
 }
 
 class TimelineItemView implements Component {
@@ -147,10 +215,16 @@ class TimelineItemView implements Component {
   constructor(
     item: TimelineItem,
     private expanded: boolean,
+    private readonly theme: DeckTheme,
   ) {
     this.item = item;
     if (item.type === "user-message" || item.type === "assistant-message")
-      this.markdown = new Markdown(sanitizeTerminalText(item.text), 2, 0, markdownTheme);
+      this.markdown = new Markdown(
+        sanitizeTerminalText(item.text),
+        2,
+        0,
+        markdownTheme(this.theme),
+      );
   }
   update(item: TimelineItem, expanded: boolean): void {
     this.item = item;
@@ -167,15 +241,21 @@ class TimelineItemView implements Component {
       (this.item.type === "user-message" || this.item.type === "assistant-message")
     )
       return [
-        clipTerminalLine(
+        this.theme.clipOwnedLabel(
           this.item.type === "user-message"
-            ? `You${this.item.timestamp ? ` · ${this.item.timestamp.slice(11, 16)}` : ""}`
-            : `Assistant${this.item.streaming ? " · streaming…" : ""}${this.item.timestamp ? ` · ${this.item.timestamp.slice(11, 16)}` : ""}`,
+            ? `You${this.item.timestamp ? ` ${this.theme.glyph("bullet")} ${this.item.timestamp.slice(11, 16)}` : ""}`
+            : `Assistant${this.item.streaming ? ` ${this.theme.glyph("bullet")} streaming${this.theme.glyph("ellipsis")}` : ""}${this.item.timestamp ? ` ${this.theme.glyph("bullet")} ${this.item.timestamp.slice(11, 16)}` : ""}`,
           width,
         ),
-        ...this.markdown.render(width).map((line) => clipTerminalLine(line, width)),
+        ...this.markdown
+          .render(width)
+          .map((line) => clipTerminalLine(line, width, this.theme.glyph("ellipsis"))),
       ];
-    return timelineItemDisplay(this.item, width, this.expanded);
+    return timelineItemDisplay(this.item, width, this.expanded, {
+      bullet: this.theme.glyph("bullet"),
+      ellipsis: this.theme.glyph("ellipsis"),
+      divider: this.theme.glyph("divider"),
+    });
   }
 }
 
@@ -187,10 +267,13 @@ class TimelineView implements Component {
   private selectedIndex = 0;
   private focused = false;
   private renderedWidth = 80;
+  private state: AppState | undefined;
+  constructor(private readonly theme: DeckTheme) {}
   updateSelection(state: AppState): void {
+    this.state = state;
     const selected = state.directory.agents.find((agent) => agent.id === state.selectedAgentId);
     this.heading = selected
-      ? `Selected agent timeline · ${selected.title} [${shortAgentId(selected.id)}]`
+      ? `Selected agent timeline ${this.theme.glyph("bullet")} ${sanitizeTerminalText(selected.title)} [${shortAgentId(selected.id)}]`
       : "Selected agent timeline";
     this.focused = state.focus === "timeline";
   }
@@ -204,7 +287,7 @@ class TimelineView implements Component {
       else
         this.itemViews.set(
           event.item.id,
-          new TimelineItemView(event.item, this.expanded.has(event.item.id)),
+          new TimelineItemView(event.item, this.expanded.has(event.item.id), this.theme),
         );
     }
     this.selectedIndex = Math.min(this.selectedIndex, Math.max(0, events.length - 1));
@@ -274,13 +357,29 @@ class TimelineView implements Component {
     this.renderedWidth = width;
     const heading =
       width < 18 ? "Timeline" : `${this.focused ? "[TIMELINE]" : " Timeline  "} ${this.heading}`;
-    if (this.events.length === 0) return [heading, "No timeline selected."];
+    if (this.events.length === 0) {
+      const message =
+        this.state?.connection === "connecting"
+          ? "Connecting to Paseo. Timeline will load after an agent is selected."
+          : this.state?.timeline.loading
+            ? "Loading timeline history…"
+            : this.state?.connection === "reconnecting"
+              ? "Timeline is stale while Paseo reconnects; waiting for recovery."
+              : this.state?.selectedAgentId
+                ? "No timeline selected. New activity will appear here."
+                : "No timeline selected. Choose an agent in the tree to read its timeline.";
+      return [
+        this.theme.styleRendered("header", this.theme.clipRendered(heading, width)),
+        this.theme.style("muted", this.theme.clipOwnedLabel(message, width)),
+      ];
+    }
     return [
-      clipTerminalLine(heading, width),
+      this.theme.styleRendered("header", this.theme.clipRendered(heading, width)),
       ...this.events.flatMap((event, index) => {
         const lines = this.itemViews.get(event.item.id)?.render(width) ?? [];
-        if (index === this.selectedIndex && lines[0]) lines[0] = `> ${lines[0]}`;
-        return lines.map((line) => clipTerminalLine(line, width));
+        if (index === this.selectedIndex && lines[0])
+          lines[0] = `${this.theme.style("selection", "> ")}${lines[0]}`;
+        return lines.map((line) => clipTerminalLine(line, width, this.theme.glyph("ellipsis")));
       }),
     ];
   }
@@ -351,10 +450,22 @@ class ComposerView implements Component, Focusable {
   private readonly editor: Editor;
   private selectedAgentId: string | undefined;
   private state: AppState;
-  constructor(tui: TUI, state: AppState, emit: (intent: UiIntent) => void) {
+  constructor(
+    tui: TUI,
+    state: AppState,
+    emit: (intent: UiIntent) => void,
+    private readonly theme: DeckTheme,
+  ) {
     this.state = state;
     this.selectedAgentId = state.selectedAgentId;
-    this.editor = new Editor(tui, { borderColor: plain, selectList: selectTheme }, { paddingX: 1 });
+    this.editor = new Editor(
+      tui,
+      {
+        borderColor: (value) => this.theme.style("border", value),
+        selectList: selectTheme(this.theme),
+      },
+      { paddingX: 1 },
+    );
     this.editor.setText(selectedComposerDraft(state));
     this.editor.onChange = (text) => emit({ type: "set-composer-text", text });
     this.editor.onSubmit = (prompt) => {
@@ -377,15 +488,23 @@ class ComposerView implements Component, Focusable {
     const availability = this.selectedAgentId
       ? composerAvailability(this.state, this.selectedAgentId)
       : { canSend: false as const, reason: "missing" as const };
-    const destination = agent ? `Prompt → ${agent.title}` : "Prompt → no agent selected";
+    const destination = agent
+      ? `Prompt ${this.theme.label("→")} ${sanitizeTerminalText(agent.title)}`
+      : this.theme.label("Prompt → no agent selected");
     const status =
       this.selectedAgentId && this.state.composer.sendingAgentIds.has(this.selectedAgentId)
-        ? " · sending…"
+        ? ` ${this.theme.glyph("bullet")} sending${this.theme.glyph("running")}`
         : !availability.canSend
-          ? ` · ${availability.reason}`
+          ? ` ${this.theme.glyph("bullet")} ${availability.reason}`
           : "";
     const heading = `${this.state.focus === "composer" ? "[COMPOSER]" : " Composer  "} ${destination}${status}`;
-    return [clip(heading, width), ...this.editor.render(width)];
+    return [
+      this.theme.styleRendered(
+        this.focused ? "focus" : "header",
+        this.theme.clipRendered(heading, width),
+      ),
+      ...this.editor.render(width),
+    ];
   }
   handleInput(data: string): void {
     this.editor.handleInput(data);
@@ -395,6 +514,7 @@ class ComposerView implements Component, Focusable {
 class StatusView implements Component {
   constructor(
     private state: AppState,
+    private readonly theme: DeckTheme,
     private readonly now: () => number = Date.now,
   ) {}
   update(state: AppState): void {
@@ -402,6 +522,7 @@ class StatusView implements Component {
   }
   invalidate(): void {}
   render(width: number): string[] {
+    const separator = ` ${this.theme.glyph("bullet")} `;
     const selected = this.state.directory.agents.find(
       (agent) => agent.id === this.state.selectedAgentId,
     );
@@ -415,10 +536,19 @@ class StatusView implements Component {
           usage.outputTokens !== undefined ? `out ${usage.outputTokens}` : undefined,
         ]
           .filter(Boolean)
-          .join(" · ")
+          .join(separator)
       : undefined;
     const details = selected
-      ? `${selected.providerId ?? "unknown"}/${selected.modelId ?? "unknown"}${selected.modeId ? ` · ${selected.modeId}` : ""}${selected.thinkingLevel ? ` · ${selected.thinkingLevel}` : ""}${usageDetails ? ` · ${usageDetails}` : ""}`
+      ? [selected.providerId ?? "unknown", selected.modelId ?? "unknown"]
+          .map((value) => sanitizeTerminalText(value))
+          .join("/")
+          .concat(
+            selected.modeId ? `${separator}${sanitizeTerminalText(selected.modeId)}` : "",
+            selected.thinkingLevel
+              ? `${separator}${sanitizeTerminalText(selected.thinkingLevel)}`
+              : "",
+            usageDetails ? `${separator}${usageDetails}` : "",
+          )
       : "no agent selected";
     const permissions = this.state.directory.agents.reduce(
       (total, agent) => total + agent.pendingPermissions.length,
@@ -428,19 +558,24 @@ class StatusView implements Component {
     const recovery = this.state.recovery;
     const connection =
       this.state.connection === "reconnecting"
-        ? `reconnecting #${recovery.attempt}${recovery.since === undefined ? "" : ` · ${elapsed(recovery.since, this.now())}`}${recovery.directoryStale ? " · stale" : ""}`
+        ? `reconnecting #${recovery.attempt}${recovery.since === undefined ? "" : ` ${this.theme.glyph("bullet")} ${elapsed(recovery.since, this.now())}`}${recovery.directoryStale ? ` ${this.theme.glyph("bullet")} stale` : ""}`
         : this.state.connection;
     const active = activeNotification(this.state);
     const notification = active
-      ? ` · ${active.kind}${active.failureKind ? `/${active.failureKind}` : ""}: ${active.message}${active.detail ? " · E details" : ""}${active.retry ? " · R retry" : ""}${this.state.notifications.length > 1 ? ` · ${this.state.notifications.length} notices · N review` : ""}`
+      ? ` ${this.theme.glyph("bullet")} ${active.kind}${active.failureKind ? `/${active.failureKind}` : ""}: ${sanitizeTerminalText(active.message)}${active.detail ? ` ${this.theme.glyph("bullet")} E details` : ""}${active.retry ? ` ${this.theme.glyph("bullet")} R retry` : ""}${this.state.notifications.length > 1 ? ` ${this.theme.glyph("bullet")} ${this.state.notifications.length} notices ${this.theme.glyph("bullet")} N review` : ""}`
       : "";
     const context = footerContext(this.state, width);
-    return [
-      clip(
-        `${context} · ${connection}${compact ? "" : ` · ${details} · permissions ${permissions}`}${notification}`,
-        width,
-      ),
-    ];
+    const line = this.theme.clipRendered(
+      `${this.theme.label(context)} ${this.theme.glyph("bullet")} ${connection}${compact ? "" : `${separator}${details}${separator}permissions ${permissions}`}${notification}`,
+      width,
+    );
+    const tone =
+      this.state.connection === "reconnecting"
+        ? "stale"
+        : active?.kind === "error"
+          ? "failure"
+          : "muted";
+    return [this.theme.styleRendered(tone, line)];
   }
 }
 
@@ -470,10 +605,12 @@ function footerContext(state: AppState, width: number): string {
   }
 }
 
+type DialogLine = string | { value: string; owned: boolean };
+
 function permissionDialogLines(
   state: AppState,
   modal: Extract<ModalState, { type: "permission" }>,
-): readonly string[] {
+): readonly DialogLine[] {
   const request = state.directory.agents
     .find((agent) => agent.id === modal.agentId)
     ?.pendingPermissions.find((item) => item.id === modal.requestId);
@@ -481,10 +618,13 @@ function permissionDialogLines(
   const queue = pendingPermissionCount(state);
   const ordinal = `${(modal.queueIndex ?? 0) + 1}/${queue}`;
   return [
-    `Permission ${ordinal}: ${request.operation ?? request.title}`,
-    ...(request.workingDirectory ? [`cwd: ${request.workingDirectory}`] : []),
-    ...(request.arguments ?? []),
-    ...(request.description ? [request.description] : []),
+    `Permission ${ordinal}`,
+    { value: `Operation: ${request.operation ?? request.title}`, owned: false },
+    ...(request.workingDirectory
+      ? [{ value: `cwd: ${request.workingDirectory}`, owned: false }]
+      : []),
+    ...(request.arguments ?? []).map((value) => ({ value, owned: false })),
+    ...(request.description ? [{ value: request.description, owned: false }] : []),
     ...(modal.error ? [`Retryable error: ${modal.error}`] : []),
     modal.submitting
       ? `Submitting ${modal.lastDecision ?? "decision"}; awaiting confirmation…`
@@ -504,12 +644,17 @@ function pendingPermissionCount(state: AppState): number {
 class Dialog implements Component, Focusable {
   focused = false;
   constructor(
-    private readonly lines: readonly string[],
+    private readonly lines: readonly DialogLine[],
     private readonly onKey: (data: string) => boolean,
+    private readonly theme: DeckTheme,
   ) {}
   invalidate(): void {}
   render(width: number): string[] {
-    return this.lines.map((line) => clip(line, width));
+    return this.lines.map((line) =>
+      typeof line === "string"
+        ? this.theme.clipOwnedLabel(line, width)
+        : this.theme.clipRemoteText(line.value, width),
+    );
   }
   handleInput(data: string): void {
     this.onKey(data);
@@ -524,6 +669,7 @@ class InputDialog implements Component, Focusable {
     value: string,
     submit: (value: string) => void,
     private readonly cancel: () => void,
+    private readonly theme: DeckTheme,
   ) {
     this.input.setValue(value);
     this.input.onSubmit = submit;
@@ -533,7 +679,11 @@ class InputDialog implements Component, Focusable {
   }
   render(width: number): string[] {
     this.input.focused = this.focused;
-    return [clip(this.title, width), ...this.input.render(width), "Enter confirm · Esc cancel"];
+    return [
+      this.theme.clipOwnedLabel(this.title, width),
+      ...this.input.render(width),
+      this.theme.clipOwnedLabel(`Enter confirm ${this.theme.glyph("bullet")} Esc cancel`, width),
+    ];
   }
   handleInput(data: string): void {
     if (matchesKey(data, "escape")) this.cancel();
@@ -550,8 +700,16 @@ class CreationPromptDialog implements Component, Focusable {
     initial: string,
     private readonly submit: (value: string) => void,
     private readonly back: () => void,
+    private readonly theme: DeckTheme,
   ) {
-    this.editor = new Editor(tui, { borderColor: plain, selectList: selectTheme }, { paddingX: 1 });
+    this.editor = new Editor(
+      tui,
+      {
+        borderColor: (value) => this.theme.style("border", value),
+        selectList: selectTheme(this.theme),
+      },
+      { paddingX: 1 },
+    );
     this.editor.setText(initial);
     this.editor.onSubmit = (value) => this.submit(value);
   }
@@ -561,9 +719,12 @@ class CreationPromptDialog implements Component, Focusable {
   render(width: number): string[] {
     this.editor.focused = this.focused;
     return [
-      clip(`Initial prompt · ${this.workspace}`, width),
+      this.theme.clipOwnedLabel(
+        `Initial prompt ${this.theme.glyph("bullet")} ${this.workspace}`,
+        width,
+      ),
       ...this.editor.render(width),
-      "Enter submits · Esc back",
+      this.theme.clipOwnedLabel(`Enter submits ${this.theme.glyph("bullet")} Esc back`, width),
     ];
   }
   handleInput(data: string): void {
@@ -580,6 +741,7 @@ class SearchDialog implements Component, Focusable {
     private readonly change: (value: string) => void,
     private readonly close: () => void,
     private readonly navigate: (direction: -1 | 1) => void,
+    private readonly theme: DeckTheme,
   ) {
     this.input.onSubmit = () => this.navigate(1);
   }
@@ -589,10 +751,13 @@ class SearchDialog implements Component, Focusable {
   render(width: number): string[] {
     this.input.focused = this.focused;
     return [
-      "Search timeline",
+      this.theme.clipOwnedLabel("Search timeline", width),
       ...this.input.render(width),
-      this.result(),
-      "Enter next · Ctrl-P previous · Esc cancel",
+      this.theme.clipOwnedLabel(this.result(), width),
+      this.theme.clipOwnedLabel(
+        `Enter next ${this.theme.glyph("bullet")} Ctrl-P previous ${this.theme.glyph("bullet")} Esc cancel`,
+        width,
+      ),
     ];
   }
   handleInput(data: string): void {
@@ -624,8 +789,9 @@ class ChoiceDialog implements Component {
     items: SelectItem[],
     choose: (value: string) => void,
     cancel: () => void,
+    private readonly theme: DeckTheme,
   ) {
-    this.list = new SelectList(items, 8, selectTheme);
+    this.list = new SelectList(items, 8, selectTheme(theme));
     this.list.onSelect = (item) => choose(item.value);
     this.list.onCancel = cancel;
     this.title = title;
@@ -635,7 +801,7 @@ class ChoiceDialog implements Component {
     this.list.invalidate();
   }
   render(width: number): string[] {
-    return [clip(this.title, width), ...this.list.render(width)];
+    return [this.theme.clipOwnedLabel(this.title, width), ...this.list.render(width)];
   }
   handleInput(data: string): void {
     this.list.handleInput(data);
@@ -652,6 +818,7 @@ class SearchableChoiceDialog implements Component, Focusable {
     private readonly choose: (value: string) => void,
     private readonly back: () => void,
     preferredValue?: string,
+    private readonly theme: DeckTheme = new DeckTheme(defaultTerminalAppearance),
   ) {
     const index =
       preferredValue === undefined ? -1 : items.findIndex((item) => item.value === preferredValue);
@@ -664,16 +831,21 @@ class SearchableChoiceDialog implements Component, Focusable {
     this.query.focused = this.focused;
     const matches = this.matches();
     return [
-      this.title,
+      this.theme.clipOwnedLabel(this.title, width),
       ...this.query.render(width),
       ...matches
         .slice(0, 8)
-        .map(
-          (item, index) =>
-            `${index === this.selected ? "> " : "  "}${item.label}${item.description ? ` — ${item.description}` : ""}`,
+        .map((item, index) =>
+          this.theme.clipOwnedLabel(
+            `${index === this.selected ? "> " : "  "}${item.label}${item.description ? ` - ${item.description}` : ""}`,
+            width,
+          ),
         ),
-      "Type to filter · ↑↓ select · Enter choose · Esc back",
-    ].map((line) => clip(line, width));
+      this.theme.clipOwnedLabel(
+        `Type to filter ${this.theme.glyph("bullet")} Up/Down select ${this.theme.glyph("bullet")} Enter choose ${this.theme.glyph("bullet")} Esc back`,
+        width,
+      ),
+    ];
   }
   handleInput(data: string): void {
     if (matchesKey(data, "escape")) {
@@ -706,6 +878,7 @@ class CommandPaletteDialog implements Component, Focusable {
     private readonly commands: () => readonly ResolvedCommand[],
     private readonly choose: (id: string) => void,
     private readonly cancel: () => void,
+    private readonly theme: DeckTheme,
   ) {}
   invalidate(): void {
     this.query.invalidate();
@@ -714,15 +887,21 @@ class CommandPaletteDialog implements Component, Focusable {
     this.query.focused = this.focused;
     const matches = this.matches();
     return [
-      "Command palette",
+      this.theme.clipOwnedLabel("Command palette", width),
       ...this.query.render(width),
       ...matches.slice(0, 9).map((command, index) => {
         const shortcut = command.shortcuts.join(" / ");
-        const suffix = command.disabledReason ? ` — ${command.disabledReason}` : "";
-        return `${index === this.selected ? "> " : "  "}${command.label}  ${shortcut}${suffix}`;
+        const suffix = command.disabledReason ? ` - ${command.disabledReason}` : "";
+        return this.theme.clipOwnedLabel(
+          `${index === this.selected ? "> " : "  "}${command.label}  ${shortcut}${suffix}`,
+          width,
+        );
       }),
-      "Type to filter · ↑↓ select · Enter run · Esc close",
-    ].map((line) => clip(line, width));
+      this.theme.clipOwnedLabel(
+        `Type to filter ${this.theme.glyph("bullet")} Up/Down select ${this.theme.glyph("bullet")} Enter run ${this.theme.glyph("bullet")} Esc close`,
+        width,
+      ),
+    ];
   }
   handleInput(data: string): void {
     if (matchesKey(data, "escape")) {
@@ -762,7 +941,7 @@ export class DeckTui {
   private readonly lifecycle: TerminalLifecycle;
   private readonly controller: DeckController;
   private readonly tree: TreeView;
-  private readonly timeline = new TimelineView();
+  private readonly timeline: TimelineView;
   private readonly composer: ComposerView;
   private readonly status: StatusView;
   private readonly renderScheduler: RenderScheduler;
@@ -791,6 +970,7 @@ export class DeckTui {
       }
     | undefined;
   private state: AppState;
+  private readonly theme: DeckTheme;
 
   constructor(
     private readonly terminal: Terminal,
@@ -799,6 +979,7 @@ export class DeckTui {
     options: DeckTuiOptions = {},
   ) {
     this.state = initialState;
+    this.theme = new DeckTheme(options.appearance ?? defaultTerminalAppearance);
     this.reconnectClock = options.renderClock ?? systemRenderClock;
     this.tui = new TuiAltScreen(terminal, undefined, undefined, {
       scrollToEndIndicator: () => this.scrollToEndIndicator(),
@@ -814,12 +995,13 @@ export class DeckTui {
       () => this.state,
       (intent) => this.handleControllerIntent(intent),
     );
-    this.tree = new TreeView(initialState);
+    this.tree = new TreeView(initialState, this.theme);
+    this.timeline = new TimelineView(this.theme);
     this.timeline.update(initialState.timeline.items);
     this.timeline.updateSelection(initialState);
-    this.composer = new ComposerView(this.tui, initialState, emit);
-    this.status = new StatusView(initialState, () => this.reconnectClock.now());
-    this.minimumSize = new MinimumSizeView();
+    this.composer = new ComposerView(this.tui, initialState, emit, this.theme);
+    this.status = new StatusView(initialState, this.theme, () => this.reconnectClock.now());
+    this.minimumSize = new MinimumSizeView(this.theme);
     this.treeTranscript = new ScrollView(this.tree, { follow: "none", scrollbar: "auto" });
     this.transcript = new TimelineScrollView(this.timeline, (following) => {
       if (following) this.setTimelineFollowing(true);
@@ -1056,6 +1238,7 @@ export class DeckTui {
         (query) => this.updateTimelineSearch(query),
         () => this.restoreLocalOverlay(),
         (direction) => this.moveTimelineSearch(direction),
+        this.theme,
       ),
       { width: "70%", minWidth: 28, maxHeight: "70%", margin: 1 },
     );
@@ -1073,6 +1256,7 @@ export class DeckTui {
           this.controller.invokeCommand(id);
         },
         () => this.restoreLocalOverlay(),
+        this.theme,
       ),
       { width: "70%", minWidth: 32, maxHeight: "70%", margin: 1 },
     );
@@ -1093,6 +1277,7 @@ export class DeckTui {
           if (matchesKey(data, "escape") || data === "?") this.restoreLocalOverlay();
           return true;
         },
+        this.theme,
       ),
       { width: "70%", minWidth: 28, maxHeight: "70%", margin: 1 },
     );
@@ -1145,6 +1330,7 @@ export class DeckTui {
         targets.map((target, index) => ({ value: String(index), label: target.label })),
         (choice) => void this.copyTimelineTarget(targets[Number(choice)]?.text),
         () => this.restoreLocalOverlay(),
+        this.theme,
       ),
       { width: "70%", minWidth: 28, maxHeight: "70%", margin: 1 },
     );
@@ -1253,8 +1439,8 @@ export class DeckTui {
     const agentId = this.state.selectedAgentId;
     const navigation = agentId ? this.state.timelineNavigation[agentId] : undefined;
     return navigation && !navigation.following && navigation.unread > 0
-      ? `${navigation.unread} new · G end`
-      : "↓ End";
+      ? `${navigation.unread} new ${this.theme.glyph("bullet")} G end`
+      : `${this.theme.glyph("end")} End`;
   }
 
   private restoreTimelineNavigation(state: AppState): void {
@@ -1354,6 +1540,7 @@ export class DeckTui {
           if (matchesKey(data, "escape") || data === "?") close();
           return true;
         },
+        this.theme,
       );
     else if (modal.type === "filter")
       component = new InputDialog(
@@ -1361,6 +1548,7 @@ export class DeckTui {
         modal.query,
         (value) => this.emit({ type: "create-choice", choice: value }),
         close,
+        this.theme,
       );
     else if (modal.type === "rename")
       component = new InputDialog(
@@ -1372,6 +1560,7 @@ export class DeckTui {
             command: { type: "rename-agent", agentId: modal.agentId, name: value },
           }),
         close,
+        this.theme,
       );
     else if (modal.type === "confirm")
       component = new Dialog(
@@ -1385,20 +1574,29 @@ export class DeckTui {
           else if (matchesKey(data, "escape")) close();
           return true;
         },
+        this.theme,
       );
     else if (modal.type === "permission")
-      component = new Dialog(permissionDialogLines(this.state, modal), (data) =>
-        this.controller.handleKey(data),
+      component = new Dialog(
+        permissionDialogLines(this.state, modal),
+        (data) => this.controller.handleKey(data),
+        this.theme,
       );
     else if (modal.type === "notifications")
-      component = new Dialog(notificationDialogLines(this.state, modal.index), (data) =>
-        this.controller.handleKey(data),
+      component = new Dialog(
+        notificationDialogLines(this.state, modal.index),
+        (data) => this.controller.handleKey(data),
+        this.theme,
       );
     else if (modal.type === "error-details")
-      component = new Dialog([`Error: ${modal.message}`, modal.detail, "Esc close"], (data) => {
-        if (matchesKey(data, "escape")) close();
-        return true;
-      });
+      component = new Dialog(
+        [`Error: ${modal.message}`, modal.detail, "Esc close"],
+        (data) => {
+          if (matchesKey(data, "escape")) close();
+          return true;
+        },
+        this.theme,
+      );
     else if (modal.type === "create-agent" && modal.step === "prompt")
       component = new CreationPromptDialog(
         this.tui,
@@ -1407,6 +1605,7 @@ export class DeckTui {
         modal.prompt ?? "",
         (prompt) => this.emit({ type: "create-choice", choice: prompt }),
         () => this.emit({ type: "creation-back" }),
+        this.theme,
       );
     else if (modal.type === "create-agent" && modal.step === "confirm")
       component = new Dialog(
@@ -1423,6 +1622,7 @@ export class DeckTui {
             this.emit({ type: "creation-back" });
           return true;
         },
+        this.theme,
       );
     else {
       if (modal.type === "create-agent") {
@@ -1446,6 +1646,7 @@ export class DeckTui {
                   ? (modal.thinkingLevel ??
                     selectedCreationModel(this.state, modal)?.defaultThinkingLevel)
                   : undefined,
+          this.theme,
         );
       } else {
         component = new ChoiceDialog(
@@ -1453,6 +1654,7 @@ export class DeckTui {
           agentChoices(this.state, modal.type),
           (choice) => this.emit({ type: "create-choice", choice }),
           close,
+          this.theme,
         );
       }
     }
@@ -1553,22 +1755,20 @@ function titleForModal(type: string): string {
     }[type] ?? "Choose option"
   );
 }
-function clip(value: string, width: number): string {
-  return width <= 1
-    ? value.slice(0, Math.max(0, width))
-    : value.length > width
-      ? `${value.slice(0, width - 1)}…`
-      : value;
-}
-
 /** Deliberately modest ANSI highlighting for Markdown's fenced code hook. */
-export function highlightFencedCode(code: string, _language?: string): string[] {
+export function highlightFencedCode(
+  code: string,
+  _language?: string,
+  theme: DeckTheme = new DeckTheme(defaultTerminalAppearance),
+): string[] {
   const keyword =
     /\b(const|let|var|function|return|if|else|for|while|class|import|export|async|await|def|fn)\b/g;
   const string = /("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*')/g;
-  return code
+  return sanitizeTerminalText(code)
     .split("\n")
     .map((line) =>
-      line.replace(keyword, "\u001b[36m$1\u001b[39m").replace(string, "\u001b[33m$1\u001b[39m"),
+      line
+        .replace(keyword, (match) => theme.styleRendered("code", match))
+        .replace(string, (match) => theme.styleRendered("attention", match)),
     );
 }

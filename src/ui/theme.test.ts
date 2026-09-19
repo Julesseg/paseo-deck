@@ -1,0 +1,61 @@
+import { describe, expect, it } from "vitest";
+
+import type { TerminalAppearance } from "./capabilities.js";
+import { DeckTheme } from "./theme.js";
+
+const noColor: TerminalAppearance = {
+  color: "none",
+  unicode: false,
+  theme: "plain",
+  symbols: "ascii",
+};
+
+describe("DeckTheme", () => {
+  it("keeps semantic labels without emitting SGR in no-colour mode", () => {
+    const rendered = new DeckTheme(noColor).style("failure", "bad\u001b[2J");
+
+    expect(rendered).toBe("bad␛[2J");
+    expect(rendered).not.toContain("\u001b[");
+    expect(
+      ["focus", "selection", "failure", "muted"]
+        .map((tone) => new DeckTheme(noColor).style(tone as "focus", "label"))
+        .join(""),
+    ).not.toContain("\u001b[");
+  });
+
+  it("allows a persisted plain theme to opt out of colour independently", () => {
+    const rendered = new DeckTheme({ ...noColor, color: "truecolor" }).style("focus", "plain");
+
+    expect(rendered).toBe("plain");
+  });
+
+  it("uses complete style resets and ASCII glyph fallbacks", () => {
+    const theme = new DeckTheme({ ...noColor, color: "ansi16", unicode: false, theme: "ember" });
+
+    expect(theme.style("focus", "selected")).toBe("\u001b[36mselected\u001b[0m");
+    expect(theme.glyph("expanded")).toBe("v");
+    expect(theme.glyph("permission")).toBe("[P]");
+    expect(theme.glyph("end")).toBe("v");
+    expect(theme.label("Agent ←→ ↑↓ waiting… · ✓")).toBe("Agent <--> UpDown waiting... - [P]");
+  });
+
+  it("treats the requested symbol set as canonical even when Unicode is available", () => {
+    const theme = new DeckTheme({
+      color: "ansi16",
+      unicode: true,
+      theme: "ember",
+      symbols: "ascii",
+    });
+
+    expect(theme.glyph("agent")).toBe("*");
+    expect(theme.label("Agent → waiting…")).toBe("Agent -> waiting...");
+    expect(theme.clipOwnedLabel("Long → label", 8)).toHaveLength(8);
+  });
+
+  it("separates owned labels from sanitised remote text", () => {
+    const theme = new DeckTheme({ color: "none", unicode: true, theme: "plain", symbols: "ascii" });
+
+    expect(theme.style("header", "Deck → waiting…")).toBe("Deck -> waiting...");
+    expect(theme.styleRemote("header", "Agent → waiting…\u001b[2J")).toBe("Agent → waiting…␛[2J");
+  });
+});

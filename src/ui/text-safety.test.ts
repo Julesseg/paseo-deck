@@ -36,4 +36,11 @@ describe("terminal text safety", () => {
     expect(clipped).toContain("\u001b[31m");
     expect(clipped.endsWith("\u001b[0m")).toBe(true);
   });
+
+  it("accepts an appearance-specific overflow suffix without exceeding width", () => {
+    const clipped = clipTerminalLine("long terminal line", 8, "...");
+
+    expect(clipped).toBe("long ...");
+    expect(terminalDisplayWidth(clipped)).toBeLessThanOrEqual(8);
+  });
 });

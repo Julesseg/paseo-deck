@@ -1,6 +1,7 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { AppState } from "../src/contracts/app-state.js";
+import type { TerminalAppearance } from "../src/ui/capabilities.js";
 import { RecordingTerminal } from "../src/ui/terminal.js";
 import { DeckTui } from "../src/ui/views.js";
 
@@ -8,11 +9,13 @@ const outputDirectory = process.argv[2];
 if (!outputDirectory) throw new Error("Usage: tsx scripts/capture-ui-report.ts <output-directory>");
 
 const baseState = syntheticState();
+const emptyState = withoutSelection(baseState);
 const shots: Array<{
   name: string;
   columns: number;
   rows: number;
   state: AppState;
+  appearance?: TerminalAppearance;
 }> = [
   { name: "session-tree", columns: 100, rows: 28, state: baseState },
   {
@@ -62,12 +65,61 @@ const shots: Array<{
     },
   },
   { name: "narrow-layout", columns: 52, rows: 18, state: baseState },
+  {
+    name: "no-color",
+    columns: 100,
+    rows: 28,
+    state: { ...baseState, focus: "timeline" },
+    appearance: { color: "none", unicode: true, theme: "plain", symbols: "unicode" },
+  },
+  {
+    name: "ascii",
+    columns: 100,
+    rows: 28,
+    state: {
+      ...baseState,
+      focus: "tree",
+      modal: { type: "create-agent", workspaceId: "workspace-main", step: "provider" },
+    },
+    appearance: { color: "ansi16", unicode: false, theme: "ember", symbols: "ascii" },
+  },
+  {
+    name: "error",
+    columns: 100,
+    rows: 28,
+    state: {
+      ...baseState,
+      notifications: [
+        {
+          id: 1,
+          kind: "error",
+          failureKind: "command",
+          message: "Could not refresh the selected agent.",
+          detail: "Synthetic command failure for visual review.",
+        },
+      ],
+      activeNotificationId: 1,
+    },
+  },
+  {
+    name: "empty-directory",
+    columns: 100,
+    rows: 28,
+    state: {
+      ...emptyState,
+      directory: { projects: [], workspaces: [], agents: [], providers: [] },
+      expandedIds: new Set(),
+      timeline: { recoveryRevision: 0, items: [], loading: false },
+    },
+  },
 ];
 
 await mkdir(outputDirectory, { recursive: true });
 for (const shot of shots) {
   const terminal = new RecordingTerminal(shot.columns, shot.rows);
-  const deck = new DeckTui(terminal, shot.state, () => undefined);
+  const deck = new DeckTui(terminal, shot.state, () => undefined, {
+    ...(shot.appearance === undefined ? {} : { appearance: shot.appearance }),
+  });
   deck.update(shot.state);
   deck.start();
   await terminal.waitForRender();
@@ -251,6 +303,18 @@ function syntheticState(): AppState {
       detachedAgentIds: new Set(),
     },
   };
+}
+
+function withoutSelection(
+  state: AppState,
+): Omit<AppState, "selectedProjectId" | "selectedWorkspaceId" | "selectedAgentId"> {
+  const {
+    selectedProjectId: _project,
+    selectedWorkspaceId: _workspace,
+    selectedAgentId: _agent,
+    ...rest
+  } = state;
+  return rest;
 }
 
 function terminalSvg(

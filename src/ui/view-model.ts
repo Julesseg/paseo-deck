@@ -204,30 +204,46 @@ export function timelineDisplay(
   events: readonly TimelineEvent[],
   width: number,
   expanded: ReadonlySet<string>,
+  chrome?: TimelineChrome,
 ): string[] {
   return events.flatMap((event) =>
-    timelineItemDisplay(event.item, width, expanded.has(event.item.id)),
+    timelineItemDisplay(event.item, width, expanded.has(event.item.id), chrome),
   );
 }
+
+/** App-owned separators only; timeline payloads remain unmodified. */
+export interface TimelineChrome {
+  bullet: string;
+  ellipsis: string;
+  divider: string;
+}
+
+const unicodeTimelineChrome: TimelineChrome = { bullet: "·", ellipsis: "…", divider: "─" };
 
 export function timelineItemDisplay(
   item: TimelineItem,
   width: number,
   expanded: boolean,
+  chrome: TimelineChrome = unicodeTimelineChrome,
 ): string[] {
   const bodyWidth = Math.max(1, width - 2);
   const body = (value: string): string[] =>
-    wrapTerminalText(value, bodyWidth).map((line) => clipTerminalLine(`  ${line}`, width));
-  const heading = (value: string): string => clipTerminalLine(sanitizeTerminalText(value), width);
-  const stamp = item.timestamp ? ` · ${item.timestamp.slice(11, 16)}` : "";
+    wrapTerminalText(value, bodyWidth).map((line) =>
+      clipTerminalLine(`  ${line}`, width, chrome.ellipsis),
+    );
+  const heading = (value: string): string =>
+    clipTerminalLine(sanitizeTerminalText(value), width, chrome.ellipsis);
+  const stamp = item.timestamp ? ` ${chrome.bullet} ${item.timestamp.slice(11, 16)}` : "";
   const duration = (value: number | undefined): string =>
-    value === undefined ? "" : ` · ${(value / 1000).toFixed(1)}s`;
+    value === undefined ? "" : ` ${chrome.bullet} ${(value / 1000).toFixed(1)}s`;
   switch (item.type) {
     case "user-message":
       return [heading(`You${stamp}`), ...body(item.text)];
     case "assistant-message":
       return [
-        heading(`Assistant${item.streaming ? " · streaming…" : ""}${stamp}`),
+        heading(
+          `Assistant${item.streaming ? ` ${chrome.bullet} streaming${chrome.ellipsis}` : ""}${stamp}`,
+        ),
         ...body(item.text),
       ];
     case "reasoning": {
@@ -245,13 +261,13 @@ export function timelineItemDisplay(
       if (!expanded && output.length > 180)
         return [
           heading(
-            `Tool ${item.status}: ${item.name}${duration(item.durationMs)}${item.failureSummary ? ` · ${item.failureSummary}` : ""}  [Enter to expand]`,
+            `Tool ${item.status}: ${item.name}${duration(item.durationMs)}${item.failureSummary ? ` ${chrome.bullet} ${item.failureSummary}` : ""}  [Enter to expand]`,
           ),
           ...body(summary || "No output").slice(0, 1),
         ];
       return [
         heading(
-          `Tool ${item.status}: ${item.name}${duration(item.durationMs)}${item.failureSummary ? ` · ${item.failureSummary}` : ""}`,
+          `Tool ${item.status}: ${item.name}${duration(item.durationMs)}${item.failureSummary ? ` ${chrome.bullet} ${item.failureSummary}` : ""}`,
         ),
         ...body(output || "No output"),
       ];
@@ -271,7 +287,7 @@ export function timelineItemDisplay(
     case "turn":
       return [
         heading(
-          `── Turn ${item.status}${duration(item.durationMs)}${(item.completedAt ?? item.startedAt) ? ` · ${(item.completedAt ?? item.startedAt)?.slice(11, 16)}` : ""}${item.detail ? `: ${item.detail}` : ""} ──`,
+          `${chrome.divider}${chrome.divider} Turn ${item.status}${duration(item.durationMs)}${(item.completedAt ?? item.startedAt) ? ` ${chrome.bullet} ${(item.completedAt ?? item.startedAt)?.slice(11, 16)}` : ""}${item.detail ? `: ${item.detail}` : ""} ${chrome.divider}${chrome.divider}`,
         ),
       ];
     case "unknown":

@@ -61,6 +61,24 @@ describe("runCli", () => {
     expect(terminal.stopped).toBe(true);
   });
 
+  it("injects the runtime appearance once instead of reading environment in views", async () => {
+    const capture = output();
+    const terminal = new RecordingTerminal();
+    const gateway = new FakePaseoGateway(emptyDirectory());
+    const running = runInteractive({ type: "default" }, capture.io, {
+      gateway,
+      terminal,
+      environment: { NO_COLOR: "1", LANG: "C", TERM: "dumb" },
+      bindExitHandlers: () => () => undefined,
+    });
+    await tick();
+    await terminal.waitForRender();
+    terminal.sendInput("q");
+
+    await expect(running).resolves.toBe(0);
+    expect(terminal.writes.join("")).not.toContain("\u001b[38;");
+  });
+
   it("restores the alternate screen after Ctrl+C", async () => {
     const capture = output();
     const terminal = new RecordingTerminal();

@@ -32,7 +32,7 @@ export function wrapTerminalText(value: string, width: number): string[] {
 }
 
 /** Clips a rendered line while retaining safe ANSI styling created by the UI. */
-export function clipTerminalLine(value: string, width: number): string {
+export function clipTerminalLine(value: string, width: number, overflowSuffix = "…"): string {
   const available = Math.max(0, width);
   if (available === 0) return "";
   const tokens = styledTokens(safeStyledText(value).replaceAll("\n", " ").replaceAll("\t", "    "));
@@ -54,7 +54,17 @@ export function clipTerminalLine(value: string, width: number): string {
     result += token;
     used += tokenWidth;
   }
-  if (clipped && used < available) result += "…";
+  if (clipped) {
+    const suffixWidth = terminalDisplayWidth(overflowSuffix);
+    while (used + suffixWidth > available && result) {
+      const tokens = styledTokens(result);
+      const last = tokens.pop();
+      if (last === undefined) break;
+      result = tokens.join("");
+      if (!isSgr(last)) used -= graphemeWidth(last);
+    }
+    if (suffixWidth <= available) result += overflowSuffix;
+  }
   return styled ? `${result}\u001b[0m` : result;
 }
 

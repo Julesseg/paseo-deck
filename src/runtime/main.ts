@@ -2,6 +2,7 @@ import { ProcessTerminal, type Terminal } from "@earendil-works/pi-tui";
 import { ApplicationController } from "../app/controller.js";
 import type { PaseoGateway } from "../contracts/gateway.js";
 import { createPaseoGateway, type PaseoGatewayOptions } from "../paseo/gateway.js";
+import { detectTerminalAppearance, type TerminalEnvironment } from "../ui/capabilities.js";
 import { DeckTui } from "../ui/views.js";
 import {
   CliArgumentError,
@@ -45,6 +46,7 @@ export interface InteractiveDependencies {
   gateway?: PaseoGateway;
   terminal?: Terminal;
   bindExitHandlers?: (handlers: RuntimeExitHandlers) => () => void;
+  environment?: TerminalEnvironment;
 }
 
 export async function runCli(
@@ -91,9 +93,16 @@ export async function runInteractive(
   const app = new ApplicationController(gateway, {
     onQuit: () => requestShutdown(0),
   });
-  const deck = new DeckTui(terminal, app.state, (intent) => {
-    void app.handleIntent(intent).catch((error: unknown) => requestShutdown(1, error));
-  });
+  // Capability detection is deliberately a runtime concern: views are pure of
+  // environment reads and receive a stable appearance for their whole run.
+  const deck = new DeckTui(
+    terminal,
+    app.state,
+    (intent) => {
+      void app.handleIntent(intent).catch((error: unknown) => requestShutdown(1, error));
+    },
+    { appearance: detectTerminalAppearance(dependencies.environment ?? process.env) },
+  );
   const unsubscribeState = app.subscribe((state) => deck.update(state));
   const shutdown = new ShutdownCoordinator({
     releaseObservations: async () => {
