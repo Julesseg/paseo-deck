@@ -7,22 +7,22 @@
   <circle cx="36" cy="16" r="5" fill="#f59e0b"/>
   <circle cx="54" cy="16" r="5" fill="#22c55e"/>
   <g fill="#f5f5f4" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="14" xml:space="preserve">
-<text x="16" y="62">Projects / workspaces           Selected agent timeline · Atlas [agent-at]                          </text>
-<text x="16" y="80"> ▾ Deck Labs                    &gt; You                                                               </text>
-<text x="16" y="98">   ▾ Main                         Check the release build.                                          </text>
-<text x="16" y="116">&gt;    • Atlas [agent-at] runni…  Reasoning                                                           </text>
-<text x="16" y="134">     • Harbor [agent-ha] ✓ ! …    I will run the focused checks, then verify the packaged           </text>
-<text x="16" y="152">   ▾ Theme polish                 executable aliases.                                               </text>
-<text x="16" y="170">     • Lumen [agent-lu] idle    Tool completed: npm run check                                       </text>
-<text x="16" y="188">                                  71 tests passed; typecheck and build succeeded.                   </text>
-<text x="16" y="206">                                Assistant                                                           </text>
-<text x="16" y="224">                                  The release build is clean. Both executable aliases are ready.    </text>
-<text x="16" y="242">                                Turn completed                                                      </text>
-<text x="16" y="260"></text>
-<text x="16" y="278"></text>
-<text x="16" y="296">               Choose provider                                                                      </text>
-<text x="16" y="314">               → Codex                                                                              </text>
-<text x="16" y="332"></text>
+<text x="16" y="62">[TREE] Projects / workspaces         Timeline   Selected agent timeline · Atlas [agent-at]          </text>
+<text x="16" y="80"> ▾ Deck Labs · 3 agents · !1        &gt; You                                                           </text>
+<text x="16" y="98">   ▾ Main · 2 agents · !1             Check the release build.                                      </text>
+<text x="16" y="116">     • Harbor [agent-ha] ✓ ! idle   Reasoning                                                       </text>
+<text x="16" y="134">      codex/gpt-5.6-terra             I will run the focused checks, then verify the packaged       </text>
+<text x="16" y="152">&gt;    • Atlas [agent-at] running       executable aliases.                                           </text>
+<text x="16" y="170">      codex/gpt-5.6-terra           Tool completed: npm run check                                   </text>
+<text x="16" y="188">   ▾ Theme polish · 1 agent           71 tests passed; typecheck and build succeeded.               </text>
+<text x="16" y="206">     • Lumen [agent-lu] idle        Assistant                                                       </text>
+<text x="16" y="224">      pi/claude-sonnet                The release build is clean. Both executable aliases are       </text>
+<text x="16" y="242">                                      ready.                                                        </text>
+<text x="16" y="260">                                    ── Turn completed ──                                            </text>
+<text x="16" y="278">               Choose provider · Main                                                               </text>
+<text x="16" y="296">               &gt;                                                                                    </text>
+<text x="16" y="314">               &gt; Codex                                                                              </text>
+<text x="16" y="332">               Type to filter · Up/Down select · Enter choose · Esc back                            </text>
 <text x="16" y="350"></text>
 <text x="16" y="368"></text>
 <text x="16" y="386"></text>
@@ -30,10 +30,10 @@
 <text x="16" y="422"></text>
 <text x="16" y="440"></text>
 <text x="16" y="458"></text>
-<text x="16" y="476">Prompt</text>
+<text x="16" y="476"> Composer   Prompt → Atlas</text>
 <text x="16" y="494">────────────────────────────────────────────────────────────────────────────────────────────────────</text>
 <text x="16" y="512">                                                                                                    </text>
 <text x="16" y="530">────────────────────────────────────────────────────────────────────────────────────────────────────</text>
-<text x="16" y="548">connected · codex/gpt-5.6-terra · auto · medium · context 1770 · in 1450 · out 320 · permissions 1</text>
+<text x="16" y="548">Dialog: Esc · connected · codex/gpt-5.6-terra · auto · medium · context 1770 · in 1450 · out 320 · …</text>
   </g>
 </svg>

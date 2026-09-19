@@ -119,6 +119,11 @@ for (const shot of shots) {
   const terminal = new RecordingTerminal(shot.columns, shot.rows);
   const deck = new DeckTui(terminal, shot.state, () => undefined, {
     ...(shot.appearance === undefined ? {} : { appearance: shot.appearance }),
+    renderClock: {
+      now: () => 12_000,
+      setTimeout: () => 0,
+      clearTimeout: () => undefined,
+    },
   });
   deck.update(shot.state);
   deck.start();

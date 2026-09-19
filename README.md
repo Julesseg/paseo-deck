@@ -59,13 +59,20 @@ CI enforces one required `check` result backed by:
 
 | Key | Action |
 | --- | --- |
-| `j` / `k` | Move through the active list or timeline |
-| `h` / `l` | Collapse or expand a tree node or timeline block |
-| `Enter` | Select, open, expand, or confirm |
+| `j` / `k`, `Up` / `Down` | Move through the active list, timeline, or dialog |
+| `h` / `l`, `Left` / `Right` | Collapse or expand a tree node; move through permission requests |
+| `g` / `G` | Jump to the first or last tree/timeline item |
+| `[` / `]` | Resize the tree, or jump between turns when the timeline is focused |
+| `{` / `}` | Jump between timeline errors |
+| `Enter` | Select, open, expand, run, or confirm |
 | `Tab` / `Shift+Tab` | Move focus between tree, timeline, and composer |
 | `i` | Focus the prompt composer |
+| `Ctrl-P` / `Ctrl-N` | Move through prompt history while composing |
 | `n` | Create an agent in the selected workspace |
 | `/` | Filter sessions |
+| `o` | Toggle alphabetical or attention-first tree ordering |
+| `v` | Show or hide archived sessions |
+| `!` | Show only sessions that need attention |
 | `p` | Review pending permissions |
 | `a` / `d` | Allow or deny inside the permission dialog |
 | `x` | Stop the selected agent after confirmation |
@@ -74,23 +81,39 @@ CI enforces one required `check` result backed by:
 | `e` | Rename the selected agent |
 | `m` | Choose an available mode |
 | `t` | Choose an available thinking level |
+| `Ctrl-F` | Search the selected timeline |
+| `y` | Copy the selected timeline item |
 | `r` | Refresh and reconnect |
+| `R` | Retry the selected failure |
 | `E` | Expand the current error details |
-| `?` | Show help |
+| `N` | Open notification history |
+| `Ctrl-K` / `Cmd-P` | Open the command palette, including theme and symbol preferences |
+| `?` | Show contextual help |
 | `Esc` | Close a dialog or cancel editing |
-| `q` | Quit when no text field is active |
+| `q` / `Ctrl-C` | Quit and restore the terminal |
 
 ## Supported in v0.1
 
 - Project, workspace, and agent discovery with filtering and attention markers
+- Attention-first or alphabetical ordering, archived visibility, persistent collapse state, and adjustable tree width
 - Existing history plus live user, assistant, reasoning, tool, error, permission, and turn events
+- Timeline navigation by turn and error, source-text search, OSC 52 copy, and pause/follow indicators for streaming output
 - Follow-up prompts and provider/model-aware agent creation
 - Permission allow and deny responses
 - Stop, archive, detach, and rename with confirmation for destructive actions
 - Mode and thinking changes when advertised by the provider
 - Cursor-aware timeline recovery, replacement handling, and clean observation release
 - Default local, `--home`, and direct TCP daemon targets
-- Responsive narrow-terminal layout and terminal restoration on exit
+- Responsive narrow-terminal layout, semantic color, no-color and ASCII fallbacks, and terminal restoration on exit
+- Versioned, target-scoped persistence for safe presentation preferences
+
+## Preferences
+
+Paseo Deck stores preferences at `$XDG_CONFIG_HOME/paseo-deck/preferences.json`, or `~/.config/paseo-deck/preferences.json` when `XDG_CONFIG_HOME` is unset. Delete that file while Paseo Deck is closed to reset all preferences.
+
+The file contains only the global theme and symbol set plus, for each hashed daemon target, tree width, ordering, archived visibility, and expanded project/workspace IDs. Target-specific tree state is not shared between the default daemon, another Paseo home, and a direct TCP host. Corrupt or newer unsupported files produce a short warning and fall back to defaults.
+
+Preferences never contain prompts, prompt history, timeline content, agent or provider records, selected sessions, notifications, daemon passwords, or raw daemon targets. Updates use an atomic file replacement. On POSIX systems, Paseo Deck hardens the containing directory and file to user-only permissions; on Windows, keep the OS profile and configuration directory ACL private to your account.
 
 ## Known limitations
 
@@ -98,10 +121,12 @@ CI enforces one required `check` result backed by:
 - Stop, rename, thinking, and mode changes use documented `paseo --json` commands because the public SDK does not expose them. All other operations use the public SDK.
 - The stable 0.8.0 client reports a directory subscription ID but does not expose a public per-observation release handle or connection-state stream. Paseo Deck releases all local listeners immediately and releases server demand when the client closes; refresh provides explicit reconnection.
 - Markdown rendering and fenced-code highlighting are intentionally compact for terminal use.
+- SSH targets and relay pairing offers are rejected with an actionable error; use a local or direct TCP target.
+- Preference writes assume one Paseo Deck process at a time. Concurrent processes share the same file, so the last process to save can replace presentation changes made by another running process.
 
 ## Security
 
-Connect only to a Paseo daemon you trust. The daemon can expose agent history and can execute agent actions. Keep passwords out of shell arguments and command history: use `PASEO_PASSWORD`, preferably injected by a local secret manager. Paseo Deck never includes the password in errors or subprocess arguments.
+Connect only to a Paseo daemon you trust. The daemon can expose agent history and can execute agent actions. Keep passwords out of shell arguments and command history: use `PASEO_PASSWORD`, preferably injected by a local secret manager. Paseo Deck never includes the password in errors, subprocess arguments, target-scope keys, or its preference file.
 
 ## Design and attribution
 
