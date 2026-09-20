@@ -571,7 +571,7 @@ export const deckCommands: readonly DeckCommand[] = [
     id: "create-agent",
     label: "Create agent",
     group: "Sessions",
-    shortcuts: ["c", "n"],
+    shortcuts: ["c"],
     contexts: ["tree"],
     disabledReason: (state) => requireConnected(state) ?? requireWorkspace(state),
     intent: (state) => ({

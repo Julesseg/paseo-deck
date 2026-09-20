@@ -415,7 +415,9 @@ class TimelineView implements Component {
     this.renderedWidth = width;
     const mode = this.state?.timelineMode ?? "normal";
     const heading =
-      width < 18 ? "Timeline" : `${this.focused ? mode.toUpperCase() : "        "} ${this.heading}`;
+      width < 18
+        ? `${this.focused ? mode.slice(0, 1).toUpperCase() : ""} Timeline`.trimStart()
+        : `${this.focused ? mode.toUpperCase() : "        "} ${this.heading}`;
     if (this.events.length === 0) {
       const message =
         width < 18
@@ -521,10 +523,11 @@ class ComposerView implements Component, Focusable {
   private readonly editor: Editor;
   private selectedAgentId: string | undefined;
   private state: AppState;
+  private visualAnchor: { line: number; col: number } | undefined;
   constructor(
     tui: TUI,
     state: AppState,
-    emit: (intent: UiIntent) => void,
+    private readonly emit: (intent: UiIntent) => void,
     private readonly theme: DeckTheme,
   ) {
     this.state = state;
@@ -545,10 +548,14 @@ class ComposerView implements Component, Focusable {
     };
   }
   update(state: AppState): void {
+    const previousMode = this.state.composerMode;
     this.state = state;
     this.selectedAgentId = state.selectedAgentId;
     const draft = selectedComposerDraft(state);
     if (this.editor.getText() !== draft) this.editor.setText(draft);
+    if (state.composerMode === "visual" && previousMode !== "visual")
+      this.visualAnchor = this.editor.getCursor();
+    if (state.composerMode !== "visual") this.visualAnchor = undefined;
   }
   invalidate(): void {
     this.editor.invalidate();
@@ -571,7 +578,11 @@ class ComposerView implements Component, Focusable {
           ? ` ${this.theme.glyph("bullet")} ${availability.reason}`
           : "";
     const mode = this.state.composerMode ?? "normal";
-    const heading = `${this.state.focus === "composer" ? mode.toUpperCase() : ""} ${destination}${status}`;
+    const selection = this.visualSelection();
+    const selectionCue = selection
+      ? ` ${this.theme.glyph("bullet")} selected ${selection.text.length} chars`
+      : "";
+    const heading = `${this.state.focus === "composer" ? mode.toUpperCase() : ""} ${destination}${status}${selectionCue}`;
     return [
       this.theme.styleRendered(
         this.focused ? "focus" : "header",
@@ -581,7 +592,65 @@ class ComposerView implements Component, Focusable {
     ];
   }
   handleInput(data: string): void {
+    if (this.state.composerMode === "visual") {
+      this.handleVisualInput(data);
+      return;
+    }
     this.editor.handleInput(data);
+  }
+
+  private handleVisualInput(data: string): void {
+    const motion: Record<string, string> = {
+      h: "\u001b[D",
+      l: "\u001b[C",
+      j: "\u001b[B",
+      k: "\u001b[A",
+      "0": "\u0001",
+      "^": "\u0001",
+      $: "\u0005",
+      w: "\u001b[1;5C",
+      b: "\u001b[1;5D",
+    };
+    if (motion[data]) {
+      this.editor.handleInput(motion[data]);
+      return;
+    }
+    if (data === "d" || data === "x" || data === "c") {
+      const selection = this.visualSelection();
+      if (!selection) return;
+      this.editor.setText(selection.before + selection.after);
+      this.emit({ type: "set-composer-mode", mode: data === "c" ? "insert" : "normal" });
+      return;
+    }
+    if (data === "i" || data === "a") {
+      this.emit({ type: "set-composer-mode", mode: "insert" });
+      return;
+    }
+    if (data === "y") this.emit({ type: "set-composer-mode", mode: "normal" });
+  }
+
+  private visualSelection():
+    | { before: string; text: string; after: string; start: number; end: number }
+    | undefined {
+    if (!this.visualAnchor) return undefined;
+    const text = this.editor.getText();
+    const positions = [this.visualAnchor, this.editor.getCursor()];
+    const offsets = positions.map(
+      (position) =>
+        this.editor
+          .getLines()
+          .slice(0, position.line)
+          .reduce((total, line) => total + line.length + 1, 0) + position.col,
+    );
+    const start = Math.min(...offsets);
+    const end = Math.min(text.length, Math.max(...offsets) + 1);
+    return {
+      before: text.slice(0, start),
+      text: text.slice(start, end),
+      after: text.slice(end),
+      start,
+      end,
+    };
   }
 }
 

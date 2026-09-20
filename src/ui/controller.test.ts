@@ -114,6 +114,37 @@ describe("DeckController keyboard seam", () => {
     }
   });
 
+  it("keeps quit and recovery precedence over composer insert text", () => {
+    const intents: unknown[] = [];
+    const controller = new DeckController(
+      () => ({ ...makeState(), focus: "composer", composerMode: "insert" }),
+      (intent) => intents.push(intent),
+    );
+    expect(controller.handleKey("q")).toBe(true);
+    expect(controller.handleKey("r")).toBe(true);
+    expect(intents).toEqual([{ type: "quit" }, { type: "refresh" }]);
+  });
+
+  it("enters and exits composer visual mode without changing active region", () => {
+    let current: AppState = { ...makeState(), focus: "composer", composerMode: "normal" };
+    const intents: unknown[] = [];
+    const controller = new DeckController(
+      () => current,
+      (intent) => {
+        intents.push(intent);
+        if (intent.type === "set-composer-mode")
+          current = { ...current, composerMode: intent.mode };
+      },
+    );
+    controller.handleKey("v");
+    controller.handleKey("\u001b");
+    expect(intents).toEqual([
+      { type: "set-composer-mode", mode: "visual" },
+      { type: "set-composer-mode", mode: "normal" },
+    ]);
+    expect(current.focus).toBe("composer");
+  });
+
   it.each([
     ["x", "stop"],
     ["A", "archive"],
@@ -221,7 +252,7 @@ describe("DeckController keyboard seam", () => {
       (intent) => intents.push(intent),
     );
 
-    controller.handleKey("n");
+    controller.handleKey("c");
 
     expect(intents).toContainEqual({
       type: "open-create-agent",
@@ -286,7 +317,7 @@ describe("DeckController keyboard seam", () => {
     expect(intents).toEqual([{ type: "quit" }]);
   });
 
-  it("does not turn composer text into global shortcuts", () => {
+  it("keeps ordinary insert text local while preserving global quit", () => {
     const intents: unknown[] = [];
     const controller = new DeckController(
       () => ({ ...makeState(), focus: "composer" }),
@@ -294,8 +325,8 @@ describe("DeckController keyboard seam", () => {
     );
 
     expect(controller.handleKey("x")).toBe(false);
-    expect(controller.handleKey("q")).toBe(false);
-    expect(intents).toEqual([]);
+    expect(controller.handleKey("q")).toBe(true);
+    expect(intents).toEqual([{ type: "quit" }]);
   });
 
   it("routes timeline navigation and Enter to a timeline-local selection", () => {

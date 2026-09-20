@@ -101,6 +101,10 @@ export class DeckController {
       }
       if (global?.id === "command-palette") return this.send(global.intent(state));
       if (mode === "insert") {
+        // Recovery and quit commands are global even while the editor owns
+        // ordinary text input. This keeps a stuck composer recoverable.
+        if (global && ["quit", "refresh", "retry"].includes(global.id))
+          return this.sendResolved(global, state);
         if (global?.id === "composer-history-previous" || global?.id === "composer-history-next")
           return this.send(global.intent(state));
         if (data === "\u0003") return this.send({ type: "quit" });
