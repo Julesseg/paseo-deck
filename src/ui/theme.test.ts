@@ -58,4 +58,62 @@ describe("DeckTheme", () => {
     expect(theme.style("header", "Deck → waiting…")).toBe("Deck -> waiting...");
     expect(theme.styleRemote("header", "Agent → waiting…\u001b[2J")).toBe("Agent → waiting…␛[2J");
   });
+
+  it("uses the terminal palette at every colour tier and supports semantic backgrounds", () => {
+    const tones = [
+      "focus",
+      "selection",
+      "running",
+      "attention",
+      "permission",
+      "failure",
+      "stale",
+      "muted",
+      "border",
+      "header",
+      "code",
+    ] as const;
+    for (const color of ["ansi16", "ansi256", "truecolor"] as const) {
+      const rendered = tones
+        .map((tone) =>
+          new DeckTheme({
+            color,
+            unicode: true,
+            theme: "ember",
+            palette: "terminal",
+            symbols: "unicode",
+          }).style(tone, "x"),
+        )
+        .join("");
+      expect(rendered).not.toContain("38;");
+      expect(rendered).not.toContain("38;2;");
+    }
+    expect(
+      new DeckTheme({
+        color: "ansi256",
+        unicode: true,
+        theme: "ember",
+        palette: "terminal",
+        symbols: "unicode",
+      }).style("focus", "x"),
+    ).toBe("\u001b[36mx\u001b[0m");
+    expect(
+      new DeckTheme({
+        color: "truecolor",
+        unicode: true,
+        theme: "ember",
+        palette: "terminal",
+        symbols: "unicode",
+      }).styleBackground("selection", "x"),
+    ).toBe("\u001b[43mx\u001b[0m");
+    expect(
+      new DeckTheme({
+        color: "none",
+        unicode: true,
+        theme: "ember",
+        palette: "terminal",
+        symbols: "unicode",
+      }).styleBackground("selection", "x"),
+    ).toBe("x");
+  });
 });

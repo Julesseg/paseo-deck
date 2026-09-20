@@ -113,6 +113,8 @@ Paseo Deck stores preferences at `$XDG_CONFIG_HOME/paseo-deck/preferences.json`,
 
 The file contains only the global theme and symbol set plus, for each hashed daemon target, tree width, ordering, archived visibility, and expanded project/workspace IDs. Target-specific tree state is not shared between the default daemon, another Paseo home, and a direct TCP host. Corrupt or newer unsupported files produce a short warning and fall back to defaults.
 
+With no theme configured, Deck uses ANSI terminal role escapes for semantic roles at every colour tier. Set `PASEO_DECK_THEME=ember` to opt into the built-in Ember palette, or `PASEO_DECK_THEME=terminal` to force the native palette. Configuration takes precedence over the saved interactive preference; otherwise the saved preference is used, followed by the terminal-native default. `NO_COLOR` and `TERM=dumb` always suppress colour while retaining textual and symbolic distinctions.
+
 Preferences never contain prompts, prompt history, timeline content, agent or provider records, selected sessions, notifications, daemon passwords, or raw daemon targets. Updates use an atomic file replacement. On POSIX systems, Paseo Deck hardens the containing directory and file to user-only permissions; on Windows, keep the OS profile and configuration directory ACL private to your account.
 
 ## Known limitations

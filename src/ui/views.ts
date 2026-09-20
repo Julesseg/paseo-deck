@@ -147,18 +147,18 @@ class TreeView implements Component {
           `${selected}${"  ".repeat(row.depth)}${branch} ${sanitizeTerminalText(row.label)}${flags}${secondary}`,
           width,
         );
-        const styled = this.theme.styleRendered(
-          row.selected
-            ? "selection"
-            : row.attention
-              ? "attention"
-              : row.status === "failed"
-                ? "failure"
-                : row.status === "running"
-                  ? "running"
-                  : "muted",
-          primary,
-        );
+        const styled = row.selected
+          ? this.theme.styleBackground("selection", primary)
+          : this.theme.styleRendered(
+              row.attention
+                ? "attention"
+                : row.status === "failed"
+                  ? "failure"
+                  : row.status === "running"
+                    ? "running"
+                    : "muted",
+              primary,
+            );
         if (row.kind !== "agent" || width < 34) return [styled];
         const metadata = [row.providerModel, row.activityLabel]
           .filter((value): value is string => value !== undefined && value !== "")
@@ -1292,6 +1292,8 @@ export class DeckTui {
         this.detectedAppearance.color === "none"
           ? "plain"
           : (this.requestedTheme ?? this.detectedAppearance.theme),
+      palette:
+        this.requestedTheme === "ember" ? "ember" : (this.detectedAppearance.palette ?? "ember"),
       symbols: this.detectedAppearance.unicode
         ? (this.requestedSymbolSet ?? this.detectedAppearance.symbols)
         : "ascii",

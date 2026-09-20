@@ -1,4 +1,4 @@
-import type { TerminalAppearance } from "./capabilities.js";
+import type { PaletteId, TerminalAppearance } from "./capabilities.js";
 import { clipTerminalLine, sanitizeTerminalText, terminalDisplayWidth } from "./text-safety.js";
 
 export type SemanticTone =
@@ -116,6 +116,13 @@ export class DeckTheme {
     return this.styleRendered(tone, sanitizeTerminalText(value));
   }
 
+  /** Styles a semantic background while retaining the same safety boundary. */
+  styleBackground(tone: SemanticTone, value: string): string {
+    const safe = this.label(sanitizeTerminalText(value));
+    if (this.appearance.color === "none" || this.appearance.theme === "plain") return safe;
+    return `${this.backgroundPrefix(tone)}${safe}\u001b[0m`;
+  }
+
   /**
    * Styles trusted internal render output without sanitising it again. Callers
    * must only pass Deck-generated text or Markdown sourced through the
@@ -176,9 +183,27 @@ export class DeckTheme {
   }
 
   private prefix(tone: SemanticTone): string {
+    const palette = this.paletteId();
+    if (palette === "terminal") return `\u001b[${ansi16[tone]}m`;
     if (this.appearance.color === "ansi16") return `\u001b[${ansi16[tone]}m`;
     if (this.appearance.color === "ansi256") return `\u001b[38;5;${ansi256[tone]}m`;
     const [red, green, blue] = truecolor[tone];
     return `\u001b[38;2;${red};${green};${blue}m`;
+  }
+
+  private backgroundPrefix(tone: SemanticTone): string {
+    const palette = this.paletteId();
+    if (palette === "terminal") return `\u001b[${ansi16[tone] + 10}m`;
+    if (this.appearance.color === "ansi16") {
+      const foreground = ansi16[tone];
+      return `\u001b[${foreground + 10}m`;
+    }
+    if (this.appearance.color === "ansi256") return `\u001b[48;5;${ansi256[tone]}m`;
+    const [red, green, blue] = truecolor[tone];
+    return `\u001b[48;2;${red};${green};${blue}m`;
+  }
+
+  private paletteId(): PaletteId {
+    return this.appearance.palette ?? "ember";
   }
 }

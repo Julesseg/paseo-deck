@@ -462,7 +462,7 @@ describe("terminal appearance", () => {
     expect(rendered).toContain("const ready");
     expect(rendered).not.toContain("␛[");
     expect(highlightFencedCode("const ready = 'yes';", "ts").join("\n")).not.toContain("␛[");
-    expect(terminal.writes.join("")).toContain("\u001b[38;");
+    expect(terminal.writes.join("")).toContain("\u001b[36m");
     expect(terminal.writes.join("")).toContain("\u001b[0m");
   });
 });

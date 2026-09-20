@@ -2,7 +2,11 @@ import { ProcessTerminal, type Terminal } from "@earendil-works/pi-tui";
 import { ApplicationController } from "../app/controller.js";
 import type { PaseoGateway } from "../contracts/gateway.js";
 import { createPaseoGateway, type PaseoGatewayOptions } from "../paseo/gateway.js";
-import { detectTerminalAppearance, type TerminalEnvironment } from "../ui/capabilities.js";
+import {
+  configuredPalette,
+  detectTerminalAppearance,
+  type TerminalEnvironment,
+} from "../ui/capabilities.js";
 import { DeckTui } from "../ui/views.js";
 import {
   CliArgumentError,
@@ -103,10 +107,16 @@ export async function runInteractive(
   });
   if (preferenceSession.warning) io.stderr(`paseo-deck: ${preferenceSession.warning}\n`);
   const detected = detectTerminalAppearance(dependencies.environment ?? process.env);
+  const configured = configuredPalette(dependencies.environment ?? process.env);
   const requested = preferenceSession.requestedGlobal();
+  const requestedTheme =
+    configured === "ember" ? "ember" : configured === "terminal" ? undefined : requested.theme;
+  const palette =
+    configured ?? (requested.theme === "ember" ? "ember" : (detected.palette ?? "terminal"));
   const appearance = {
     ...detected,
-    theme: detected.color === "none" ? "plain" : (requested.theme ?? detected.theme),
+    theme: detected.color === "none" ? "plain" : (requestedTheme ?? detected.theme),
+    palette,
     symbols: detected.unicode ? (requested.symbolSet ?? detected.symbols) : "ascii",
   } as const;
   let requestShutdown: (code?: number, error?: unknown) => Promise<void> = async () => undefined;
@@ -125,7 +135,7 @@ export async function runInteractive(
     {
       appearance,
       treeWidth: preferenceSession.treeWidth(),
-      ...(requested.theme ? { requestedTheme: requested.theme } : {}),
+      ...(requestedTheme ? { requestedTheme } : {}),
       ...(requested.symbolSet ? { requestedSymbolSet: requested.symbolSet } : {}),
       onPreferencesChanged: (value) => {
         preferenceSession.present(value);
