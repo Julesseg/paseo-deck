@@ -128,7 +128,7 @@ class TreeView implements Component {
     return [
       this.theme.style(
         this.state.focus === "tree" ? "focus" : "header",
-        `${this.state.focus === "tree" ? "[TREE]" : " Tree "} Projects / workspaces`,
+        `${this.state.focus === "tree" ? "" : "  "}Projects / workspaces`,
       ),
       ...rows.flatMap((row) => {
         const selected = row.selected ? ">" : " ";
@@ -413,8 +413,11 @@ class TimelineView implements Component {
   }
   render(width: number): string[] {
     this.renderedWidth = width;
+    const mode = this.state?.timelineMode ?? "normal";
     const heading =
-      width < 18 ? "Timeline" : `${this.focused ? "[TIMELINE]" : " Timeline  "} ${this.heading}`;
+      width < 18
+        ? `${this.focused ? mode.slice(0, 1).toUpperCase() : ""} Timeline`.trimStart()
+        : `${this.focused ? mode.toUpperCase() : "        "} ${this.heading}`;
     if (this.events.length === 0) {
       const message =
         width < 18
@@ -520,10 +523,11 @@ class ComposerView implements Component, Focusable {
   private readonly editor: Editor;
   private selectedAgentId: string | undefined;
   private state: AppState;
+  private visualAnchor: { line: number; col: number } | undefined;
   constructor(
     tui: TUI,
     state: AppState,
-    emit: (intent: UiIntent) => void,
+    private readonly emit: (intent: UiIntent) => void,
     private readonly theme: DeckTheme,
   ) {
     this.state = state;
@@ -544,16 +548,22 @@ class ComposerView implements Component, Focusable {
     };
   }
   update(state: AppState): void {
+    const previousMode = this.state.composerMode;
     this.state = state;
     this.selectedAgentId = state.selectedAgentId;
     const draft = selectedComposerDraft(state);
     if (this.editor.getText() !== draft) this.editor.setText(draft);
+    if (state.composerMode === "visual" && previousMode !== "visual")
+      this.visualAnchor = this.editor.getCursor();
+    if (state.composerMode !== "visual") this.visualAnchor = undefined;
   }
   invalidate(): void {
     this.editor.invalidate();
   }
   render(width: number): string[] {
-    this.editor.focused = this.focused;
+    this.editor.focused =
+      this.focused &&
+      (this.state.composerMode === undefined || this.state.composerMode === "insert");
     const agent = this.state.directory.agents.find((item) => item.id === this.selectedAgentId);
     const availability = this.selectedAgentId
       ? composerAvailability(this.state, this.selectedAgentId)
@@ -567,7 +577,12 @@ class ComposerView implements Component, Focusable {
         : !availability.canSend
           ? ` ${this.theme.glyph("bullet")} ${availability.reason}`
           : "";
-    const heading = `${this.state.focus === "composer" ? "[COMPOSER]" : " Composer  "} ${destination}${status}`;
+    const mode = this.state.composerMode ?? "normal";
+    const selection = this.visualSelection();
+    const selectionCue = selection
+      ? ` ${this.theme.glyph("bullet")} selected ${selection.text.length} chars`
+      : "";
+    const heading = `${this.state.focus === "composer" ? mode.toUpperCase() : ""} ${destination}${status}${selectionCue}`;
     return [
       this.theme.styleRendered(
         this.focused ? "focus" : "header",
@@ -577,7 +592,65 @@ class ComposerView implements Component, Focusable {
     ];
   }
   handleInput(data: string): void {
+    if (this.state.composerMode === "visual") {
+      this.handleVisualInput(data);
+      return;
+    }
     this.editor.handleInput(data);
+  }
+
+  private handleVisualInput(data: string): void {
+    const motion: Record<string, string> = {
+      h: "\u001b[D",
+      l: "\u001b[C",
+      j: "\u001b[B",
+      k: "\u001b[A",
+      "0": "\u0001",
+      "^": "\u0001",
+      $: "\u0005",
+      w: "\u001b[1;5C",
+      b: "\u001b[1;5D",
+    };
+    if (motion[data]) {
+      this.editor.handleInput(motion[data]);
+      return;
+    }
+    if (data === "d" || data === "x" || data === "c") {
+      const selection = this.visualSelection();
+      if (!selection) return;
+      this.editor.setText(selection.before + selection.after);
+      this.emit({ type: "set-composer-mode", mode: data === "c" ? "insert" : "normal" });
+      return;
+    }
+    if (data === "i" || data === "a") {
+      this.emit({ type: "set-composer-mode", mode: "insert" });
+      return;
+    }
+    if (data === "y") this.emit({ type: "set-composer-mode", mode: "normal" });
+  }
+
+  private visualSelection():
+    | { before: string; text: string; after: string; start: number; end: number }
+    | undefined {
+    if (!this.visualAnchor) return undefined;
+    const text = this.editor.getText();
+    const positions = [this.visualAnchor, this.editor.getCursor()];
+    const offsets = positions.map(
+      (position) =>
+        this.editor
+          .getLines()
+          .slice(0, position.line)
+          .reduce((total, line) => total + line.length + 1, 0) + position.col,
+    );
+    const start = Math.min(...offsets);
+    const end = Math.min(text.length, Math.max(...offsets) + 1);
+    return {
+      before: text.slice(0, start),
+      text: text.slice(start, end),
+      after: text.slice(end),
+      start,
+      end,
+    };
   }
 }
 
@@ -658,20 +731,20 @@ function footerContext(state: AppState, width: number): string {
   if (width < 70) {
     switch (state.focus) {
       case "tree":
-        return "Tree j/k Tab";
+        return "Sidebar j/k Enter Esc";
       case "timeline":
-        return "Timeline j/k G [] {}";
+        return "Timeline NORMAL j/k G [] {} Esc";
       case "composer":
-        return "Composer Esc Enter";
+        return "Composer NORMAL i n t";
     }
   }
   switch (state.focus) {
     case "tree":
-      return "Tree: ↑↓ ←→ g/G Tab";
+      return "Sidebar: ↑↓ ←→ g/G Enter Esc";
     case "timeline":
-      return "Timeline: ↑↓ g/G [] turns {} errors Ctrl-F search · y copy · Enter Tab";
+      return `Timeline ${(state.timelineMode ?? "normal").toUpperCase()}: ↑↓ g/G [] turns {} errors Ctrl-F search · y copy · Enter Esc`;
     case "composer":
-      return "Composer: Esc Ctrl-P/N Enter";
+      return `Composer ${(state.composerMode ?? "normal").toUpperCase()}: i insert · n sidebar · t timeline · Ctrl-U/D scroll`;
   }
 }
 
@@ -1252,6 +1325,13 @@ export class DeckTui {
   }
 
   private handleControllerIntent(intent: UiIntent): void {
+    if (intent.type === "scroll-timeline") {
+      const amount = Math.max(1, Math.floor(this.transcript.viewportHeight * 0.75));
+      this.transcript.scrollBy(intent.direction * amount);
+      this.pauseIfScrolledAwayFromEnd();
+      this.renderScheduler.requestImmediate();
+      return;
+    }
     if (intent.type === "move-timeline-selection") {
       this.timeline.moveSelection(intent.direction);
       this.revealTimelineSelection();

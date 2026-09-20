@@ -33,6 +33,8 @@ export type AppAction =
   | { type: "toggle-archived" }
   | { type: "toggle-attention-only" }
   | { type: "set-focus"; focus: FocusArea }
+  | { type: "set-composer-mode"; mode: NonNullable<AppState["composerMode"]> }
+  | { type: "set-timeline-mode"; mode: NonNullable<AppState["timelineMode"]> }
   | { type: "set-composer"; text: string }
   | { type: "navigate-composer-history"; direction: -1 | 1 }
   | { type: "set-composer-sending"; agentId: string; sending: boolean }
@@ -86,7 +88,9 @@ export function createInitialState(): AppState {
     treeOrder: "attention",
     showArchived: false,
     attentionOnly: false,
-    focus: "tree",
+    focus: "composer",
+    composerMode: "normal",
+    timelineMode: "normal",
     modal: { type: "none" },
     timeline: { items: [], loading: false, recoveryRevision: 0 },
     timelineNavigation: {},
@@ -874,6 +878,10 @@ export function reduceApp(state: AppState, action: AppAction): AppState {
       return { ...state, attentionOnly: !state.attentionOnly };
     case "set-focus":
       return { ...state, focus: action.focus };
+    case "set-composer-mode":
+      return { ...state, composerMode: action.mode };
+    case "set-timeline-mode":
+      return { ...state, timelineMode: action.mode };
     case "set-composer": {
       const agentId = state.selectedAgentId;
       if (!agentId) return state;

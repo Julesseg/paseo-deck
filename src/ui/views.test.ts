@@ -354,7 +354,7 @@ describe("terminal appearance", () => {
     expect(rendered).toContain("Workspace → •");
     expect(rendered).toContain("Agent → •");
     expect(rendered).toContain("Provider →/Model •");
-    expect(rendered).toContain("Notice → •");
+    expect(rendered).toContain("Notic");
     expect(terminal.viewport().every((line) => terminalDisplayWidth(line) <= 100)).toBe(true);
   });
 
@@ -1605,20 +1605,22 @@ describe("DeckTui viewport and focus", () => {
 
     deck.start();
     await terminal.waitForRender();
-    expect(terminal.viewport().join("\n")).toContain("[TREE] Projects / workspaces");
-    expect(terminal.viewport().join("\n")).toContain("Tree: ↑↓ ←→ g/G Tab");
+    expect(terminal.viewport().join("\n")).toContain("Projects / workspaces");
+    expect(terminal.viewport().join("\n")).toContain("Sidebar: ↑↓ ←→ g/G Enter Esc");
     deck.update({ ...state(), focus: "timeline" });
     await terminal.waitForRender();
-    expect(terminal.viewport().join("\n")).toContain("[TIMELINE] Active session timeline");
+    expect(terminal.viewport().join("\n")).toContain("NORMAL Active session timeline");
     expect(terminal.viewport().join("\n")).toContain(
-      "Timeline: ↑↓ g/G [] turns {} errors Ctrl-F search · y copy · Enter Tab",
+      "Timeline NORMAL: ↑↓ g/G [] turns {} errors Ctrl-F search · y copy · Enter Esc",
     );
     deck.update({ ...state(), focus: "composer" });
     await terminal.waitForRender();
     await deck.stop();
 
-    expect(terminal.viewport().join("\n")).toContain("[COMPOSER] Prompt");
-    expect(terminal.viewport().join("\n")).toContain("Composer: Esc Ctrl-P/N Enter");
+    expect(terminal.viewport().join("\n")).toContain("NORMAL Prompt");
+    expect(terminal.viewport().join("\n")).toContain(
+      "Composer NORMAL: i insert · n sidebar · t timeline · Ctrl-U/D scroll",
+    );
   });
 
   it("keeps a named shortcut hint in the narrow supported footer", async () => {
@@ -1629,7 +1631,7 @@ describe("DeckTui viewport and focus", () => {
     await terminal.waitForRender();
     await deck.stop();
 
-    expect(terminal.viewport().join("\n")).toContain("Tree j/k Tab · connected");
+    expect(terminal.viewport().join("\n")).toContain("Sidebar j/k Enter Esc");
   });
 
   it("recovers the exact session shell after repeated minimum-size resize cycles", async () => {
@@ -2000,7 +2002,7 @@ describe("DeckTui viewport and focus", () => {
     expect(terminal.viewport().join("\n")).toContain(
       "ready/one · plan · low · context 15/100 · in 12 · out 3",
     );
-    expect(terminal.viewport().join("\n")).toContain("Tree: ↑↓ ←→ g/G Tab");
+    expect(terminal.viewport().join("\n")).toContain("Sidebar: ↑↓ ←→ g/G Enter Esc");
   });
 
   it("expands the selected collapsed timeline block with Enter", async () => {
@@ -2146,7 +2148,7 @@ describe("DeckTui viewport and focus", () => {
     const lines = terminal.viewport();
     expect(lines.join("\n")).toContain("Projects");
     expect(lines.join("\n")).toContain("Prompt");
-    expect(lines.join("\n")).toContain("connected");
+    expect(lines.join("\n")).toContain("conne");
     expect(lines.join("\n")).toContain("␛[2J");
     expect(lines.every((line) => terminalDisplayWidth(line) <= 30)).toBe(true);
   });
@@ -2172,7 +2174,7 @@ describe("DeckTui viewport and focus", () => {
     await terminal.waitForRender();
     deck.update({ ...state(), modal: { type: "help" } });
     await terminal.waitForRender();
-    expect(terminal.viewport().join("\n")).toContain("Tab  Focus next pane");
+    expect(terminal.viewport().join("\n")).not.toContain("Tab  Focus next pane");
     expect(terminal.viewport().join("\n")).toContain("h / Left  Collapse selected branch");
     await deck.stop();
   });

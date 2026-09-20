@@ -309,7 +309,7 @@ describe("runCli", () => {
 
     const restoredA = await launch({ type: "host", value: "a:1" });
     expect(events.indexOf("read-preferences")).toBeGreaterThanOrEqual(0);
-    expect(restoredA.terminal.viewport().join("\n")).toContain("Persisted agent");
+    expect(restoredA.terminal.viewport().join("\n")).toContain("Persisted project");
     restoredA.terminal.sendInput("q");
     await expect(restoredA.running).resolves.toBe(0);
 
@@ -397,6 +397,7 @@ function treeDirectory(): DirectorySnapshot {
 }
 
 async function mutateTreePreferences(terminal: RecordingTerminal, widen: boolean): Promise<void> {
+  terminal.sendInput("n");
   terminal.sendInput("j");
   await tick();
   terminal.sendInput("\r");

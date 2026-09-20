@@ -8,6 +8,8 @@ import type {
 } from "./domain.js";
 
 export type FocusArea = "tree" | "timeline" | "composer";
+export type ComposerMode = "normal" | "insert" | "visual";
+export type TimelineMode = "normal" | "visual";
 export type TreeOrder = "attention" | "alphabetical";
 export type SidebarSelection = { kind: "project" | "workspace" | "session"; id: string };
 
@@ -129,6 +131,10 @@ export interface AppState {
   showArchived: boolean;
   attentionOnly: boolean;
   focus: FocusArea;
+  /** Vim mode for the composer; the composer is the resting region. */
+  composerMode?: ComposerMode;
+  /** Read-only timeline Vim mode while timeline navigation is active. */
+  timelineMode?: TimelineMode;
   modal: ModalState;
   timeline: FocusedTimelineState;
   timelineNavigation: Readonly<Record<string, TimelineNavigationState>>;
