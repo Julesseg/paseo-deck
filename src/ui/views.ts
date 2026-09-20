@@ -1292,6 +1292,10 @@ export class DeckTui {
         this.detectedAppearance.color === "none"
           ? "plain"
           : (this.requestedTheme ?? this.detectedAppearance.theme),
+      palette:
+        this.requestedTheme === "ember"
+          ? "ember"
+          : (this.detectedAppearance.palette ?? "ember"),
       symbols: this.detectedAppearance.unicode
         ? (this.requestedSymbolSet ?? this.detectedAppearance.symbols)
         : "ascii",

@@ -58,4 +58,15 @@ describe("DeckTheme", () => {
     expect(theme.style("header", "Deck → waiting…")).toBe("Deck -> waiting...");
     expect(theme.styleRemote("header", "Agent → waiting…\u001b[2J")).toBe("Agent → waiting…␛[2J");
   });
+
+  it("uses the terminal palette at every colour tier and supports semantic backgrounds", () => {
+    expect(
+      new DeckTheme({ color: "ansi256", unicode: true, theme: "ember", palette: "terminal", symbols: "unicode" })
+        .style("focus", "x"),
+    ).toBe("\u001b[38;5;6mx\u001b[0m");
+    expect(
+      new DeckTheme({ color: "truecolor", unicode: true, theme: "ember", palette: "terminal", symbols: "unicode" })
+        .styleBackground("selection", "x"),
+    ).toBe("\u001b[48;2;255;255;0mx\u001b[0m");
+  });
 });

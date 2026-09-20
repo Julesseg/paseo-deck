@@ -2,19 +2,22 @@
 export type ColorTier = "none" | "ansi16" | "ansi256" | "truecolor";
 export type ThemeId = "ember" | "plain";
 export type SymbolSet = "unicode" | "ascii";
+/** Palette source. `terminal` deliberately delegates hue selection to ANSI. */
+export type PaletteId = "terminal" | "ember";
 
 export interface TerminalAppearance {
   color: ColorTier;
   unicode: boolean;
   theme: ThemeId;
   symbols: SymbolSet;
+  palette?: PaletteId;
 }
 
 export type TerminalEnvironment = Readonly<
   Partial<
     Pick<
       NodeJS.ProcessEnv,
-      "NO_COLOR" | "TERM" | "COLORTERM" | "LANG" | "LC_ALL" | "PASEO_DECK_ASCII"
+      "NO_COLOR" | "TERM" | "COLORTERM" | "LANG" | "LC_ALL" | "PASEO_DECK_ASCII" | "PASEO_DECK_THEME"
     >
   >
 >;
@@ -24,6 +27,7 @@ export const defaultTerminalAppearance: TerminalAppearance = {
   unicode: true,
   theme: "ember",
   symbols: "unicode",
+  palette: "terminal",
 };
 
 /** Converts the process environment into a stable, serialisable appearance. */
@@ -46,5 +50,12 @@ export function detectTerminalAppearance(environment: TerminalEnvironment): Term
     unicode,
     theme: color === "none" ? "plain" : "ember",
     symbols: unicode ? "unicode" : "ascii",
+    palette: configuredPalette(environment) ?? "terminal",
   };
+}
+
+/** Reads the opt-in configuration without treating saved preferences as config. */
+export function configuredPalette(environment: TerminalEnvironment): PaletteId | undefined {
+  return environment.PASEO_DECK_THEME === "ember" ? "ember" :
+    environment.PASEO_DECK_THEME === "terminal" ? "terminal" : undefined;
 }

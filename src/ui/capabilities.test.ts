@@ -11,9 +11,24 @@ describe("detectTerminalAppearance", () => {
   });
 
   it("detects truecolor, 256-colour, and conservative ansi terminals", () => {
-    expect(detectTerminalAppearance({ COLORTERM: "truecolor" }).color).toBe("truecolor");
-    expect(detectTerminalAppearance({ TERM: "screen-256color" }).color).toBe("ansi256");
-    expect(detectTerminalAppearance({ TERM: "xterm" }).color).toBe("ansi16");
+    expect(detectTerminalAppearance({ COLORTERM: "truecolor" })).toMatchObject({
+      color: "truecolor",
+      palette: "terminal",
+    });
+    expect(detectTerminalAppearance({ TERM: "screen-256color" })).toMatchObject({
+      color: "ansi256",
+      palette: "terminal",
+    });
+    expect(detectTerminalAppearance({ TERM: "xterm" })).toMatchObject({
+      color: "ansi16",
+      palette: "terminal",
+    });
+  });
+
+  it("allows explicit Ember or terminal palette configuration", () => {
+    expect(detectTerminalAppearance({ PASEO_DECK_THEME: "ember" }).palette).toBe("ember");
+    expect(detectTerminalAppearance({ PASEO_DECK_THEME: "terminal" }).palette).toBe("terminal");
+    expect(detectTerminalAppearance({ PASEO_DECK_THEME: "unknown" }).palette).toBe("terminal");
   });
 
   it("uses ASCII symbols when requested or when the locale is not UTF-8", () => {
