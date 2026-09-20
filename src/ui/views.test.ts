@@ -1610,9 +1610,9 @@ describe("DeckTui viewport and focus", () => {
     deck.update({ ...state(), focus: "timeline" });
     await terminal.waitForRender();
     expect(terminal.viewport().join("\n")).toContain("NORMAL Active session timeline");
-    expect(terminal.viewport().join("\n")).toContain(
+      expect(terminal.viewport().join("\n")).toContain(
       "Timeline NORMAL: ↑↓ g/G [] turns {} errors Ctrl-F search · y copy · Enter Esc",
-    );
+      );
     deck.update({ ...state(), focus: "composer" });
     await terminal.waitForRender();
     await deck.stop();
