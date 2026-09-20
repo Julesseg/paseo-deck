@@ -3,6 +3,8 @@ import type { AgentCommand } from "../contracts/commands.js";
 import { commandById, commandForKey } from "./commands.js";
 
 export type UiIntent =
+  | { type: "switch-tab"; direction: -1 | 1; count?: number }
+  | { type: "close-tab" }
   | { type: "select-next"; direction: -1 | 1 }
   | { type: "select-boundary"; boundary: "start" | "end" }
   | { type: "collapse-or-expand"; direction: -1 | 1 }
@@ -57,6 +59,7 @@ export type UiIntent =
   | { type: "create-choice"; choice: string };
 
 export class DeckController {
+  #tabPrefix = "";
   constructor(
     private readonly getState: () => AppState,
     private readonly emit: (intent: UiIntent) => void,
@@ -107,7 +110,22 @@ export class DeckController {
     // Every non-text modal owns its own navigation (SelectList, confirmation,
     // and help), rather than letting tree bindings leak through the overlay.
     if (state.modal.type !== "none") return false;
+    if (this.#tabPrefix.startsWith("g") && (data === "t" || data === "T" || data === "c")) {
+      const countText = this.#tabPrefix.slice(1);
+      this.#tabPrefix = "";
+      if (data === "c") return this.send({ type: "close-tab" });
+      return this.send({
+        type: "switch-tab",
+        direction: data === "t" ? 1 : -1,
+        ...(countText ? { count: Number(countText) } : {}),
+      });
+    }
+    if (this.#tabPrefix.startsWith("g") && /^[0-9]$/.test(data)) {
+      this.#tabPrefix += data;
+      return true;
+    }
     if (global) {
+      if (data === "g") this.#tabPrefix = "g";
       return this.sendResolved(global, state);
     }
     return false;

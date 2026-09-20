@@ -59,6 +59,20 @@ function makeState(): AppState {
 }
 
 describe("DeckController keyboard seam", () => {
+  it("recognizes tab navigation sequences and counts", () => {
+    const intents: unknown[] = [];
+    const controller = new DeckController(
+      () => makeState(),
+      (intent) => intents.push(intent),
+    );
+    controller.handleKey("g");
+    controller.handleKey("3");
+    controller.handleKey("t");
+    controller.handleKey("g");
+    controller.handleKey("c");
+    expect(intents).toContainEqual({ type: "switch-tab", direction: 1, count: 3 });
+    expect(intents.at(-1)).toEqual({ type: "close-tab" });
+  });
   it.each([
     ["x", "stop"],
     ["A", "archive"],

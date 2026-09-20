@@ -54,6 +54,34 @@ const requireRemoteAgent = (state: AppState): string | undefined =>
 
 export const deckCommands: readonly DeckCommand[] = [
   {
+    id: "tab-close",
+    label: "Close active session tab",
+    group: "Sessions",
+    shortcuts: ["gc"],
+    contexts: ["tree", "timeline"],
+    palette: true,
+    disabledReason: (state) => (state.activeSessionId ? undefined : "No active session tab"),
+    intent: () => ({ type: "close-tab" }),
+  },
+  {
+    id: "tab-next",
+    label: "Next session tab",
+    group: "Sessions",
+    shortcuts: ["gt"],
+    contexts: ["tree", "timeline"],
+    palette: true,
+    intent: () => ({ type: "switch-tab", direction: 1 }),
+  },
+  {
+    id: "tab-previous",
+    label: "Previous session tab",
+    group: "Sessions",
+    shortcuts: ["gT"],
+    contexts: ["tree", "timeline"],
+    palette: true,
+    intent: () => ({ type: "switch-tab", direction: -1 }),
+  },
+  {
     id: "dialog-cancel",
     label: "Cancel or close dialog",
     group: "Application",

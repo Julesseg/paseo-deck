@@ -13,6 +13,8 @@ export interface TargetPreferences {
   treeOrder?: TreeOrder;
   showArchived?: boolean;
   expandedIds?: string[];
+  openSessionIds?: Record<string, string[]>;
+  activeSessionId?: string;
 }
 export interface Preferences {
   version: 1;
@@ -336,6 +338,23 @@ function parseTargetPreference(value: unknown): TargetPreferences | undefined {
     record.expandedIds.every((id) => typeof id === "string")
       ? { expandedIds: [...new Set(record.expandedIds)] }
       : {}),
+    ...(record.openSessionIds &&
+    typeof record.openSessionIds === "object" &&
+    !Array.isArray(record.openSessionIds)
+      ? {
+          openSessionIds: Object.fromEntries(
+            Object.entries(record.openSessionIds as Record<string, unknown>).flatMap(
+              ([workspaceId, ids]) =>
+                Array.isArray(ids) && ids.every((id) => typeof id === "string")
+                  ? [[workspaceId, Array.from(new Set(ids))]]
+                  : [],
+            ),
+          ),
+        }
+      : {}),
+    ...(typeof record.activeSessionId === "string"
+      ? { activeSessionId: record.activeSessionId }
+      : {}),
   };
 }
 export function preferenceProjection(
@@ -353,6 +372,17 @@ export function preferenceProjection(
         treeOrder: state.treeOrder,
         showArchived: state.showArchived,
         expandedIds: [...state.expandedIds].sort(),
+        ...(Object.keys(state.openSessionIds ?? {}).length
+          ? {
+              openSessionIds: Object.fromEntries(
+                Object.entries(state.openSessionIds ?? {}).map(([workspaceId, ids]) => [
+                  workspaceId,
+                  [...ids],
+                ]),
+              ),
+            }
+          : {}),
+        ...(state.activeSessionId ? { activeSessionId: state.activeSessionId } : {}),
       },
     },
   };
@@ -367,5 +397,7 @@ export function applyTargetPreferences(
     ...(preference.treeOrder ? { treeOrder: preference.treeOrder } : {}),
     ...(preference.showArchived === undefined ? {} : { showArchived: preference.showArchived }),
     ...(preference.expandedIds ? { expandedIds: new Set(preference.expandedIds) } : {}),
+    ...(preference.openSessionIds ? { openSessionIds: preference.openSessionIds } : {}),
+    ...(preference.activeSessionId ? { activeSessionId: preference.activeSessionId } : {}),
   };
 }

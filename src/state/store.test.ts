@@ -51,6 +51,38 @@ describe("deriveTree", () => {
 });
 
 describe("application store", () => {
+  it("opens, switches, and closes local tabs without changing session lifecycle", () => {
+    let state = reduceApp(createInitialState(), {
+      type: "directory",
+      update: { type: "snapshot", snapshot: directory },
+    });
+    state = reduceApp(state, { type: "open-session-tab", agentId: "agent-a" });
+    state = reduceApp(state, { type: "open-session-tab", agentId: "agent-b" });
+    expect(state.openSessionIds).toEqual({
+      "workspace-a": ["agent-a"],
+      "workspace-b": ["agent-b"],
+    });
+    state = reduceApp(state, { type: "switch-session-tab", direction: -1 });
+    expect(state.activeSessionId).toBe("agent-a");
+    state = { ...state, sidebarSelection: { kind: "session", id: "agent-a" } };
+    state = reduceApp(state, { type: "switch-session-tab", direction: 1, count: 2 });
+    expect(state.activeSessionId).toBe("agent-b");
+    expect(state.sidebarSelection).toEqual({ kind: "session", id: "agent-a" });
+    state = reduceApp(state, { type: "close-session-tab", agentId: "agent-b" });
+    expect(state.openSessionIds).toEqual({ "workspace-a": ["agent-a"] });
+    expect(state.directory.agents).toHaveLength(2);
+  });
+
+  it("drops missing persisted tab identifiers during hydration", () => {
+    const state = reduceApp(
+      { ...createInitialState(), openSessionIds: { "workspace-a": ["missing", "agent-a"] } },
+      {
+        type: "directory",
+        update: { type: "snapshot", snapshot: directory },
+      },
+    );
+    expect(state.openSessionIds).toEqual({ "workspace-a": ["agent-a"] });
+  });
   it("keeps displayed data while recovery state marks each observation stale", () => {
     let state = reduceApp(createInitialState(), {
       type: "directory",

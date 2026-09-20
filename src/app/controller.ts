@@ -81,6 +81,9 @@ export class ApplicationController {
         type: "directory",
         update: { type: "connection-changed", state: "connected" },
       });
+      const restored = this.#state.activeSessionId;
+      if (restored && this.#state.directory.agents.some((agent) => agent.id === restored))
+        await this.selectAgent(restored);
     } catch (error) {
       await this.#directoryObservation?.release();
       this.#directoryObservation = undefined;
@@ -109,7 +112,7 @@ export class ApplicationController {
     this.apply({ type: "set-composer", text });
   }
 
-  async selectAgent(agentId: string): Promise<void> {
+  async selectAgent(agentId: string, preserveSidebar = false): Promise<void> {
     if (this.#state.selectedAgentId === agentId && this.#timelineObservation !== undefined) {
       // Explicit activation of the already-active session still returns the
       // user to its timeline after browsing in the sidebar.
@@ -121,7 +124,11 @@ export class ApplicationController {
     this.#timelineObservation = undefined;
     if (previous) await previous.release();
     if (generation !== this.#focusGeneration) return;
-    this.apply({ type: "select-agent", agentId });
+    this.apply({
+      type: "open-session-tab",
+      agentId,
+      ...(preserveSidebar ? { preserveSidebar: true } : {}),
+    });
     try {
       const observation = await this.gateway.focusAgent(agentId, (update) => {
         if (generation !== this.#focusGeneration) return;
@@ -163,6 +170,31 @@ export class ApplicationController {
     switch (intent.type) {
       case "select-next":
         await this.moveSelection(intent.direction);
+        return;
+      case "switch-tab":
+        {
+          this.apply({
+            type: "switch-session-tab",
+            direction: intent.direction,
+            ...(intent.count ? { count: intent.count } : {}),
+          });
+          const next = this.#state.activeSessionId;
+          if (next) await this.selectAgent(next, true);
+        }
+        return;
+      case "close-tab":
+        {
+          const id = this.#state.activeSessionId ?? this.#state.selectedAgentId;
+          if (!id) return;
+          const before = this.#state.activeSessionId;
+          const previous = this.#timelineObservation;
+          this.#timelineObservation = undefined;
+          this.#focusGeneration += 1;
+          await previous?.release();
+          this.apply({ type: "close-session-tab", agentId: id });
+          const next = this.#state.activeSessionId;
+          if (next && next !== before) await this.selectAgent(next, true);
+        }
         return;
       case "select-boundary":
         await this.moveSelectionBoundary(intent.boundary);
