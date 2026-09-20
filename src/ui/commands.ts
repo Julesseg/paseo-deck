@@ -39,7 +39,7 @@ export interface ResolvedCommand extends Omit<DeckCommand, "disabledReason"> {
 
 const selectedAgent = (state: AppState): string | undefined => state.selectedAgentId;
 const requireAgent = (state: AppState): string | undefined =>
-  selectedAgent(state) ? undefined : "Select an agent first";
+  selectedAgent(state) ? undefined : "Select an active session first";
 const requireWorkspace = (state: AppState): string | undefined =>
   state.selectedWorkspaceId &&
   state.directory.workspaces.some(

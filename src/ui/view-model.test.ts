@@ -432,7 +432,7 @@ describe("narrow dashboard", () => {
     const dashboard = renderDashboard(state(), 58, 18, new Set());
 
     expect(dashboard.join("\n")).toContain("Projects / workspaces");
-    expect(dashboard.join("\n")).toContain("Selected agent timeline");
+    expect(dashboard.join("\n")).toContain("Active session timeline");
     expect(dashboard.join("\n")).toContain("Prompt:");
     expect(dashboard.join("\n")).not.toContain("openai/gpt-5");
   });

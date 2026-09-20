@@ -110,7 +110,9 @@ export function deriveTreeRows(state: AppState): TreeRow[] {
       return !filter || workspaceMatches || agents.length > 0;
     });
     const groupMatches = Boolean(filter) && group.name.toLocaleLowerCase().includes(filter);
-    const selected = state.selectedProjectId === group.id;
+    const selected = state.sidebarSelection?.kind === "project"
+      ? state.sidebarSelection.id === group.id
+      : state.sidebarSelection === undefined && state.selectedProjectId === group.id;
     if (visibleWorkspaces.length === 0 && !groupMatches && !selected) continue;
     // Orphaned workspaces should remain discoverable; unlike a user project the
     // synthetic Other group has no persisted expansion identity.
@@ -122,7 +124,7 @@ export function deriveTreeRows(state: AppState): TreeRow[] {
       depth: 0,
       expanded,
       selected:
-        selected && state.selectedWorkspaceId === undefined && state.selectedAgentId === undefined,
+        selected,
       attention: false,
       permissionCount: 0,
       agentCount: visibleWorkspaces.flatMap((workspace) =>
@@ -151,7 +153,12 @@ export function deriveTreeRows(state: AppState): TreeRow[] {
         label: workspace.title,
         depth: 1,
         expanded: workspaceExpanded,
-        selected: state.selectedWorkspaceId === workspace.id && state.selectedAgentId === undefined,
+        selected:
+          state.sidebarSelection?.kind === "workspace"
+            ? state.sidebarSelection.id === workspace.id
+            : state.sidebarSelection === undefined &&
+              state.selectedWorkspaceId === workspace.id &&
+              state.selectedAgentId === undefined,
         attention: false,
         permissionCount: 0,
         agentCount: workspaceAllAgents.length,
@@ -168,21 +175,21 @@ export function deriveTreeRows(state: AppState): TreeRow[] {
         )
         .sort((left, right) => compareAgents(left, right, state.treeOrder));
       for (const agent of workspaceAgents) {
-        rows.push(agentRow(agent, state.selectedAgentId));
+        rows.push(agentRow(agent, state.selectedAgentId, state.sidebarSelection));
       }
     }
   }
   return rows;
 }
 
-function agentRow(agent: AgentRecord, selectedAgentId: string | undefined): TreeRow {
+function agentRow(agent: AgentRecord, selectedAgentId: string | undefined, selection?: AppState["sidebarSelection"]): TreeRow {
   const activityLabel = compactActivity(agent.lastActivityAt);
   return {
     id: agent.id,
     kind: "agent",
     label: `${agent.title} [${shortAgentId(agent.id)}]`,
     depth: 2,
-    selected: agent.id === selectedAgentId,
+    selected: selection?.kind === "session" ? selection.id === agent.id : agent.id === selectedAgentId,
     status: agent.status,
     providerModel: [agent.providerId, agent.modelId].filter(Boolean).join("/"),
     attention: needsIntervention(agent),
@@ -323,7 +330,7 @@ export function renderDashboard(
       ? `${selected.providerId ?? "unknown"}/${selected.modelId ?? "unknown"}${selected.thinkingLevel ? ` · ${selected.thinkingLevel}` : ""}`
       : "";
   const timelineLines = [
-    `Selected agent timeline${selected ? ` · ${selected.title} [${shortAgentId(selected.id)}]` : ""}`,
+    `Active session timeline${selected ? ` · ${selected.title} [${shortAgentId(selected.id)}]` : ""}`,
     ...(state.recovery?.timelineStale ? ["Timeline is stale while Paseo reconnects…"] : []),
     ...(detail ? [detail] : []),
     ...timelineDisplay(state.timeline.items, rightWidth, expandedTimelineItems),

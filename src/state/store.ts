@@ -22,6 +22,7 @@ import { createComposerState } from "./composer.js";
 export type AppAction =
   | { type: "directory"; update: DirectoryUpdate }
   | { type: "select-agent"; agentId?: string }
+  | { type: "select-sidebar"; selection?: AppState["sidebarSelection"] }
   | { type: "select-workspace"; workspaceId?: string }
   | { type: "select-project"; projectId?: string }
   | { type: "set-filter"; filter: string }
@@ -167,6 +168,27 @@ function reconcileSelection(state: AppState, directory: DirectorySnapshot): AppS
     directory,
     timeline: selectedAgent ? state.timeline : { items: [], loading: false, recoveryRevision: 0 },
   };
+  // Sidebar selection is a separate cursor. Preserve it across directory
+  // refreshes while its target still exists; repair it using the same stable
+  // identity fallback used for the active selection below.
+  const sidebar = state.sidebarSelection;
+  if (sidebar) {
+    const exists = sidebar.kind === "project"
+      ? directory.projects.some((item) => item.id === sidebar.id)
+      : sidebar.kind === "workspace"
+        ? directory.workspaces.some((item) => item.id === sidebar.id)
+        : directory.agents.some((item) => item.id === sidebar.id);
+    if (exists) next.sidebarSelection = sidebar;
+    else {
+      const fallback = sidebar.kind === "project"
+        ? nearby(state.directory.projects, directory.projects, sidebar.id, () => true)
+        : sidebar.kind === "workspace"
+          ? nearby(state.directory.workspaces, directory.workspaces, sidebar.id, () => true)
+          : nearby(state.directory.agents, directory.agents, sidebar.id, () => true);
+      if (fallback) next.sidebarSelection = { kind: sidebar.kind, id: fallback.id };
+      else delete next.sidebarSelection;
+    }
+  }
   if (selectedAgent) next.selectedAgentId = selectedAgent.id;
   else delete next.selectedAgentId;
   if (selectedWorkspace) next.selectedWorkspaceId = selectedWorkspace.id;
@@ -689,6 +711,7 @@ export function reduceApp(state: AppState, action: AppAction): AppState {
           ? { agentId, items: [], loading: true, recoveryRevision: 0 }
           : { items: [], loading: false, recoveryRevision: 0 },
         focus: "timeline",
+        ...(agentId ? { activeSessionId: agentId } : {}),
       };
       if (agentId) next.selectedAgentId = agent?.id ?? agentId;
       else delete next.selectedAgentId;
@@ -696,6 +719,23 @@ export function reduceApp(state: AppState, action: AppAction): AppState {
         next.selectedWorkspaceId = agent.workspaceId;
         next.expandedIds = revealWorkspaceIds(state, agent.workspaceId);
       }
+      if (agentId) next.sidebarSelection = { kind: "session", id: agentId };
+      else delete next.sidebarSelection;
+      return next;
+    }
+    case "select-sidebar": {
+      const selection = action.selection;
+      if (!selection) {
+        const next = { ...state, focus: "tree" as const };
+        delete next.sidebarSelection;
+        return next;
+      }
+      const next = { ...state, sidebarSelection: selection, focus: "tree" as const };
+      // Keep the historical selected project/workspace fields as compatibility
+      // projections for consumers that only render the sidebar. They no longer
+      // replace the active session/timeline.
+      if (selection.kind === "project") next.selectedProjectId = selection.id;
+      if (selection.kind === "workspace") next.selectedWorkspaceId = selection.id;
       return next;
     }
     case "select-workspace": {
