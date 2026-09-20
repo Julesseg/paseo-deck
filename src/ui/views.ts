@@ -212,6 +212,48 @@ class MinimumSizeView implements Component {
   }
 }
 
+class SessionTabsView implements Component {
+  private state: AppState;
+  constructor(
+    state: AppState,
+    private readonly theme: DeckTheme,
+  ) {
+    this.state = state;
+  }
+  update(state: AppState): void {
+    this.state = state;
+  }
+  invalidate(): void {}
+  render(width: number): string[] {
+    const active = this.state.activeSessionId;
+    const tabs = Object.values(this.state.openSessionIds ?? {})
+      .flat()
+      .map((id) => this.state.directory.agents.find((agent) => agent.id === id))
+      .filter((agent): agent is NonNullable<typeof agent> => agent !== undefined);
+    if (!tabs.length) return [this.theme.style("muted", "Tabs  (open a session with Enter)")];
+    let used = 0;
+    const labels: string[] = [];
+    for (const agent of tabs) {
+      const attention = agent.needsAttention || agent.pendingPermissions.length > 0;
+      const marker = attention
+        ? this.theme.glyph("attention")
+        : agent.status === "running"
+          ? this.theme.glyph("running")
+          : this.theme.glyph("bullet");
+      const label = ` ${marker} ${agent.title} `;
+      if (used + label.length > width) break;
+      labels.push(
+        this.theme.styleRendered(
+          agent.id === active ? "selection" : attention ? "attention" : "muted",
+          label,
+        ),
+      );
+      used += label.length;
+    }
+    return [this.theme.clipOwnedLabel(labels.join(this.theme.glyph("divider")), width)];
+  }
+}
+
 function treeSecondary(row: TreeRow, theme: DeckTheme): string {
   if (row.kind === "agent") return "";
   if (row.agentCount === undefined) return "";
@@ -963,6 +1005,7 @@ export class DeckTui {
   private readonly lifecycle: TerminalLifecycle;
   private readonly controller: DeckController;
   private readonly tree: TreeView;
+  private readonly tabs: SessionTabsView;
   private readonly timeline: TimelineView;
   private readonly composer: ComposerView;
   private readonly status: StatusView;
@@ -1027,6 +1070,7 @@ export class DeckTui {
       (intent) => this.handleControllerIntent(intent),
     );
     this.tree = new TreeView(initialState, this.theme);
+    this.tabs = new SessionTabsView(initialState, this.theme);
     this.timeline = new TimelineView(this.theme);
     this.timeline.update(initialState.timeline.items);
     this.timeline.updateSelection(initialState);
@@ -1087,6 +1131,7 @@ export class DeckTui {
       shellLayout(viewport.width, viewport.height, this.treeWidth).supported;
     this.tui.setLayoutRoot(
       new VStack([
+        { component: this.tabs, basis: "auto", minSize: 0, visible: supported },
         {
           component: new HStack(
             [
@@ -1139,6 +1184,7 @@ export class DeckTui {
     const recoveryChanged =
       state.timeline.recoveryRevision !== this.state.timeline.recoveryRevision;
     this.state = state;
+    this.tabs.update(state);
     this.syncReconnectTicker();
     this.tree.update(state);
     this.timeline.update(state.timeline.items);

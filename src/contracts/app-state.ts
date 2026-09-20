@@ -121,6 +121,8 @@ export interface AppState {
   sidebarSelection?: SidebarSelection;
   /** The session whose timeline/composer are active. */
   activeSessionId?: string;
+  /** Session tabs are a local working set, grouped by workspace. */
+  openSessionIds?: Readonly<Record<string, readonly string[]>>;
   expandedIds: ReadonlySet<string>;
   filter: string;
   treeOrder: TreeOrder;

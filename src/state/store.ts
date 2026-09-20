@@ -22,6 +22,9 @@ import { createComposerState } from "./composer.js";
 export type AppAction =
   | { type: "directory"; update: DirectoryUpdate }
   | { type: "select-agent"; agentId?: string }
+  | { type: "open-session-tab"; agentId: string }
+  | { type: "close-session-tab"; agentId: string }
+  | { type: "switch-session-tab"; direction: -1 | 1; count?: number }
   | { type: "select-sidebar"; selection?: AppState["sidebarSelection"] }
   | { type: "select-workspace"; workspaceId?: string }
   | { type: "select-project"; projectId?: string }
@@ -87,6 +90,7 @@ export function createInitialState(): AppState {
     modal: { type: "none" },
     timeline: { items: [], loading: false, recoveryRevision: 0 },
     timelineNavigation: {},
+    openSessionIds: {},
     composer: createComposerState(),
     creationDefaults: {},
     notifications: [],
@@ -168,6 +172,22 @@ function reconcileSelection(state: AppState, directory: DirectorySnapshot): AppS
     directory,
     timeline: selectedAgent ? state.timeline : { items: [], loading: false, recoveryRevision: 0 },
   };
+  const valid = new Set(
+    directory.agents.filter((agent) => !agent.archived).map((agent) => agent.id),
+  );
+  const openSessionIds = Object.fromEntries(
+    Object.entries(state.openSessionIds ?? {}).flatMap(([workspaceId, ids]) => {
+      const filtered = ids.filter((id) => valid.has(id));
+      return filtered.length ? [[workspaceId, filtered]] : [];
+    }),
+  );
+  next.openSessionIds = openSessionIds;
+  if (next.activeSessionId && valid.has(next.activeSessionId)) {
+    next.selectedAgentId ??= next.activeSessionId;
+    next.timeline = next.timeline.agentId
+      ? next.timeline
+      : { items: [], loading: true, recoveryRevision: 0 };
+  } else if (next.activeSessionId) delete next.activeSessionId;
   // Sidebar selection is a separate cursor. Preserve it across directory
   // refreshes while its target still exists; repair it using the same stable
   // identity fallback used for the active selection below.
@@ -724,6 +744,55 @@ export function reduceApp(state: AppState, action: AppAction): AppState {
       if (agentId) next.sidebarSelection = { kind: "session", id: agentId };
       else delete next.sidebarSelection;
       return next;
+    }
+    case "open-session-tab": {
+      const agent = state.directory.agents.find((candidate) => candidate.id === action.agentId);
+      if (!agent) return reduceApp(state, { type: "select-agent", agentId: action.agentId });
+      if (agent.archived) return state;
+      const current = state.openSessionIds?.[agent.workspaceId] ?? [];
+      const openSessionIds = {
+        ...(state.openSessionIds ?? {}),
+        [agent.workspaceId]: current.includes(agent.id) ? current : [...current, agent.id],
+      };
+      return reduceApp({ ...state, openSessionIds }, { type: "select-agent", agentId: agent.id });
+    }
+    case "close-session-tab": {
+      const agent = state.directory.agents.find((candidate) => candidate.id === action.agentId);
+      if (!agent) return state;
+      const allTabs = Object.values(state.openSessionIds ?? {}).flat();
+      const allIndex = allTabs.indexOf(agent.id);
+      const current = [...(state.openSessionIds?.[agent.workspaceId] ?? [])];
+      const index = current.indexOf(agent.id);
+      if (index === -1) return state;
+      current.splice(index, 1);
+      const openSessionIds = { ...(state.openSessionIds ?? {}) };
+      if (current.length) openSessionIds[agent.workspaceId] = current;
+      else delete openSessionIds[agent.workspaceId];
+      if (state.activeSessionId !== agent.id) return { ...state, openSessionIds };
+      const remainingTabs = allTabs.filter((id) => id !== agent.id);
+      const nextId = remainingTabs[allIndex] ?? remainingTabs[allIndex - 1];
+      if (!nextId) {
+        const next = {
+          ...state,
+          openSessionIds,
+          timeline: { items: [], loading: false, recoveryRevision: 0 },
+        };
+        delete next.activeSessionId;
+        delete next.selectedAgentId;
+        return next;
+      }
+      return reduceApp({ ...state, openSessionIds }, { type: "select-agent", agentId: nextId });
+    }
+    case "switch-session-tab": {
+      const active = state.activeSessionId ?? state.selectedAgentId;
+      const agent = state.directory.agents.find((candidate) => candidate.id === active);
+      if (!agent) return state;
+      const tabs = Object.values(state.openSessionIds ?? {}).flat();
+      if (tabs.length < 2) return state;
+      const index = tabs.indexOf(agent.id);
+      const count = Math.max(1, action.count ?? 1);
+      const nextId = tabs[(index + action.direction * count + tabs.length * 1000) % tabs.length];
+      return nextId ? reduceApp(state, { type: "select-agent", agentId: nextId }) : state;
     }
     case "select-sidebar": {
       const selection = action.selection;

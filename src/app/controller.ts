@@ -81,6 +81,9 @@ export class ApplicationController {
         type: "directory",
         update: { type: "connection-changed", state: "connected" },
       });
+      const restored = this.#state.activeSessionId;
+      if (restored && this.#state.directory.agents.some((agent) => agent.id === restored))
+        await this.selectAgent(restored);
     } catch (error) {
       await this.#directoryObservation?.release();
       this.#directoryObservation = undefined;
@@ -121,7 +124,7 @@ export class ApplicationController {
     this.#timelineObservation = undefined;
     if (previous) await previous.release();
     if (generation !== this.#focusGeneration) return;
-    this.apply({ type: "select-agent", agentId });
+    this.apply({ type: "open-session-tab", agentId });
     try {
       const observation = await this.gateway.focusAgent(agentId, (update) => {
         if (generation !== this.#focusGeneration) return;
@@ -163,6 +166,24 @@ export class ApplicationController {
     switch (intent.type) {
       case "select-next":
         await this.moveSelection(intent.direction);
+        return;
+      case "switch-tab":
+        this.apply({
+          type: "switch-session-tab",
+          direction: intent.direction,
+          ...(intent.count ? { count: intent.count } : {}),
+        });
+        if (this.#state.activeSessionId) await this.selectAgent(this.#state.activeSessionId);
+        return;
+      case "close-tab":
+        {
+          const id = this.#state.activeSessionId ?? this.#state.selectedAgentId;
+          if (!id) return;
+          const before = this.#state.activeSessionId;
+          this.apply({ type: "close-session-tab", agentId: id });
+          const next = this.#state.activeSessionId;
+          if (next && next !== before) await this.selectAgent(next);
+        }
         return;
       case "select-boundary":
         await this.moveSelectionBoundary(intent.boundary);
