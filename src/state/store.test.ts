@@ -82,6 +82,7 @@ describe("application store", () => {
       },
     );
     expect(state.openSessionIds).toEqual({ "workspace-a": ["agent-a"] });
+  });
   it("starts in composer normal mode and keeps Vim modes reducer-owned", () => {
     let state = createInitialState();
     expect(state.focus).toBe("composer");
