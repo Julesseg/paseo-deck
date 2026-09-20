@@ -1,6 +1,6 @@
 # Paseo Deck
 
-Paseo Deck is a fast, keyboard-first terminal client for managing several Paseo sessions at once. It presents projects, workspaces, and agents as a navigable tree beside the selected agent's live timeline, with prompt composition, permissions, agent creation, and lifecycle controls in one terminal screen.
+Paseo Deck is a fast, keyboard-first terminal client for managing several Paseo sessions at once. It presents projects, workspaces, and sessions as a navigable tree beside the active session's live timeline, with prompt composition, permissions, session creation, and lifecycle controls in one terminal screen.
 
 ![Paseo Deck showing a synthetic multi-agent session](docs/images/ui-report/session-tree.svg)
 
@@ -68,17 +68,17 @@ CI enforces one required `check` result backed by:
 | `Tab` / `Shift+Tab` | Move focus between tree, timeline, and composer |
 | `i` | Focus the prompt composer |
 | `Ctrl-P` / `Ctrl-N` | Move through prompt history while composing |
-| `n` | Create an agent in the selected workspace |
+| `n` | Create a session in the selected workspace |
 | `/` | Filter sessions |
 | `o` | Toggle alphabetical or attention-first tree ordering |
 | `v` | Show or hide archived sessions |
 | `!` | Show only sessions that need attention |
 | `p` | Review pending permissions |
 | `a` / `d` | Allow or deny inside the permission dialog |
-| `x` | Stop the selected agent after confirmation |
-| `A` | Archive the selected agent after confirmation |
-| `d` | Detach the selected agent after confirmation |
-| `e` | Rename the selected agent |
+| `x` | Stop the selected session after confirmation |
+| `A` | Archive the selected session after confirmation |
+| `d` | Detach the selected session after confirmation |
+| `e` | Rename the selected session |
 | `m` | Choose an available mode |
 | `t` | Choose an available thinking level |
 | `Ctrl-F` | Search the selected timeline |
@@ -94,11 +94,11 @@ CI enforces one required `check` result backed by:
 
 ## Supported in v0.1
 
-- Project, workspace, and agent discovery with filtering and attention markers
+- Project, workspace, and session discovery with filtering and attention markers
 - Attention-first or alphabetical ordering, archived visibility, persistent collapse state, and adjustable tree width
 - Existing history plus live user, assistant, reasoning, tool, error, permission, and turn events
 - Timeline navigation by turn and error, source-text search, OSC 52 copy, and pause/follow indicators for streaming output
-- Follow-up prompts and provider/model-aware agent creation
+- Follow-up prompts and provider/model-aware session creation
 - Permission allow and deny responses
 - Stop, archive, detach, and rename with confirmation for destructive actions
 - Mode and thinking changes when advertised by the provider
