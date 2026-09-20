@@ -306,6 +306,27 @@ describe("preferences", () => {
     });
   });
 
+  it("preserves unrelated target presentation settings during v0 migration", () => {
+    const otherScope = `v1-${"b".repeat(64)}`;
+    expect(
+      parsePreferences({
+        version: 0,
+        global: { theme: "ember" },
+        targets: {
+          [validScope]: { treeWidth: 28, treeOrder: "attention" },
+          [otherScope]: { treeWidth: 44, showArchived: true, expandedIds: ["project"] },
+        },
+      }),
+    ).toEqual({
+      version: 1,
+      global: { theme: "ember" },
+      targets: {
+        [validScope]: { treeWidth: 28, treeOrder: "attention" },
+        [otherScope]: { treeWidth: 44, showArchived: true, expandedIds: ["project"] },
+      },
+    });
+  });
+
   it("drops raw target identities before any preference bytes are written", async () => {
     let bytes = JSON.stringify({
       version: 1,

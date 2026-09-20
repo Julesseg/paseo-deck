@@ -69,20 +69,6 @@ const truecolor: Readonly<Record<SemanticTone, readonly [number, number, number]
   code: [134, 239, 172],
 };
 
-// These are the conventional ANSI palette colours. They intentionally stay
-// stable across ANSI16, ANSI256, and truecolour terminals; the latter two
-// tiers merely provide a more faithful encoding of the same terminal roles.
-const terminal256: Readonly<Record<SemanticTone, number>> = {
-  focus: 6, selection: 3, running: 6, attention: 3, permission: 5,
-  failure: 1, stale: 3, muted: 8, border: 8, header: 7, code: 2,
-};
-const terminalTruecolor: Readonly<Record<SemanticTone, readonly [number, number, number]>> = {
-  focus: [0, 255, 255], selection: [255, 255, 0], running: [0, 255, 255],
-  attention: [255, 255, 0], permission: [255, 0, 255], failure: [255, 0, 0],
-  stale: [255, 255, 0], muted: [128, 128, 128], border: [128, 128, 128],
-  header: [255, 255, 255], code: [0, 255, 0],
-};
-
 const unicodeGlyphs: Readonly<Record<DeckGlyph, string>> = {
   agent: "•",
   expanded: "▾",
@@ -197,24 +183,28 @@ export class DeckTheme {
   }
 
   private prefix(tone: SemanticTone): string {
-    const palette: PaletteId = this.appearance.palette ?? "ember";
+    const palette = this.paletteId();
+    if (palette === "terminal") return `\u001b[${ansi16[tone]}m`;
     if (this.appearance.color === "ansi16")
       return `\u001b[${ansi16[tone]}m`;
-    if (this.appearance.color === "ansi256")
-      return `\u001b[38;5;${(palette === "terminal" ? terminal256 : ansi256)[tone]}m`;
-    const [red, green, blue] = (palette === "terminal" ? terminalTruecolor : truecolor)[tone];
+    if (this.appearance.color === "ansi256") return `\u001b[38;5;${ansi256[tone]}m`;
+    const [red, green, blue] = truecolor[tone];
     return `\u001b[38;2;${red};${green};${blue}m`;
   }
 
   private backgroundPrefix(tone: SemanticTone): string {
-    const palette: PaletteId = this.appearance.palette ?? "ember";
+    const palette = this.paletteId();
+    if (palette === "terminal") return `\u001b[${ansi16[tone] + 10}m`;
     if (this.appearance.color === "ansi16") {
       const foreground = ansi16[tone];
       return `\u001b[${foreground + 10}m`;
     }
-    if (this.appearance.color === "ansi256")
-      return `\u001b[48;5;${(palette === "terminal" ? terminal256 : ansi256)[tone]}m`;
-    const [red, green, blue] = (palette === "terminal" ? terminalTruecolor : truecolor)[tone];
+    if (this.appearance.color === "ansi256") return `\u001b[48;5;${ansi256[tone]}m`;
+    const [red, green, blue] = truecolor[tone];
     return `\u001b[48;2;${red};${green};${blue}m`;
+  }
+
+  private paletteId(): PaletteId {
+    return this.appearance.palette ?? "ember";
   }
 }
