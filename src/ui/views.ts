@@ -1293,9 +1293,7 @@ export class DeckTui {
           ? "plain"
           : (this.requestedTheme ?? this.detectedAppearance.theme),
       palette:
-        this.requestedTheme === "ember"
-          ? "ember"
-          : (this.detectedAppearance.palette ?? "ember"),
+        this.requestedTheme === "ember" ? "ember" : (this.detectedAppearance.palette ?? "ember"),
       symbols: this.detectedAppearance.unicode
         ? (this.requestedSymbolSet ?? this.detectedAppearance.symbols)
         : "ascii",

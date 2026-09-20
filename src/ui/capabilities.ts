@@ -17,7 +17,13 @@ export type TerminalEnvironment = Readonly<
   Partial<
     Pick<
       NodeJS.ProcessEnv,
-      "NO_COLOR" | "TERM" | "COLORTERM" | "LANG" | "LC_ALL" | "PASEO_DECK_ASCII" | "PASEO_DECK_THEME"
+      | "NO_COLOR"
+      | "TERM"
+      | "COLORTERM"
+      | "LANG"
+      | "LC_ALL"
+      | "PASEO_DECK_ASCII"
+      | "PASEO_DECK_THEME"
     >
   >
 >;
@@ -56,6 +62,9 @@ export function detectTerminalAppearance(environment: TerminalEnvironment): Term
 
 /** Reads the opt-in configuration without treating saved preferences as config. */
 export function configuredPalette(environment: TerminalEnvironment): PaletteId | undefined {
-  return environment.PASEO_DECK_THEME === "ember" ? "ember" :
-    environment.PASEO_DECK_THEME === "terminal" ? "terminal" : undefined;
+  return environment.PASEO_DECK_THEME === "ember"
+    ? "ember"
+    : environment.PASEO_DECK_THEME === "terminal"
+      ? "terminal"
+      : undefined;
 }

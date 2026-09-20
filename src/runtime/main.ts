@@ -109,8 +109,10 @@ export async function runInteractive(
   const detected = detectTerminalAppearance(dependencies.environment ?? process.env);
   const configured = configuredPalette(dependencies.environment ?? process.env);
   const requested = preferenceSession.requestedGlobal();
-  const requestedTheme = configured === "ember" ? "ember" : configured === "terminal" ? undefined : requested.theme;
-  const palette = configured ?? (requested.theme === "ember" ? "ember" : detected.palette ?? "terminal");
+  const requestedTheme =
+    configured === "ember" ? "ember" : configured === "terminal" ? undefined : requested.theme;
+  const palette =
+    configured ?? (requested.theme === "ember" ? "ember" : (detected.palette ?? "terminal"));
   const appearance = {
     ...detected,
     theme: detected.color === "none" ? "plain" : (requestedTheme ?? detected.theme),

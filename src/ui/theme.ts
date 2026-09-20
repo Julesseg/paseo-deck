@@ -185,8 +185,7 @@ export class DeckTheme {
   private prefix(tone: SemanticTone): string {
     const palette = this.paletteId();
     if (palette === "terminal") return `\u001b[${ansi16[tone]}m`;
-    if (this.appearance.color === "ansi16")
-      return `\u001b[${ansi16[tone]}m`;
+    if (this.appearance.color === "ansi16") return `\u001b[${ansi16[tone]}m`;
     if (this.appearance.color === "ansi256") return `\u001b[38;5;${ansi256[tone]}m`;
     const [red, green, blue] = truecolor[tone];
     return `\u001b[38;2;${red};${green};${blue}m`;

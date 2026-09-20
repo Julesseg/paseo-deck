@@ -237,22 +237,27 @@ describe("runCli", () => {
   it.each([
     ["ember", "plain", "\\u001b[38;2;"],
     ["terminal", "ember", "\\u001b[37m"],
-  ] as const)("configuration theme %s overrides saved theme %s", async (configured, saved, marker) => {
-    const terminal = new RecordingTerminal();
-    const running = runInteractive({ type: "default" }, output().io, {
-      gateway: new FakePaseoGateway(emptyDirectory()),
-      terminal,
-      preferences: memoryPreferences(JSON.stringify({ version: 1, global: { theme: saved }, targets: {} })),
-      preferencesPath: "/preferences.json",
-      environment: { COLORTERM: "truecolor", LANG: "en_US.UTF-8", PASEO_DECK_THEME: configured },
-      bindExitHandlers: () => () => undefined,
-    });
-    await tick();
-    await terminal.waitForRender();
-    expect(terminal.writes.join("")).toContain(marker.replace("\\u001b", "\u001b"));
-    terminal.sendInput("q");
-    await expect(running).resolves.toBe(0);
-  });
+  ] as const)(
+    "configuration theme %s overrides saved theme %s",
+    async (configured, saved, marker) => {
+      const terminal = new RecordingTerminal();
+      const running = runInteractive({ type: "default" }, output().io, {
+        gateway: new FakePaseoGateway(emptyDirectory()),
+        terminal,
+        preferences: memoryPreferences(
+          JSON.stringify({ version: 1, global: { theme: saved }, targets: {} }),
+        ),
+        preferencesPath: "/preferences.json",
+        environment: { COLORTERM: "truecolor", LANG: "en_US.UTF-8", PASEO_DECK_THEME: configured },
+        bindExitHandlers: () => () => undefined,
+      });
+      await tick();
+      await terminal.waitForRender();
+      expect(terminal.writes.join("")).toContain(marker.replace("\\u001b", "\u001b"));
+      terminal.sendInput("q");
+      await expect(running).resolves.toBe(0);
+    },
+  );
 
   it("loads target state before rendering, isolates tree state, and shares presentation choices", async () => {
     let bytes: string | undefined;
