@@ -173,18 +173,20 @@ function reconcileSelection(state: AppState, directory: DirectorySnapshot): AppS
   // identity fallback used for the active selection below.
   const sidebar = state.sidebarSelection;
   if (sidebar) {
-    const exists = sidebar.kind === "project"
-      ? directory.projects.some((item) => item.id === sidebar.id)
-      : sidebar.kind === "workspace"
-        ? directory.workspaces.some((item) => item.id === sidebar.id)
-        : directory.agents.some((item) => item.id === sidebar.id);
+    const exists =
+      sidebar.kind === "project"
+        ? directory.projects.some((item) => item.id === sidebar.id)
+        : sidebar.kind === "workspace"
+          ? directory.workspaces.some((item) => item.id === sidebar.id)
+          : directory.agents.some((item) => item.id === sidebar.id);
     if (exists) next.sidebarSelection = sidebar;
     else {
-      const fallback = sidebar.kind === "project"
-        ? nearby(state.directory.projects, directory.projects, sidebar.id, () => true)
-        : sidebar.kind === "workspace"
-          ? nearby(state.directory.workspaces, directory.workspaces, sidebar.id, () => true)
-          : nearby(state.directory.agents, directory.agents, sidebar.id, () => true);
+      const fallback =
+        sidebar.kind === "project"
+          ? nearby(state.directory.projects, directory.projects, sidebar.id, () => true)
+          : sidebar.kind === "workspace"
+            ? nearby(state.directory.workspaces, directory.workspaces, sidebar.id, () => true)
+            : nearby(state.directory.agents, directory.agents, sidebar.id, () => true);
       if (fallback) next.sidebarSelection = { kind: sidebar.kind, id: fallback.id };
       else delete next.sidebarSelection;
     }

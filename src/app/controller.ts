@@ -396,8 +396,11 @@ export class ApplicationController {
   private async moveSelection(direction: -1 | 1): Promise<void> {
     const rows = deriveTreeRows(this.#state);
     if (rows.length === 0) return;
-    const selectedId = this.#state.sidebarSelection?.id ??
-      this.#state.selectedAgentId ?? this.#state.selectedWorkspaceId ?? this.#state.selectedProjectId;
+    const selectedId =
+      this.#state.sidebarSelection?.id ??
+      this.#state.selectedAgentId ??
+      this.#state.selectedWorkspaceId ??
+      this.#state.selectedProjectId;
     const current = rows.findIndex((row) => row.id === selectedId);
     const index = current === -1 ? (direction === 1 ? 0 : rows.length - 1) : current + direction;
     const row = rows[Math.max(0, Math.min(rows.length - 1, index))];
@@ -422,9 +425,10 @@ export class ApplicationController {
 
   private collapseOrExpand(direction: -1 | 1): void {
     const selection = this.#state.sidebarSelection;
-    const id = selection?.kind === "workspace" || selection?.kind === "project"
-      ? selection.id
-      : this.#state.selectedWorkspaceId ?? this.#state.selectedProjectId;
+    const id =
+      selection?.kind === "workspace" || selection?.kind === "project"
+        ? selection.id
+        : (this.#state.selectedWorkspaceId ?? this.#state.selectedProjectId);
     if (!id) return;
     const expanded = this.#state.expandedIds.has(id);
     if ((direction === 1 && !expanded) || (direction === -1 && expanded)) {

@@ -173,7 +173,11 @@ describe("ApplicationController", () => {
     const app = new ApplicationController(gateway);
     await app.start();
     await app.selectAgent("agent-1");
-    gateway.emitTimeline("agent-1", { type: "hydrated", agentId: "agent-1", items: [event(1, "active")] });
+    gateway.emitTimeline("agent-1", {
+      type: "hydrated",
+      agentId: "agent-1",
+      items: [event(1, "active")],
+    });
     const timelineBefore = app.state.timeline;
 
     await app.handleIntent({ type: "select-next", direction: 1 });
@@ -220,7 +224,11 @@ describe("ApplicationController", () => {
     const app = new ApplicationController(gateway);
     await app.start();
     await app.selectAgent("agent-1");
-    gateway.emitTimeline("agent-1", { type: "hydrated", agentId: "agent-1", items: [event(1, "active")] });
+    gateway.emitTimeline("agent-1", {
+      type: "hydrated",
+      agentId: "agent-1",
+      items: [event(1, "active")],
+    });
     await app.handleIntent({ type: "select-next", direction: 1 });
     expect(app.state.sidebarSelection).toEqual({ kind: "session", id: "agent-2" });
     const timeline = app.state.timeline;

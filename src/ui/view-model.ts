@@ -110,9 +110,10 @@ export function deriveTreeRows(state: AppState): TreeRow[] {
       return !filter || workspaceMatches || agents.length > 0;
     });
     const groupMatches = Boolean(filter) && group.name.toLocaleLowerCase().includes(filter);
-    const selected = state.sidebarSelection?.kind === "project"
-      ? state.sidebarSelection.id === group.id
-      : state.sidebarSelection === undefined && state.selectedProjectId === group.id;
+    const selected =
+      state.sidebarSelection?.kind === "project"
+        ? state.sidebarSelection.id === group.id
+        : state.sidebarSelection === undefined && state.selectedProjectId === group.id;
     if (visibleWorkspaces.length === 0 && !groupMatches && !selected) continue;
     // Orphaned workspaces should remain discoverable; unlike a user project the
     // synthetic Other group has no persisted expansion identity.
@@ -123,8 +124,7 @@ export function deriveTreeRows(state: AppState): TreeRow[] {
       label: group.name,
       depth: 0,
       expanded,
-      selected:
-        selected,
+      selected: selected,
       attention: false,
       permissionCount: 0,
       agentCount: visibleWorkspaces.flatMap((workspace) =>
@@ -182,14 +182,19 @@ export function deriveTreeRows(state: AppState): TreeRow[] {
   return rows;
 }
 
-function agentRow(agent: AgentRecord, selectedAgentId: string | undefined, selection?: AppState["sidebarSelection"]): TreeRow {
+function agentRow(
+  agent: AgentRecord,
+  selectedAgentId: string | undefined,
+  selection?: AppState["sidebarSelection"],
+): TreeRow {
   const activityLabel = compactActivity(agent.lastActivityAt);
   return {
     id: agent.id,
     kind: "agent",
     label: `${agent.title} [${shortAgentId(agent.id)}]`,
     depth: 2,
-    selected: selection?.kind === "session" ? selection.id === agent.id : agent.id === selectedAgentId,
+    selected:
+      selection?.kind === "session" ? selection.id === agent.id : agent.id === selectedAgentId,
     status: agent.status,
     providerModel: [agent.providerId, agent.modelId].filter(Boolean).join("/"),
     attention: needsIntervention(agent),
