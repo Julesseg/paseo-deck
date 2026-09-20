@@ -197,6 +197,30 @@ describe("fenced code highlighter", () => {
 });
 
 describe("terminal appearance", () => {
+  it("renders the connected host and dismisses the narrow sidebar overlay on main-pane focus", async () => {
+    const terminal = new RecordingTerminal(52, 18);
+    const deck = new DeckTui(terminal, state(), () => undefined, {
+      paseoHost: "tcp://paseo.example:6767",
+    });
+    deck.start();
+    await terminal.waitForRender();
+    expect(terminal.viewport().join("\n")).toContain("Projects / workspaces");
+
+    deck.update({ ...state(), focus: "timeline" });
+    await terminal.waitForRender();
+    expect(terminal.viewport().join("\n")).toContain("[TIMELINE] Active session timeline");
+    await deck.stop();
+
+    const wideTerminal = new RecordingTerminal(100, 18);
+    const wideDeck = new DeckTui(wideTerminal, state(), () => undefined, {
+      paseoHost: "tcp://paseo.example:6767",
+    });
+    wideDeck.start();
+    await wideTerminal.waitForRender();
+    expect(wideTerminal.viewport().join("\n")).toContain("paseo.example:6767");
+    await wideDeck.stop();
+  });
+
   it("renders semantic empty states without colour or Unicode dependencies", async () => {
     const terminal = new RecordingTerminal(80, 18);
     const uiState = { ...state(), filter: "missing" };

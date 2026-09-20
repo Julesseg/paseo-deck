@@ -5,6 +5,7 @@ import { activeNotification } from "../state/store.js";
 import { clipTerminalLine, sanitizeTerminalText, wrapTerminalText } from "./text-safety.js";
 
 export type TreeRowKind = "project" | "workspace" | "agent";
+export type WorkspaceActivity = "attention" | "working" | "idle" | "done";
 
 export interface TreeRow {
   id: string;
@@ -21,7 +22,7 @@ export interface TreeRow {
   agentCount?: number;
   attentionCount?: number;
   /** Derived workspace activity, or an agent's status for session rows. */
-  activity?: "attention" | "working" | "idle" | "done";
+  activity?: WorkspaceActivity;
   /** The workspace containing the active session. */
   active?: boolean;
   /** Number of blank lines before this row, used for semantic grouping. */
@@ -53,7 +54,14 @@ function activityTimestamp(agent: AgentRecord): number {
   return Number.isNaN(timestamp) ? Number.NEGATIVE_INFINITY : timestamp;
 }
 
-function workspaceActivity(agents: readonly AgentRecord[]): NonNullable<TreeRow["activity"]> {
+export function activityForAgent(agent: AgentRecord): WorkspaceActivity {
+  if (needsIntervention(agent)) return "attention";
+  if (agent.status === "running" || agent.status === "starting") return "working";
+  if (["stopped", "archived", "failed"].includes(agent.status)) return "done";
+  return "idle";
+}
+
+export function activityForAgents(agents: readonly AgentRecord[]): WorkspaceActivity {
   if (agents.some(needsIntervention)) return "attention";
   if (agents.some((agent) => agent.status === "running" || agent.status === "starting"))
     return "working";
@@ -178,10 +186,12 @@ export function deriveTreeRows(state: AppState): TreeRow[] {
         permissionCount: 0,
         agentCount: workspaceAllAgents.length,
         attentionCount: workspaceAllAgents.filter(needsIntervention).length,
-        activity: workspaceActivity(workspaceAllAgents),
+        activity: activityForAgents(workspaceAllAgents),
         active:
           workspace.id ===
-          state.directory.agents.find((agent) => agent.id === state.selectedAgentId)?.workspaceId,
+          state.directory.agents.find(
+            (agent) => agent.id === (state.activeSessionId ?? state.selectedAgentId),
+          )?.workspaceId,
         gapBefore: rows.at(-1)?.kind === "workspace" ? 1 : 0,
       });
       if (!workspaceExpanded) continue;
@@ -221,13 +231,7 @@ function agentRow(
     attention: needsIntervention(agent),
     permissionCount: agent.pendingPermissions.length,
     ...(activityLabel === undefined ? {} : { activityLabel }),
-    activity: needsIntervention(agent)
-      ? "attention"
-      : agent.status === "running" || agent.status === "starting"
-        ? "working"
-        : ["stopped", "archived", "failed"].includes(agent.status)
-          ? "done"
-          : "idle",
+    activity: activityForAgent(agent),
   };
 }
 

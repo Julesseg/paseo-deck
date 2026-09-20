@@ -4,6 +4,8 @@ import type { AppState } from "../contracts/app-state.js";
 import { emptyDirectory } from "../contracts/app-state.js";
 import { terminalDisplayWidth } from "./text-safety.js";
 import {
+  activityForAgent,
+  activityForAgents,
   deriveTreeRows,
   renderDashboard,
   timelineDisplay,
@@ -63,6 +65,29 @@ function state(): AppState {
 }
 
 describe("tree view model", () => {
+  it.each([
+    ["attention", { status: "idle", needsAttention: true, pendingPermissions: [] }],
+    ["working", { status: "running", needsAttention: false, pendingPermissions: [] }],
+    ["idle", { status: "idle", needsAttention: false, pendingPermissions: [] }],
+    ["done", { status: "stopped", needsAttention: false, pendingPermissions: [] }],
+  ] as const)("derives %s session activity", (expected, overrides) => {
+    const base = state().directory.agents[0];
+    if (!base) throw new Error("fixture requires an agent");
+    const agent = { ...base, ...overrides };
+    expect(activityForAgent(agent)).toBe(expected);
+  });
+
+  it("gives workspace attention precedence over working activity", () => {
+    const base = state().directory.agents[0];
+    if (!base) throw new Error("fixture requires an agent");
+    expect(
+      activityForAgents([
+        { ...base, status: "running", needsAttention: false },
+        { ...base, id: "attention", status: "idle", needsAttention: true },
+      ]),
+    ).toBe("attention");
+  });
+
   it("keeps workspace identity and places unowned workspaces in Other", () => {
     const rows = deriveTreeRows(state());
 
