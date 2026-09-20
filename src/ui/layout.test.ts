@@ -28,4 +28,9 @@ describe("shellLayout", () => {
     expect(adjustTreeWidth(MAX_TREE_WIDTH, 1)).toBe(MAX_TREE_WIDTH);
     expect(adjustTreeWidth(30, 2)).toBe(32);
   });
+
+  it("switches the sidebar to an overlay below the responsive breakpoint", () => {
+    expect(shellLayout(69, MIN_TERMINAL_ROWS, 34).narrow).toBe(true);
+    expect(shellLayout(70, MIN_TERMINAL_ROWS, 34).narrow).toBe(false);
+  });
 });

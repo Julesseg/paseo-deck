@@ -221,6 +221,35 @@ describe("tree view model", () => {
     ).toEqual(["permission", "failed", "older", "recent", "running"]);
   });
 
+  it("derives workspace activity with attention taking precedence and groups sessions", () => {
+    const base = state().directory.agents[0];
+    if (!base) throw new Error("fixture requires an agent");
+    const rows = deriveTreeRows({
+      ...state(),
+      directory: {
+        ...state().directory,
+        projects: [{ id: "p", name: "Project" }],
+        workspaces: [
+          { id: "w", projectId: "p", title: "Workspace", directory: "/w", archived: false },
+        ],
+        agents: [
+          { ...base, id: "working", status: "running", needsAttention: false },
+          { ...base, id: "attention", status: "idle", needsAttention: true },
+        ],
+      },
+      expandedIds: new Set(["p", "w"]),
+    });
+    expect(rows.find((row) => row.kind === "workspace")).toMatchObject({
+      activity: "attention",
+    });
+    expect(
+      rows
+        .filter((row) => row.kind === "agent")
+        .slice(1)
+        .every((row) => row.gapBefore === 1),
+    ).toBe(true);
+  });
+
   it("filters to attention while retaining context, hides archived records, and omits empty groups", () => {
     const baseAgent = state().directory.agents[0];
     if (baseAgent === undefined) throw new Error("fixture requires an agent");
