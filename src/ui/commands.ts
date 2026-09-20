@@ -131,12 +131,28 @@ export const deckCommands: readonly DeckCommand[] = [
   },
   {
     id: "composer-leave",
-    label: "Leave composer",
+    label: "Return to composer normal mode",
     group: "Application",
     shortcuts: ["Esc"],
     contexts: ["composer"],
     palette: false,
-    intent: () => ({ type: "set-focus", focus: "tree" }),
+    intent: () => ({ type: "set-composer-mode", mode: "normal" }),
+  },
+  {
+    id: "scroll-timeline-up",
+    label: "Scroll timeline up",
+    group: "Timeline",
+    shortcuts: ["Ctrl-U"],
+    palette: false,
+    intent: () => ({ type: "scroll-timeline", direction: -1 }),
+  },
+  {
+    id: "scroll-timeline-down",
+    label: "Scroll timeline down",
+    group: "Timeline",
+    shortcuts: ["Ctrl-D"],
+    palette: false,
+    intent: () => ({ type: "scroll-timeline", direction: 1 }),
   },
   {
     id: "composer-history-previous",
@@ -157,28 +173,30 @@ export const deckCommands: readonly DeckCommand[] = [
     intent: () => ({ type: "navigate-composer-history", direction: 1 }),
   },
   {
-    id: "focus-next",
-    label: "Focus next pane",
-    group: "Application",
-    shortcuts: ["Tab"],
-    palette: false,
-    intent: (state) => ({ type: "set-focus", focus: nextFocus(state.focus, 1) }),
-  },
-  {
-    id: "focus-previous",
-    label: "Focus previous pane",
-    group: "Application",
-    shortcuts: ["Shift-Tab"],
-    palette: false,
-    intent: (state) => ({ type: "set-focus", focus: nextFocus(state.focus, -1) }),
-  },
-  {
     id: "focus-composer",
-    label: "Focus composer",
+    label: "Enter composer insert mode",
     group: "Application",
     shortcuts: ["i"],
     palette: false,
-    intent: () => ({ type: "set-focus", focus: "composer" }),
+    intent: () => ({ type: "set-composer-mode", mode: "insert" }),
+  },
+  {
+    id: "sidebar-navigation",
+    label: "Navigate sidebar",
+    group: "Sessions",
+    shortcuts: ["n"],
+    contexts: ["composer"],
+    palette: false,
+    intent: () => ({ type: "set-focus", focus: "tree" }),
+  },
+  {
+    id: "timeline-navigation",
+    label: "Navigate timeline",
+    group: "Timeline",
+    shortcuts: ["t"],
+    contexts: ["composer"],
+    palette: false,
+    intent: () => ({ type: "set-focus", focus: "timeline" }),
   },
   {
     id: "open-selection",
@@ -553,7 +571,8 @@ export const deckCommands: readonly DeckCommand[] = [
     id: "create-agent",
     label: "Create agent",
     group: "Sessions",
-    shortcuts: ["n"],
+    shortcuts: ["c", "n"],
+    contexts: ["tree"],
     disabledReason: (state) => requireConnected(state) ?? requireWorkspace(state),
     intent: (state) => ({
       type: "open-create-agent",
@@ -729,19 +748,13 @@ export function shortcutForInput(data: string): string | undefined {
   if (data === "\u001b[B") return "Down";
   if (data === "\u001b[C") return "Right";
   if (data === "\u001b[D") return "Left";
-  if (data === "\t") return "Tab";
-  if (data === "\u001b[Z") return "Shift-Tab";
   if (data === "\r") return "Enter";
   if (data === "\u0003") return "Ctrl-C";
   if (data === "\u0010") return "Ctrl-P";
   if (data === "\u000e") return "Ctrl-N";
+  if (data === "\u0015") return "Ctrl-U";
+  if (data === "\u0004") return "Ctrl-D";
   // Most terminal emulators encode Cmd-P as ESC+p. Do not consume ordinary p.
   if (data === "\u001bp") return "Cmd-P";
   return data.length === 1 ? data : undefined;
-}
-
-function nextFocus(focus: FocusArea, direction: -1 | 1): FocusArea {
-  const order: FocusArea[] = ["tree", "timeline", "composer"];
-  const index = order.indexOf(focus);
-  return order[(index + direction + order.length) % order.length] ?? "tree";
 }

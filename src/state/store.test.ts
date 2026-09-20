@@ -82,6 +82,14 @@ describe("application store", () => {
       },
     );
     expect(state.openSessionIds).toEqual({ "workspace-a": ["agent-a"] });
+  it("starts in composer normal mode and keeps Vim modes reducer-owned", () => {
+    let state = createInitialState();
+    expect(state.focus).toBe("composer");
+    expect(state.composerMode).toBe("normal");
+    expect(state.timelineMode).toBe("normal");
+    state = reduceApp(state, { type: "set-composer-mode", mode: "insert" });
+    state = reduceApp(state, { type: "set-timeline-mode", mode: "visual" });
+    expect(state).toMatchObject({ composerMode: "insert", timelineMode: "visual" });
   });
   it("keeps displayed data while recovery state marks each observation stale", () => {
     let state = reduceApp(createInitialState(), {

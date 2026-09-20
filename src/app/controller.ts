@@ -208,6 +208,14 @@ export class ApplicationController {
       case "set-focus":
         this.apply({ type: "set-focus", focus: intent.focus });
         return;
+      case "set-composer-mode":
+        this.apply({ type: "set-composer-mode", mode: intent.mode });
+        return;
+      case "set-timeline-mode":
+        this.apply({ type: "set-timeline-mode", mode: intent.mode });
+        return;
+      case "scroll-timeline":
+        return;
       case "open-help":
         this.apply({ type: "open-modal", modal: { type: "help" } });
         return;

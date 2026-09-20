@@ -128,7 +128,7 @@ class TreeView implements Component {
     return [
       this.theme.style(
         this.state.focus === "tree" ? "focus" : "header",
-        `${this.state.focus === "tree" ? "[TREE]" : " Tree "} Projects / workspaces`,
+        `${this.state.focus === "tree" ? "" : "  "}Projects / workspaces`,
       ),
       ...rows.flatMap((row) => {
         const selected = row.selected ? ">" : " ";
@@ -413,8 +413,9 @@ class TimelineView implements Component {
   }
   render(width: number): string[] {
     this.renderedWidth = width;
+    const mode = this.state?.timelineMode ?? "normal";
     const heading =
-      width < 18 ? "Timeline" : `${this.focused ? "[TIMELINE]" : " Timeline  "} ${this.heading}`;
+      width < 18 ? "Timeline" : `${this.focused ? mode.toUpperCase() : "        "} ${this.heading}`;
     if (this.events.length === 0) {
       const message =
         width < 18
@@ -553,7 +554,9 @@ class ComposerView implements Component, Focusable {
     this.editor.invalidate();
   }
   render(width: number): string[] {
-    this.editor.focused = this.focused;
+    this.editor.focused =
+      this.focused &&
+      (this.state.composerMode === undefined || this.state.composerMode === "insert");
     const agent = this.state.directory.agents.find((item) => item.id === this.selectedAgentId);
     const availability = this.selectedAgentId
       ? composerAvailability(this.state, this.selectedAgentId)
@@ -567,7 +570,8 @@ class ComposerView implements Component, Focusable {
         : !availability.canSend
           ? ` ${this.theme.glyph("bullet")} ${availability.reason}`
           : "";
-    const heading = `${this.state.focus === "composer" ? "[COMPOSER]" : " Composer  "} ${destination}${status}`;
+    const mode = this.state.composerMode ?? "normal";
+    const heading = `${this.state.focus === "composer" ? mode.toUpperCase() : ""} ${destination}${status}`;
     return [
       this.theme.styleRendered(
         this.focused ? "focus" : "header",
@@ -658,20 +662,20 @@ function footerContext(state: AppState, width: number): string {
   if (width < 70) {
     switch (state.focus) {
       case "tree":
-        return "Tree j/k Tab";
+        return "Sidebar j/k Enter Esc";
       case "timeline":
-        return "Timeline j/k G [] {}";
+        return "Timeline NORMAL j/k G [] {} Esc";
       case "composer":
-        return "Composer Esc Enter";
+        return "Composer NORMAL i n t";
     }
   }
   switch (state.focus) {
     case "tree":
-      return "Tree: ↑↓ ←→ g/G Tab";
+      return "Sidebar: ↑↓ ←→ g/G Enter Esc";
     case "timeline":
-      return "Timeline: ↑↓ g/G [] turns {} errors Ctrl-F search · y copy · Enter Tab";
+      return `Timeline ${(state.timelineMode ?? "normal").toUpperCase()}: ↑↓ g/G [] turns {} errors Ctrl-F search · y copy · Enter Esc`;
     case "composer":
-      return "Composer: Esc Ctrl-P/N Enter";
+      return `Composer ${(state.composerMode ?? "normal").toUpperCase()}: i insert · n sidebar · t timeline · Ctrl-U/D scroll`;
   }
 }
 
@@ -1252,6 +1256,13 @@ export class DeckTui {
   }
 
   private handleControllerIntent(intent: UiIntent): void {
+    if (intent.type === "scroll-timeline") {
+      const amount = Math.max(1, Math.floor(this.transcript.viewportHeight * 0.75));
+      this.transcript.scrollBy(intent.direction * amount);
+      this.pauseIfScrolledAwayFromEnd();
+      this.renderScheduler.requestImmediate();
+      return;
+    }
     if (intent.type === "move-timeline-selection") {
       this.timeline.moveSelection(intent.direction);
       this.revealTimelineSelection();

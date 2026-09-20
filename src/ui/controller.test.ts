@@ -73,6 +73,47 @@ describe("DeckController keyboard seam", () => {
     expect(intents).toContainEqual({ type: "switch-tab", direction: 1, count: 3 });
     expect(intents.at(-1)).toEqual({ type: "close-tab" });
   });
+  it("uses direct Vim region transitions from composer normal mode", () => {
+    const intents: unknown[] = [];
+    let current: AppState = { ...makeState(), focus: "composer", composerMode: "normal" };
+    const controller = new DeckController(
+      () => current,
+      (intent) => {
+        intents.push(intent);
+        if (intent.type === "set-focus") current = { ...current, focus: intent.focus };
+        if (intent.type === "set-composer-mode")
+          current = { ...current, composerMode: intent.mode };
+      },
+    );
+    controller.handleKey("i");
+    controller.handleKey("\u001b");
+    controller.handleKey("n");
+    controller.handleKey("\u001b");
+    controller.handleKey("t");
+    expect(intents).toEqual([
+      { type: "set-composer-mode", mode: "insert" },
+      { type: "set-composer-mode", mode: "normal" },
+      { type: "set-focus", focus: "tree" },
+      { type: "set-focus", focus: "composer" },
+      { type: "set-focus", focus: "timeline" },
+    ]);
+  });
+
+  it("keeps Ctrl-U/Ctrl-D timeline scrolling available in every region", () => {
+    for (const focus of ["composer", "tree", "timeline"] as const) {
+      const intents: unknown[] = [];
+      new DeckController(
+        () => ({
+          ...makeState(),
+          focus,
+          ...(focus === "composer" ? { composerMode: "normal" as const } : {}),
+        }),
+        (intent) => intents.push(intent),
+      ).handleKey("\u0015");
+      expect(intents).toEqual([{ type: "scroll-timeline", direction: -1 }]);
+    }
+  });
+
   it.each([
     ["x", "stop"],
     ["A", "archive"],
@@ -370,7 +411,7 @@ describe("DeckController keyboard seam", () => {
     ]);
   });
 
-  it("cycles focus forward and backward with Tab", () => {
+  it("does not cycle focus with Tab or Shift-Tab", () => {
     let current = makeState();
     const intents: unknown[] = [];
     const controller = new DeckController(
@@ -386,12 +427,7 @@ describe("DeckController keyboard seam", () => {
     controller.handleKey("\t");
     controller.handleKey("\u001b[Z");
 
-    expect(intents).toEqual([
-      { type: "set-focus", focus: "timeline" },
-      { type: "set-focus", focus: "composer" },
-      { type: "set-focus", focus: "tree" },
-      { type: "set-focus", focus: "composer" },
-    ]);
+    expect(intents).toEqual([]);
   });
 
   it("escapes composer editing without discarding its text", () => {

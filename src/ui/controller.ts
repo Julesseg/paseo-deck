@@ -10,6 +10,9 @@ export type UiIntent =
   | { type: "collapse-or-expand"; direction: -1 | 1 }
   | { type: "select-or-open" }
   | { type: "set-focus"; focus: FocusArea }
+  | { type: "set-composer-mode"; mode: "normal" | "insert" | "visual" }
+  | { type: "set-timeline-mode"; mode: "normal" | "visual" }
+  | { type: "scroll-timeline"; direction: -1 | 1 }
   | { type: "open-help" }
   | { type: "open-command-palette" }
   | { type: "invoke-command"; id: string }
@@ -83,26 +86,55 @@ export class DeckController {
     if (state.modal.type === "notifications") {
       return this.sendResolved(global, state);
     }
-    if (
-      state.focus === "composer" &&
-      global &&
-      [
-        "composer-leave",
-        "composer-history-previous",
-        "composer-history-next",
-        "focus-next",
-        "focus-previous",
-      ].includes(global.id)
-    )
-      return this.send(global.intent(state));
-    // Ctrl-K/Cmd-P are deliberately available while editing; all other normal
-    // shortcuts belong to the editor until it yields focus.
-    if (
-      (isTextEditing(state.modal) || state.focus === "composer") &&
-      global?.id === "command-palette"
-    )
-      return this.send(global.intent(state));
-    if (isTextEditing(state.modal) || state.focus === "composer") return false;
+    // Ctrl-K/Cmd-P, help, and quit are explicit global precedence paths. The
+    // composer otherwise behaves like a Vim buffer: normal mode owns commands,
+    // insert mode yields ordinary bytes to the editor.
+    if (state.focus === "composer") {
+      // Older integrations omitted the mode field; retain their editor-owned
+      // behavior while newly-created application state is explicit normal mode.
+      const mode = state.composerMode ?? "insert";
+      if (data === "\u001b") {
+        if (state.composerMode === undefined)
+          return this.send({ type: "set-focus", focus: "tree" });
+        if (mode !== "normal") return this.send({ type: "set-composer-mode", mode: "normal" });
+        return true;
+      }
+      if (global?.id === "command-palette") return this.send(global.intent(state));
+      if (mode === "insert") {
+        if (global?.id === "composer-history-previous" || global?.id === "composer-history-next")
+          return this.send(global.intent(state));
+        if (data === "\u0003") return this.send({ type: "quit" });
+        if (data === "\u0015" || data === "\u0004" || data === "\u001b[5~" || data === "\u001b[6~")
+          return this.send({
+            type: "scroll-timeline",
+            direction: data === "\u0004" || data === "\u001b[6~" ? 1 : -1,
+          });
+        if (data === "\u001b[1;5A" || data === "\u001b[1;5B")
+          return this.send({ type: "scroll-timeline", direction: data === "\u001b[1;5A" ? -1 : 1 });
+        return false;
+      }
+      if (data === "i") return this.send({ type: "set-composer-mode", mode: "insert" });
+      if (data === "v") return this.send({ type: "set-composer-mode", mode: "visual" });
+      if (data === "n") return this.send({ type: "set-focus", focus: "tree" });
+      if (data === "t") return this.send({ type: "set-focus", focus: "timeline" });
+      if (data === "\u0015" || data === "\u0004" || data === "\u001b[5~" || data === "\u001b[6~")
+        return this.send({
+          type: "scroll-timeline",
+          direction: data === "\u0004" || data === "\u001b[6~" ? 1 : -1,
+        });
+      if (data === "\u001b[1;5A" || data === "\u001b[1;5B")
+        return this.send({ type: "scroll-timeline", direction: data === "\u001b[1;5A" ? -1 : 1 });
+      if (global) return this.sendResolved(global, state);
+      return false;
+    }
+    if (isTextEditing(state.modal)) return false;
+    if (state.modal.type === "none" && state.focus === "timeline" && data === "\u001b") {
+      if ((state.timelineMode ?? "normal") === "visual")
+        return this.send({ type: "set-timeline-mode", mode: "normal" });
+      return this.send({ type: "set-focus", focus: "composer" });
+    }
+    if (state.modal.type === "none" && state.focus === "tree" && data === "\u001b")
+      return this.send({ type: "set-focus", focus: "composer" });
     if (data === "\u001b") {
       if (state.modal.type !== "none") this.emit({ type: "close-modal" });
       return state.modal.type !== "none";
@@ -124,6 +156,15 @@ export class DeckController {
       this.#tabPrefix += data;
       return true;
     }
+    if (data === "\u0015" || data === "\u0004" || data === "\u001b[5~" || data === "\u001b[6~")
+      return this.send({
+        type: "scroll-timeline",
+        direction: data === "\u0004" || data === "\u001b[6~" ? 1 : -1,
+      });
+    if (data === "\u001b[1;5A" || data === "\u001b[1;5B")
+      return this.send({ type: "scroll-timeline", direction: data === "\u001b[1;5A" ? -1 : 1 });
+    if (state.focus === "timeline" && state.timelineMode !== undefined && data === "v")
+      return this.send({ type: "set-timeline-mode", mode: "visual" });
     if (global) {
       if (data === "g") this.#tabPrefix = "g";
       return this.sendResolved(global, state);
