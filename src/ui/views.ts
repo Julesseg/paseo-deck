@@ -273,7 +273,7 @@ class TimelineView implements Component {
   private readonly itemViews = new Map<string, TimelineItemView>();
   private events: readonly TimelineEvent[] = [];
   private expanded = new Set<string>();
-  private heading = "Selected agent timeline";
+  private heading = "Active session timeline";
   private selectedIndex = 0;
   private focused = false;
   private renderedWidth = 80;
@@ -283,8 +283,8 @@ class TimelineView implements Component {
     this.state = state;
     const selected = state.directory.agents.find((agent) => agent.id === state.selectedAgentId);
     this.heading = selected
-      ? `Selected agent timeline ${this.theme.glyph("bullet")} ${sanitizeTerminalText(selected.title)} [${shortAgentId(selected.id)}]`
-      : "Selected agent timeline";
+      ? `Active session timeline ${this.theme.glyph("bullet")} ${sanitizeTerminalText(selected.title)} [${shortAgentId(selected.id)}]`
+      : "Active session timeline";
     this.focused = state.focus === "timeline";
   }
   update(events: readonly TimelineEvent[]): void {

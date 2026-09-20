@@ -110,7 +110,12 @@ export class ApplicationController {
   }
 
   async selectAgent(agentId: string): Promise<void> {
-    if (this.#state.selectedAgentId === agentId && this.#timelineObservation !== undefined) return;
+    if (this.#state.selectedAgentId === agentId && this.#timelineObservation !== undefined) {
+      // Explicit activation of the already-active session still returns the
+      // user to its timeline after browsing in the sidebar.
+      this.apply({ type: "set-focus", focus: "timeline" });
+      return;
+    }
     const generation = ++this.#focusGeneration;
     const previous = this.#timelineObservation;
     this.#timelineObservation = undefined;
@@ -392,6 +397,7 @@ export class ApplicationController {
     const rows = deriveTreeRows(this.#state);
     if (rows.length === 0) return;
     const selectedId =
+      this.#state.sidebarSelection?.id ??
       this.#state.selectedAgentId ??
       this.#state.selectedWorkspaceId ??
       this.#state.selectedProjectId;
@@ -408,18 +414,21 @@ export class ApplicationController {
   }
 
   private async selectRow(row: TreeRow): Promise<void> {
-    if (row.kind === "agent") await this.selectAgent(row.id);
-    else if (row.kind === "workspace") {
-      this.apply({ type: "select-workspace", workspaceId: row.id });
-      this.apply({ type: "set-focus", focus: "tree" });
-    } else {
-      this.apply({ type: "select-project", projectId: row.id });
-      this.apply({ type: "set-focus", focus: "tree" });
-    }
+    this.apply({
+      type: "select-sidebar",
+      selection: {
+        kind: row.kind === "agent" ? "session" : row.kind,
+        id: row.id,
+      },
+    });
   }
 
   private collapseOrExpand(direction: -1 | 1): void {
-    const id = this.#state.selectedWorkspaceId ?? this.#state.selectedProjectId;
+    const selection = this.#state.sidebarSelection;
+    const id =
+      selection?.kind === "workspace" || selection?.kind === "project"
+        ? selection.id
+        : (this.#state.selectedWorkspaceId ?? this.#state.selectedProjectId);
     if (!id) return;
     const expanded = this.#state.expandedIds.has(id);
     if ((direction === 1 && !expanded) || (direction === -1 && expanded)) {
@@ -428,11 +437,12 @@ export class ApplicationController {
   }
 
   private async openSelection(): Promise<void> {
-    if (this.#state.selectedAgentId) {
-      await this.selectAgent(this.#state.selectedAgentId);
+    const selection = this.#state.sidebarSelection;
+    if (selection?.kind === "session") {
+      await this.selectAgent(selection.id);
       return;
     }
-    const id = this.#state.selectedWorkspaceId ?? this.#state.selectedProjectId;
+    const id = selection?.id ?? this.#state.selectedWorkspaceId ?? this.#state.selectedProjectId;
     if (id) this.apply({ type: "toggle-expanded", id });
   }
 

@@ -1190,7 +1190,7 @@ describe("DeckTui viewport and focus", () => {
     await deck.stop();
 
     expect(intents).toContainEqual({ type: "notify", message: "Copy failed.", kind: "error" });
-    expect(terminal.viewport().join("\n")).toContain("Selected agent timeline");
+    expect(terminal.viewport().join("\n")).toContain("Active session timeline");
   });
 
   it("renders Markdown assistant streaming and timestamp metadata", async () => {
@@ -1609,7 +1609,7 @@ describe("DeckTui viewport and focus", () => {
     expect(terminal.viewport().join("\n")).toContain("Tree: ↑↓ ←→ g/G Tab");
     deck.update({ ...state(), focus: "timeline" });
     await terminal.waitForRender();
-    expect(terminal.viewport().join("\n")).toContain("[TIMELINE] Selected agent timeline");
+    expect(terminal.viewport().join("\n")).toContain("[TIMELINE] Active session timeline");
     expect(terminal.viewport().join("\n")).toContain(
       "Timeline: ↑↓ g/G [] turns {} errors Ctrl-F search · y copy · Enter Tab",
     );
@@ -2341,7 +2341,7 @@ describe("DeckTui viewport and focus", () => {
     terminal.sendInput("\u000b");
     terminal.sendInput("stop");
     await terminal.waitForRender();
-    expect(terminal.viewport().join("\n")).toContain("Select an agent first");
+    expect(terminal.viewport().join("\n")).toContain("Select an active session first");
     terminal.sendInput("\r");
     terminal.sendInput("\u000b");
     terminal.sendInput("\u001b");
@@ -2359,7 +2359,7 @@ describe("DeckTui viewport and focus", () => {
     terminal.sendInput("\u000b");
     terminal.sendInput("stop");
     await terminal.waitForRender();
-    expect(terminal.viewport().join("\n")).toContain("Select an agent first");
+    expect(terminal.viewport().join("\n")).toContain("Select an active session first");
     const agent = {
       id: "agent",
       workspaceId: "w",
@@ -2377,7 +2377,7 @@ describe("DeckTui viewport and focus", () => {
       directory: { ...base.directory, agents: [agent] },
     });
     await terminal.waitForRender();
-    expect(terminal.viewport().join("\n")).not.toContain("Select an agent first");
+    expect(terminal.viewport().join("\n")).not.toContain("Select an active session first");
     terminal.sendInput("\u001b");
     await deck.stop();
   });

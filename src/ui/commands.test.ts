@@ -171,7 +171,7 @@ describe("command registry", () => {
 
   it("keeps disabled palette items inert and recomputes availability from current state", () => {
     const { selectedAgentId: _agent, ...noAgent }: AppState = state();
-    expect(commandForKey(noAgent, "x")?.disabledReason).toBe("Select an agent first");
+    expect(commandForKey(noAgent, "x")?.disabledReason).toBe("Select an active session first");
     expect(commandForKey(state(), "x")?.disabledReason).toBeUndefined();
     const intents: unknown[] = [];
     new DeckController(

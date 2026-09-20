@@ -148,14 +148,14 @@ describe("ApplicationController", () => {
     expect(app.state.selectedWorkspaceId).toBe("workspace-remote");
     await app.handleIntent({ type: "collapse-or-expand", direction: 1 });
     await app.handleIntent({ type: "select-next", direction: 1 });
-    expect(app.state.selectedAgentId).toBe("agent-remote");
+    expect(app.state.sidebarSelection).toEqual({ kind: "session", id: "agent-remote" });
 
     await app.handleIntent({ type: "select-next", direction: 1 });
     await app.handleIntent({ type: "select-next", direction: 1 });
     expect(app.state.selectedWorkspaceId).toBe("workspace-orphan");
     await app.handleIntent({ type: "collapse-or-expand", direction: 1 });
     await app.handleIntent({ type: "select-next", direction: 1 });
-    expect(app.state.selectedAgentId).toBe("agent-orphan");
+    expect(app.state.sidebarSelection).toEqual({ kind: "session", id: "agent-orphan" });
   });
 
   it("derives tree start and end boundaries from the current visible rows", async () => {
@@ -166,6 +166,85 @@ describe("ApplicationController", () => {
     expect(app.state.selectedWorkspaceId).toBe("workspace-orphan");
     await app.handleIntent({ type: "select-boundary", boundary: "start" });
     expect(app.state.selectedProjectId).toBe("remote:github.com/acme/paseo-deck");
+  });
+
+  it("keeps sidebar navigation separate from the active session until Enter", async () => {
+    const gateway = new FakePaseoGateway(snapshot);
+    const app = new ApplicationController(gateway);
+    await app.start();
+    await app.selectAgent("agent-1");
+    gateway.emitTimeline("agent-1", {
+      type: "hydrated",
+      agentId: "agent-1",
+      items: [event(1, "active")],
+    });
+    const timelineBefore = app.state.timeline;
+
+    await app.handleIntent({ type: "select-next", direction: 1 });
+    expect(app.state.sidebarSelection).toEqual({ kind: "session", id: "agent-2" });
+    expect(app.state.activeSessionId).toBe("agent-1");
+    expect(app.state.timeline).toBe(timelineBefore);
+
+    await app.handleIntent({ type: "select-or-open" });
+    expect(app.state.activeSessionId).toBe("agent-2");
+    expect(app.state.sidebarSelection).toEqual({ kind: "session", id: "agent-2" });
+  });
+
+  it("does not activate a session while browsing from an empty active state", async () => {
+    const app = new ApplicationController(new FakePaseoGateway(snapshot));
+    await app.start();
+
+    await app.handleIntent({ type: "select-next", direction: 1 });
+    await app.handleIntent({ type: "collapse-or-expand", direction: 1 });
+    await app.handleIntent({ type: "select-next", direction: 1 });
+    await app.handleIntent({ type: "select-next", direction: 1 });
+    await app.handleIntent({ type: "collapse-or-expand", direction: 1 });
+    await app.handleIntent({ type: "select-next", direction: 1 });
+    await app.handleIntent({ type: "select-next", direction: 1 });
+    expect(app.state.sidebarSelection).toEqual({ kind: "session", id: "agent-2" });
+    expect(app.state.activeSessionId).toBeUndefined();
+    expect(app.state.selectedAgentId).toBeUndefined();
+
+    await app.handleIntent({ type: "select-or-open" });
+    expect(app.state.activeSessionId).toBe("agent-2");
+  });
+
+  it("returns to the active timeline when Enter is pressed on the active sidebar session", async () => {
+    const app = new ApplicationController(new FakePaseoGateway(snapshot));
+    await app.start();
+    await app.selectAgent("agent-1");
+    await app.handleIntent({ type: "set-focus", focus: "tree" });
+    await app.handleIntent({ type: "select-or-open" });
+    expect(app.state.activeSessionId).toBe("agent-1");
+    expect(app.state.focus).toBe("timeline");
+  });
+
+  it("preserves the active timeline while sidebar rows survive and repair directory updates", async () => {
+    const gateway = new FakePaseoGateway(snapshot);
+    const app = new ApplicationController(gateway);
+    await app.start();
+    await app.selectAgent("agent-1");
+    gateway.emitTimeline("agent-1", {
+      type: "hydrated",
+      agentId: "agent-1",
+      items: [event(1, "active")],
+    });
+    await app.handleIntent({ type: "select-next", direction: 1 });
+    expect(app.state.sidebarSelection).toEqual({ kind: "session", id: "agent-2" });
+    const timeline = app.state.timeline;
+
+    gateway.emitDirectory({ type: "snapshot", snapshot });
+    expect(app.state.sidebarSelection).toEqual({ kind: "session", id: "agent-2" });
+    expect(app.state.activeSessionId).toBe("agent-1");
+    expect(app.state.timeline).toBe(timeline);
+
+    gateway.emitDirectory({
+      type: "snapshot",
+      snapshot: { ...snapshot, agents: snapshot.agents.filter((agent) => agent.id !== "agent-2") },
+    });
+    expect(app.state.sidebarSelection).toEqual({ kind: "session", id: "agent-1" });
+    expect(app.state.activeSessionId).toBe("agent-1");
+    expect(app.state.timeline).toBe(timeline);
   });
 
   it("integrates directory, timelines, permissions, focus changes, and reconnects exactly once", async () => {

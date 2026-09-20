@@ -9,6 +9,7 @@ import type {
 
 export type FocusArea = "tree" | "timeline" | "composer";
 export type TreeOrder = "attention" | "alphabetical";
+export type SidebarSelection = { kind: "project" | "workspace" | "session"; id: string };
 
 export type ModalState =
   | { type: "none" }
@@ -116,6 +117,10 @@ export interface AppState {
   selectedProjectId?: string;
   selectedWorkspaceId?: string;
   selectedAgentId?: string;
+  /** The row highlighted in the sidebar. This is independent from the active session. */
+  sidebarSelection?: SidebarSelection;
+  /** The session whose timeline/composer are active. */
+  activeSessionId?: string;
   expandedIds: ReadonlySet<string>;
   filter: string;
   treeOrder: TreeOrder;
