@@ -231,9 +231,14 @@ class SessionTabsView implements Component {
       .map((id) => this.state.directory.agents.find((agent) => agent.id === id))
       .filter((agent): agent is NonNullable<typeof agent> => agent !== undefined);
     if (!tabs.length) return [this.theme.style("muted", "Tabs  (open a session with Enter)")];
+    const activeIndex = Math.max(
+      0,
+      tabs.findIndex((agent) => agent.id === active),
+    );
+    const visibleOrder = [...tabs.slice(activeIndex), ...tabs.slice(0, activeIndex)];
     let used = 0;
     const labels: string[] = [];
-    for (const agent of tabs) {
+    for (const agent of visibleOrder) {
       const attention = agent.needsAttention || agent.pendingPermissions.length > 0;
       const marker = attention
         ? this.theme.glyph("attention")
@@ -250,7 +255,8 @@ class SessionTabsView implements Component {
       );
       used += label.length;
     }
-    return [this.theme.clipOwnedLabel(labels.join(this.theme.glyph("divider")), width)];
+    const prefix = activeIndex > 0 ? `${this.theme.glyph("ellipsis")} ` : "";
+    return [this.theme.clipOwnedLabel(prefix + labels.join(this.theme.glyph("divider")), width)];
   }
 }
 

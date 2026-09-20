@@ -21,8 +21,8 @@ import { createComposerState } from "./composer.js";
 
 export type AppAction =
   | { type: "directory"; update: DirectoryUpdate }
-  | { type: "select-agent"; agentId?: string }
-  | { type: "open-session-tab"; agentId: string }
+  | { type: "select-agent"; agentId?: string; preserveSidebar?: boolean }
+  | { type: "open-session-tab"; agentId: string; preserveSidebar?: boolean }
   | { type: "close-session-tab"; agentId: string }
   | { type: "switch-session-tab"; direction: -1 | 1; count?: number }
   | { type: "select-sidebar"; selection?: AppState["sidebarSelection"] }
@@ -735,6 +735,7 @@ export function reduceApp(state: AppState, action: AppAction): AppState {
         focus: "timeline",
         ...(agentId ? { activeSessionId: agentId } : {}),
       };
+      const sidebarSelection = state.sidebarSelection;
       if (agentId) next.selectedAgentId = agent?.id ?? agentId;
       else delete next.selectedAgentId;
       if (agent?.workspaceId) {
@@ -743,6 +744,10 @@ export function reduceApp(state: AppState, action: AppAction): AppState {
       }
       if (agentId) next.sidebarSelection = { kind: "session", id: agentId };
       else delete next.sidebarSelection;
+      if (action.preserveSidebar) {
+        if (sidebarSelection) next.sidebarSelection = sidebarSelection;
+        else delete next.sidebarSelection;
+      }
       return next;
     }
     case "open-session-tab": {
@@ -754,7 +759,14 @@ export function reduceApp(state: AppState, action: AppAction): AppState {
         ...(state.openSessionIds ?? {}),
         [agent.workspaceId]: current.includes(agent.id) ? current : [...current, agent.id],
       };
-      return reduceApp({ ...state, openSessionIds }, { type: "select-agent", agentId: agent.id });
+      return reduceApp(
+        { ...state, openSessionIds },
+        {
+          type: "select-agent",
+          agentId: agent.id,
+          ...(action.preserveSidebar ? { preserveSidebar: true } : {}),
+        },
+      );
     }
     case "close-session-tab": {
       const agent = state.directory.agents.find((candidate) => candidate.id === action.agentId);
@@ -781,7 +793,14 @@ export function reduceApp(state: AppState, action: AppAction): AppState {
         delete next.selectedAgentId;
         return next;
       }
-      return reduceApp({ ...state, openSessionIds }, { type: "select-agent", agentId: nextId });
+      return reduceApp(
+        { ...state, openSessionIds },
+        {
+          type: "select-agent",
+          agentId: nextId,
+          preserveSidebar: true,
+        },
+      );
     }
     case "switch-session-tab": {
       const active = state.activeSessionId ?? state.selectedAgentId;
@@ -790,9 +809,14 @@ export function reduceApp(state: AppState, action: AppAction): AppState {
       const tabs = Object.values(state.openSessionIds ?? {}).flat();
       if (tabs.length < 2) return state;
       const index = tabs.indexOf(agent.id);
-      const count = Math.max(1, action.count ?? 1);
-      const nextId = tabs[(index + action.direction * count + tabs.length * 1000) % tabs.length];
-      return nextId ? reduceApp(state, { type: "select-agent", agentId: nextId }) : state;
+      const nextIndex =
+        action.count === undefined
+          ? (index + action.direction + tabs.length) % tabs.length
+          : Math.min(tabs.length - 1, Math.max(0, action.count - 1));
+      const nextId = tabs[nextIndex];
+      return nextId
+        ? reduceApp(state, { type: "select-agent", agentId: nextId, preserveSidebar: true })
+        : state;
     }
     case "select-sidebar": {
       const selection = action.selection;
