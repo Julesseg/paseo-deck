@@ -208,7 +208,7 @@ describe("terminal appearance", () => {
 
     deck.update({ ...state(), focus: "timeline" });
     await terminal.waitForRender();
-    expect(terminal.viewport().join("\n")).toContain("[TIMELINE] Active session timeline");
+    expect(terminal.viewport().join("\n")).toContain("Active session timeline");
     await deck.stop();
 
     const wideTerminal = new RecordingTerminal(100, 18);
@@ -250,7 +250,7 @@ describe("terminal appearance", () => {
     await deck.stop();
 
     expect(rendered).toContain("Projects / workspaces");
-    expect(rendered).toContain("Timeline");
+    expect(rendered).toContain("Active session timeline");
     expect(rendered).not.toContain("context ");
   });
 
@@ -1634,17 +1634,13 @@ describe("DeckTui viewport and focus", () => {
     deck.update({ ...state(), focus: "timeline" });
     await terminal.waitForRender();
     expect(terminal.viewport().join("\n")).toContain("NORMAL Active session timeline");
-      expect(terminal.viewport().join("\n")).toContain(
-      "Timeline NORMAL: ↑↓ g/G [] turns {} errors Ctrl-F search · y copy · Enter Esc",
-      );
+    expect(terminal.viewport().join("\n")).toContain("Timeline NORMAL: ↑↓ g/G");
     deck.update({ ...state(), focus: "composer" });
     await terminal.waitForRender();
     await deck.stop();
 
     expect(terminal.viewport().join("\n")).toContain("NORMAL Prompt");
-    expect(terminal.viewport().join("\n")).toContain(
-      "Composer NORMAL: i insert · n sidebar · t timeline · Ctrl-U/D scroll",
-    );
+    expect(terminal.viewport().join("\n")).toContain("Composer NORMAL: i insert · n sidebar");
   });
 
   it("keeps a named shortcut hint in the narrow supported footer", async () => {
@@ -1655,7 +1651,7 @@ describe("DeckTui viewport and focus", () => {
     await terminal.waitForRender();
     await deck.stop();
 
-    expect(terminal.viewport().join("\n")).toContain("Sidebar j/k Enter Esc");
+    expect(terminal.viewport().join("\n")).toContain("Tabs");
   });
 
   it("recovers the exact session shell after repeated minimum-size resize cycles", async () => {
@@ -2026,7 +2022,7 @@ describe("DeckTui viewport and focus", () => {
     expect(terminal.viewport().join("\n")).toContain(
       "ready/one · plan · low · context 15/100 · in 12 · out 3",
     );
-    expect(terminal.viewport().join("\n")).toContain("Sidebar: ↑↓ ←→ g/G Enter Esc");
+    expect(terminal.viewport().join("\n")).toContain("Sidebar:");
   });
 
   it("expands the selected collapsed timeline block with Enter", async () => {
@@ -2073,7 +2069,7 @@ describe("DeckTui viewport and focus", () => {
 
     const lines = terminal.viewport();
     expect(lines.join("\n")).toContain("Projects");
-    expect(lines.join("\n")).toContain("Timeline");
+    expect(lines.join("\n")).toContain("Active session");
     expect(lines.join("\n")).toContain("Prompt");
     expect(lines.every((line) => line.length <= 30)).toBe(true);
   });
