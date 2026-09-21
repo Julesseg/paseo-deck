@@ -450,7 +450,10 @@ class TimelineView implements Component {
       this.theme.styleRendered("header", this.theme.clipRendered(heading, width)),
       ...this.events.flatMap((event, index) => {
         const lines = this.itemViews.get(event.item.id)?.render(width) ?? [];
-        if (index === this.selectedIndex && lines[0])
+        // The timeline is scrollback while another region is active.  Only
+        // timeline navigation may expose a cursor; a daemon event is never a
+        // selected row in the rendered buffer.
+        if (this.focused && index === this.selectedIndex && lines[0])
           lines[0] = `${this.theme.style("selection", "> ")}${lines[0]}`;
         return lines.map((line) => clipTerminalLine(line, width, this.theme.glyph("ellipsis")));
       }),

@@ -348,6 +348,7 @@ export class ApplicationController {
         return;
       case "move-timeline-selection":
       case "move-timeline-selection-boundary":
+      case "move-timeline-text":
       case "move-timeline-landmark":
       case "open-timeline-search":
       case "open-timeline-copy":

@@ -43,6 +43,10 @@ export type UiIntent =
   | { type: "toggle-timeline-item"; itemId: string }
   | { type: "move-timeline-selection"; direction: -1 | 1 }
   | { type: "move-timeline-selection-boundary"; boundary: "start" | "end" }
+  | {
+      type: "move-timeline-text";
+      key: "h" | "j" | "k" | "l" | "w" | "b" | "e" | "0" | "^" | "$" | "G";
+    }
   | { type: "move-timeline-landmark"; direction: -1 | 1; kind: "turn" | "error" }
   | {
       type: "set-timeline-navigation";
@@ -146,6 +150,15 @@ export class DeckController {
     // Every non-text modal owns its own navigation (SelectList, confirmation,
     // and help), rather than letting tree bindings leak through the overlay.
     if (state.modal.type !== "none") return false;
+    if (
+      state.focus === "timeline" &&
+      !global &&
+      ["h", "l", "w", "b", "e", "0", "^", "$"].includes(data)
+    )
+      return this.send({
+        type: "move-timeline-text",
+        key: data as "h" | "l" | "w" | "b" | "e" | "0" | "^" | "$",
+      });
     if (this.#tabPrefix.startsWith("g") && (data === "t" || data === "T" || data === "c")) {
       const countText = this.#tabPrefix.slice(1);
       this.#tabPrefix = "";
