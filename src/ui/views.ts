@@ -575,7 +575,7 @@ class ComposerView implements Component, Focusable {
     this.editor = new Editor(
       tui,
       {
-        borderColor: (value) => this.theme.style("border", value),
+        borderColor: (value) => this.theme.style(this.focused ? "focus" : "muted", value),
         selectList: selectTheme(this.theme),
       },
       { paddingX: 1 },
@@ -626,7 +626,7 @@ class ComposerView implements Component, Focusable {
     const controls = composerControlRow(this.state, this.theme, width);
     return [
       this.theme.styleRendered(
-        this.focused ? "focus" : "header",
+        this.focused ? "focus" : "muted",
         this.theme.clipRendered(heading, width),
       ),
       controls,

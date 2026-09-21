@@ -241,6 +241,27 @@ describe("composer controls", () => {
     expect(intents).toContainEqual({ type: "set-composer-text", text: "line one\nline two" });
     await deck.stop();
   });
+
+  it("labels the active composer chrome and mutes it without a mode label when inactive", async () => {
+    const terminal = new RecordingTerminal(80, 18);
+    const active = { ...state(), focus: "composer" as const, composerMode: "normal" as const };
+    const deck = new DeckTui(terminal, active, () => undefined, {
+      appearance: { color: "none", unicode: false, theme: "plain", symbols: "ascii" },
+    });
+    deck.update(active);
+    deck.start();
+    await terminal.waitForRender();
+    const activeRender = terminal.viewport().join("\n");
+    const inactive = { ...active, focus: "tree" as const };
+    deck.update(inactive);
+    await terminal.waitForRender();
+    const inactiveRender = terminal.viewport().join("\n");
+    await deck.stop();
+
+    expect(activeRender).toContain("NORMAL Prompt");
+    expect(inactiveRender).not.toContain("NORMAL Prompt");
+    expect(inactiveRender).toContain("Prompt");
+  });
 });
 
 describe("fenced code highlighter", () => {
