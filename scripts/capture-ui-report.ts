@@ -312,7 +312,14 @@ const shots: Array<{
       activeNotificationId: 1,
     },
   },
+  { name: "short-layout", columns: 100, rows: 14, state: baseState },
   { name: "narrow-layout", columns: 52, rows: 18, state: baseState },
+  {
+    name: "narrow-main-pane",
+    columns: 52,
+    rows: 18,
+    state: { ...baseState, focus: "composer", composerMode: "normal" },
+  },
   {
     name: "no-color",
     columns: 100,

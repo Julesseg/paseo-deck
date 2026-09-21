@@ -183,6 +183,46 @@ describe("creation picker choices", () => {
 });
 
 describe("composer controls", () => {
+  it("places the tab strip, timeline, and one-piece composer inside the main-pane frame", async () => {
+    const terminal = new RecordingTerminal(160, 28);
+    const current = {
+      ...state(),
+      focus: "composer" as const,
+      composerMode: "normal" as const,
+      selectedAgentId: "agent",
+      activeSessionId: "agent",
+      directory: {
+        ...state().directory,
+        agents: [
+          {
+            id: "agent",
+            workspaceId: "w",
+            title: "Agent",
+            status: "idle" as const,
+            pendingPermissions: [],
+            needsAttention: false,
+            archived: false,
+            availableModeIds: [],
+            availableThinkingLevels: [],
+          },
+        ],
+      },
+    };
+    const deck = new DeckTui(terminal, current, () => undefined, {
+      appearance: { color: "none", unicode: true, theme: "plain", symbols: "unicode" },
+    });
+    deck.start();
+    await terminal.waitForRender();
+    const lines = terminal.viewport();
+    await deck.stop();
+
+    expect(lines[0]).toContain("┌");
+    expect(lines.at(-1)).toContain("└");
+    expect(lines.join("\n")).toContain("Agent");
+    expect(lines.join("\n")).toContain("NORMAL Prompt");
+    expect(lines.join("\n")).not.toMatch(/\n─{8,}\n/);
+  });
+
   it("keeps all essential key cues visible in a narrow row", () => {
     const row = composerControlRow(
       {

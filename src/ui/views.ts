@@ -321,7 +321,7 @@ class SessionTabsView implements Component {
       return [
         this.theme.style(
           "muted",
-          `Tabs ${this.paseoHost ? `${this.paseoHost} ${this.theme.glyph("bullet")} ` : ""}(open a session or terminal with Enter)`,
+          `Tabs ${this.theme.glyph("bullet")} Active session ${this.paseoHost ? `${this.paseoHost} ${this.theme.glyph("bullet")} ` : ""}(open a session or terminal with Enter)`,
         ),
       ];
     const activeIndex = Math.max(
@@ -398,6 +398,53 @@ class ContentPane implements Component {
       ];
     }
     return this.timeline.render(width);
+  }
+}
+
+/** Paints one vertical edge of the main pane. The layout engine stretches the
+ * adjacent content, while this component makes the shell boundary visible in
+ * every otherwise-empty row. */
+class MainPaneEdge implements Component {
+  constructor(
+    private readonly terminal: Terminal,
+    private readonly theme: DeckTheme,
+    private readonly side: "left" | "right",
+  ) {}
+  invalidate(): void {}
+  render(_width: number): string[] {
+    const unicode = this.theme.appearance.symbols === "unicode";
+    const top = unicode ? (this.side === "left" ? "┌" : "┐") : "+";
+    const bottom = unicode ? (this.side === "left" ? "└" : "┘") : "+";
+    const middle = unicode ? "│" : "|";
+    return Array.from({ length: this.terminal.rows }, (_, row) =>
+      this.theme.styleRendered(
+        "border",
+        row === 0 ? top : row === this.terminal.rows - 1 ? bottom : middle,
+      ),
+    );
+  }
+}
+
+class MainPaneRule implements Component {
+  constructor(
+    private readonly theme: DeckTheme,
+    private readonly state: () => AppState,
+    private readonly kind: "top" | "divider" | "bottom",
+  ) {}
+  invalidate(): void {}
+  render(width: number): string[] {
+    const unicode = this.theme.appearance.symbols === "unicode";
+    const line = unicode ? "─" : "-";
+    const state = this.state();
+    const label =
+      this.kind === "top" && state.focus === "timeline"
+        ? ` ${(state.timelineMode ?? "normal").toUpperCase()} `
+        : "";
+    const content = label
+      ? `${label}${line.repeat(Math.max(0, width - terminalDisplayWidth(label)))}`
+      : line.repeat(width);
+    const tone = this.kind === "top" && state.focus === "timeline" ? "focus" : "border";
+    return [this.theme.styleRendered(tone, content)];
   }
 }
 
@@ -781,6 +828,7 @@ class TimelineView implements Component {
       else if (item.type === "turn") group = `turn:${item.turnId ?? item.id}`;
       else if (item.type === "assistant-message" && item.turnId) group = `turn:${item.turnId}`;
       const firstInGroup = group !== priorGroup;
+      const gap = firstInGroup && priorGroup ? [""] : [];
       if (firstInGroup) ordinal += 1;
       priorGroup = group;
       const itemLines = this.itemViews.get(item.id)?.render(width) ?? [];
@@ -804,8 +852,8 @@ class TimelineView implements Component {
               ),
             ]
           : [];
-      const lines = [...header, ...children];
-      const layout = { start, bodyStart: start + header.length, lines };
+      const lines = [...gap, ...header, ...children];
+      const layout = { start, bodyStart: start + gap.length + header.length, lines };
       start += lines.length;
       return layout;
     });
@@ -844,9 +892,18 @@ class TimelineScrollView extends ScrollView {
   }
 }
 
+class BorderlessEditor extends Editor {
+  override render(width: number): string[] {
+    const lines = super.render(width);
+    // Editor's stock chrome is a pair of horizontal rules. ComposerView owns
+    // the one enclosing border so prompt and controls remain one region.
+    return lines.length >= 2 ? lines.slice(1, -1) : lines;
+  }
+}
+
 class ComposerView implements Component, Focusable {
   focused = false;
-  private readonly editor: Editor;
+  private readonly editor: BorderlessEditor;
   private selectedAgentId: string | undefined;
   private state: AppState;
   private visualAnchor: { line: number; col: number } | undefined;
@@ -858,7 +915,7 @@ class ComposerView implements Component, Focusable {
   ) {
     this.state = state;
     this.selectedAgentId = state.selectedAgentId;
-    this.editor = new Editor(
+    this.editor = new BorderlessEditor(
       tui,
       {
         borderColor: (value) => this.theme.style(this.focused ? "focus" : "muted", value),
@@ -908,15 +965,38 @@ class ComposerView implements Component, Focusable {
     const selectionCue = selection
       ? ` ${this.theme.glyph("bullet")} selected ${selection.text.length} chars`
       : "";
-    const heading = `${this.state.focus === "composer" ? mode.toUpperCase() : ""} ${destination}${status}${selectionCue}`;
-    const controls = composerControlRow(this.state, this.theme, width);
+    const heading =
+      `${this.state.focus === "composer" ? mode.toUpperCase() : ""} ${destination}${status}${selectionCue}`.trim();
+    const innerWidth = Math.max(1, width - 2);
+    const controlRow = composerControlRow(this.state, this.theme, innerWidth);
+    const controls =
+      innerWidth < 55 ? this.theme.clipRendered(`Prompt ${controlRow}`, innerWidth) : controlRow;
+    const unicode = this.theme.appearance.symbols === "unicode";
+    const topLeft = unicode ? "┌" : "+";
+    const topRight = unicode ? "┐" : "+";
+    const bottomLeft = unicode ? "└" : "+";
+    const bottomRight = unicode ? "┘" : "+";
+    const horizontal = unicode ? "─" : "-";
+    const vertical = unicode ? "│" : "|";
+    const topLabel = ` ${heading} `;
+    const top = `${topLeft}${this.theme.clipRendered(`${topLabel}${horizontal.repeat(Math.max(0, innerWidth - terminalDisplayWidth(topLabel)))}`, innerWidth)}${topRight}`;
+    const body = this.editor
+      .render(innerWidth)
+      .map(
+        (line) =>
+          `${vertical}${this.theme.clipRendered(`${line}${" ".repeat(Math.max(0, innerWidth - terminalDisplayWidth(line)))}`, innerWidth)}${vertical}`,
+      );
     return [
+      this.theme.styleRendered(this.focused ? "focus" : "muted", top),
+      ...body,
       this.theme.styleRendered(
         this.focused ? "focus" : "muted",
-        this.theme.clipRendered(heading, width),
+        `${vertical}${controls}${" ".repeat(Math.max(0, innerWidth - terminalDisplayWidth(controls)))}${vertical}`,
       ),
-      controls,
-      ...this.editor.render(width),
+      this.theme.styleRendered(
+        this.focused ? "focus" : "muted",
+        `${bottomLeft}${horizontal.repeat(innerWidth)}${bottomRight}`,
+      ),
     ];
   }
   handleInput(data: string): void {
@@ -1013,11 +1093,14 @@ export function composerControlRow(state: AppState, theme: DeckTheme, width: num
     .join("  ");
   const cues = controls.map(([key]) => theme.style("muted", `[${key}]`)).join(" ");
   const sending = agent && state.composer.sendingAgentIds.has(agent.id);
-  const right = sending
+  const activity = sending
     ? `${theme.glyph("running")} sending`
     : agent?.status === "running"
       ? `${theme.glyph("running")} active`
       : "";
+  const usage = state.timeline.usage ?? agent?.lastUsage;
+  const tokenUsage = usage?.contextTokens === undefined ? "" : `context ${usage.contextTokens}`;
+  const right = [activity, tokenUsage].filter(Boolean).join(` ${theme.glyph("bullet")} `);
   const plainLength = terminalDisplayWidth;
   if (plainLength(left) > width) {
     if (!right || plainLength(cues) + plainLength(right) + 1 >= width)
@@ -1029,6 +1112,29 @@ export function composerControlRow(state: AppState, theme: DeckTheme, width: num
     return theme.clipRendered(left, width);
   const gap = " ".repeat(Math.max(1, width - plainLength(left) - plainLength(right)));
   return theme.clipRendered(`${left}${gap}${right}`, width);
+}
+
+class SessionActivityView implements Component {
+  constructor(
+    private readonly state: () => AppState,
+    private readonly theme: DeckTheme,
+  ) {}
+  invalidate(): void {}
+  render(width: number): string[] {
+    const state = this.state();
+    const agent = state.directory.agents.find((item) => item.id === state.selectedAgentId);
+    const sending = agent && state.composer.sendingAgentIds.has(agent.id);
+    const activity = sending ? "sending" : agent?.status === "running" ? "active" : "idle";
+    return [
+      this.theme.styleRendered(
+        sending || agent?.status === "running" ? "running" : "muted",
+        this.theme.clipRendered(
+          `Session activity ${this.theme.glyph("bullet")} ${activity}`,
+          width,
+        ),
+      ),
+    ];
+  }
 }
 
 class StatusView implements Component {
@@ -1589,6 +1695,94 @@ export class DeckTui {
   private setShellLayout(): void {
     const supported = (viewport: { width: number; height: number }): boolean =>
       shellLayout(viewport.width, viewport.height, this.treeWidth).supported;
+    const mainPane = new HStack(
+      [
+        { component: new MainPaneEdge(this.terminal, this.theme, "left"), basis: 1, minSize: 1 },
+        {
+          component: new VStack([
+            {
+              component: new MainPaneRule(this.theme, () => this.state, "top"),
+              basis: 1,
+              minSize: 1,
+            },
+            { component: this.tabs, basis: 1, minSize: 1 },
+            {
+              component: new MainPaneRule(this.theme, () => this.state, "divider"),
+              basis: 1,
+              minSize: 1,
+            },
+            {
+              component: new HStack(
+                [
+                  {
+                    component: new Spacer(1),
+                    basis: 4,
+                    grow: 1,
+                    shrink: 1,
+                    minSize: 1,
+                  },
+                  {
+                    component: new VStack([
+                      {
+                        component: new Spacer(1),
+                        basis: 1,
+                        minSize: 0,
+                        visible: (viewport) => viewport.height >= 20,
+                      },
+                      { component: this.transcript, basis: 0, grow: 1, minSize: 3 },
+                      {
+                        component: new Spacer(2),
+                        basis: 2,
+                        minSize: 0,
+                        visible: (viewport) => viewport.height >= 24,
+                      },
+                      {
+                        component: new Spacer(1),
+                        basis: 1,
+                        minSize: 0,
+                        visible: (viewport) => viewport.height >= 18 && viewport.height < 24,
+                      },
+                      {
+                        component: new SessionActivityView(() => this.state, this.theme),
+                        basis: 1,
+                        minSize: 1,
+                        visible: (viewport) => viewport.height >= 24,
+                      },
+                      { component: this.composer, basis: "auto", minSize: 4 },
+                    ]),
+                    basis: 100,
+                    shrink: 1,
+                    minSize: 1,
+                  },
+                  {
+                    component: new Spacer(1),
+                    basis: 4,
+                    grow: 1,
+                    shrink: 1,
+                    minSize: 1,
+                  },
+                ],
+                { align: "stretch" },
+              ),
+              basis: 0,
+              grow: 1,
+              minSize: 7,
+            },
+            { component: this.status, basis: 1, minSize: 1 },
+            {
+              component: new MainPaneRule(this.theme, () => this.state, "bottom"),
+              basis: 1,
+              minSize: 1,
+            },
+          ]),
+          basis: 0,
+          grow: 1,
+          minSize: 8,
+        },
+        { component: new MainPaneEdge(this.terminal, this.theme, "right"), basis: 1, minSize: 1 },
+      ],
+      { align: "stretch" },
+    );
     this.tui.setLayoutRoot(
       new VStack([
         {
@@ -1604,13 +1798,7 @@ export class DeckTui {
                   !shellLayout(viewport.width, viewport.height, this.treeWidth).narrow,
               },
               {
-                component: new VStack([
-                  { component: this.tabs, basis: 1, minSize: 1 },
-                  { component: this.transcript, basis: 0, grow: 1, minSize: 8 },
-                  { component: new Spacer(1), basis: 1, minSize: 1 },
-                  { component: this.composer, basis: "auto", minSize: 3 },
-                  { component: this.status, basis: 1, minSize: 1 },
-                ]),
+                component: mainPane,
                 basis: 0,
                 grow: 1,
                 minSize: 10,
