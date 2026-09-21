@@ -25,7 +25,7 @@ const shots: Array<{
   state: AppState;
   appearance?: TerminalAppearance;
 }> = [
-  { name: "project-ownership", columns: 100, rows: 28, state: baseState },
+  { name: "project-ownership", columns: 160, rows: 42, state: baseState },
   { name: "session-tree", columns: 100, rows: 28, state: baseState },
   {
     name: "terminal-discovery",
