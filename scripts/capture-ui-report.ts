@@ -634,10 +634,12 @@ function terminalSvg(
   const height = rows * lineHeight + padding * 2 + chromeHeight;
   const text = lines
     .slice(0, rows)
-    .map((line, row) => {
-      const cells = terminalDisplayWidth(line);
-      return `<text x="${padding}" y="${chromeHeight + padding + (row + 1) * lineHeight - 4}"${cells ? ` textLength="${cells * cellWidth}" lengthAdjust="spacingAndGlyphs"` : ""}>${escapeXml(line)}</text>`;
-    })
+    .flatMap((line, row) =>
+      [...line.matchAll(/\S+/gu)].map((match) => {
+        const column = terminalDisplayWidth(line.slice(0, match.index ?? 0));
+        return `<text x="${padding + column * cellWidth}" y="${chromeHeight + padding + (row + 1) * lineHeight - 4}">${escapeXml(match[0])}</text>`;
+      }),
+    )
     .join("\n");
   const backgroundsSvg = backgrounds
     .flatMap((row, rowIndex) => {
@@ -669,7 +671,7 @@ function terminalSvg(
   <circle cx="36" cy="16" r="5" fill="#f59e0b"/>
   <circle cx="54" cy="16" r="5" fill="#22c55e"/>
   <g>${backgroundsSvg}</g>
-  <g fill="#f5f5f4" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="14" xml:space="preserve">
+  <g fill="#f5f5f4" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="14">
 ${text}
   </g>
 </svg>`;
