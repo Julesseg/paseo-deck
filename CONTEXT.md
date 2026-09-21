@@ -29,16 +29,24 @@ The session whose timeline and composer occupy the main pane. Moving the sidebar
 _Avoid_: Focused session, selected agent
 
 **Sidebar selection**:
-The highlighted project, workspace, or session row that sidebar navigation will act on. A session becomes active only when the user opens it.
+The project, workspace, or session row that sidebar navigation will act on. It is highlighted only while the sidebar is active, and a session becomes active only when the user opens it.
 _Avoid_: Active session, focus
 
 **Timeline**:
 The ordered, live record of messages, reasoning, tool activity, permissions, turn state, and errors in the active session.
 _Avoid_: Transcript, log, output
 
+**Main pane**:
+The bordered region beside the sidebar that contains session and terminal tabs, the active timeline, the composer, and session status.
+_Avoid_: Timeline window, right-side region
+
 **Composer**:
 The editor and session controls used to send the next prompt to the active session.
 _Avoid_: Prompt box, input
+
+**Choice picker**:
+A centered, bordered list for choosing a provider, model, thinking level, or operational mode. A choice picker may support filtering, disabled choices, and a preselected value.
+_Avoid_: Ticker, selection dialog
 
 **Active region**:
 The composer, sidebar, or timeline currently receiving keyboard commands. Its border is brighter than the other regions.
@@ -70,5 +78,5 @@ The roll-up state of a workspace's sessions. `attention` means intervention is r
 _Avoid_: Workspace status
 
 **Key cue**:
-A short, dimmed key label placed beside the value or action it controls, such as the model, thinking level, or mode.
+A short, dimmed key label placed beside a Paseo-specific value or action such as the model, thinking level, or operational mode. Ordinary Vim movement and confirmation keys do not need key cues.
 _Avoid_: Shortcut hint, footer help
