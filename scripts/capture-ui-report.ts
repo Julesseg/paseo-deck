@@ -609,10 +609,10 @@ function terminalSvg(
   const height = rows * lineHeight + padding * 2 + chromeHeight;
   const text = lines
     .slice(0, rows)
-    .map(
-      (line, index) =>
-        `<text x="${padding}" y="${chromeHeight + padding + (index + 1) * lineHeight - 4}">${escapeXml(line)}</text>`,
-    )
+    .map((line, index) => {
+      const leadingSpaces = line.length - line.trimStart().length;
+      return `<text x="${padding + leadingSpaces * cellWidth}" y="${chromeHeight + padding + (index + 1) * lineHeight - 4}">${escapeXml(line.slice(leadingSpaces))}</text>`;
+    })
     .join("\n");
   const backgroundsSvg = backgrounds
     .flatMap((row, rowIndex) => {
