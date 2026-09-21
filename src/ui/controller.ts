@@ -182,15 +182,21 @@ export class DeckController {
       if (data === "G")
         return this.send({ type: "move-timeline-selection-boundary", boundary: "end" });
       if (data === "\r" && state.timeline.items.length)
-        return this.send({ type: "toggle-selected-timeline-item" });
+        return this.send(
+          state.timeline.agentId
+            ? { type: "timeline-fold" }
+            : { type: "toggle-selected-timeline-item" },
+        );
       if (data === "y" && state.timeline.items.length)
         return this.send({ type: "open-timeline-copy" });
       if (data === "n" || data === "N")
         return this.send({ type: "timeline-repeat-search", direction: data === "n" ? 1 : -1 });
       if (data === "\u0015" || data === "\u0004")
         return this.send({ type: "scroll-timeline", direction: data === "\u0015" ? -1 : 1 });
-      if (state.timeline.agentId && state.timeline.items.length && (data === "v" || data === "V"))
-        return this.send({ type: "set-timeline-mode", mode: "visual" });
+      if (state.timeline.agentId && state.timeline.items.length && data === "V")
+        return this.send({ type: "timeline-visual", line: true });
+      if (state.timeline.agentId && state.timeline.items.length && data === "v")
+        return this.send({ type: "timeline-visual", line: false });
     }
     if (state.modal.type === "none" && state.focus === "timeline" && data === "\u001b") {
       if ((state.timelineMode ?? "normal") === "visual")

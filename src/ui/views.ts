@@ -533,7 +533,7 @@ class TimelineView implements Component {
         return lines.map((line, offset) => {
           const bodyLine = start + offset;
           let rendered = line;
-          if (this.focused && this.buffer.mode === "visual" && this.buffer.line === bodyLine) {
+          if (this.focused && this.buffer.mode === "visual") {
             const range = timelineSelectionColumns(this.buffer, bodyLine);
             if (range) {
               const plain = printableTimelineText(rendered);
@@ -1481,6 +1481,8 @@ export class DeckTui {
       this.timeline.startVisual(false);
     if (intent.type === "scroll-timeline") {
       const amount = Math.max(1, Math.floor(this.transcript.viewportHeight * 0.75));
+      if (this.state.focus === "timeline")
+        this.timeline.pageText(intent.direction, this.transcript.viewportHeight);
       this.transcript.scrollBy(intent.direction * amount);
       this.pauseIfScrolledAwayFromEnd();
       this.renderScheduler.requestImmediate();
@@ -1510,6 +1512,7 @@ export class DeckTui {
     }
     if (intent.type === "toggle-selected-timeline-item") {
       this.timeline.toggleSelected();
+      if (this.state.timeline.agentId) this.timeline.toggleTextFold();
       this.renderScheduler.requestImmediate();
       return;
     }
@@ -1589,10 +1592,14 @@ export class DeckTui {
 
   private openTimelineSearch(): void {
     this.captureLocalSnapshot();
-    this.searchMatches = findTimelineMatches(this.state.timeline.items, "");
+    this.searchMatches = this.state.timeline.agentId
+      ? []
+      : findTimelineMatches(this.state.timeline.items, "");
     this.searchIndex = 0;
     this.searchQuery = "";
-    this.searchFeedback = "Type to search source text.";
+    this.searchFeedback = this.state.timeline.agentId
+      ? "Search rendered timeline text."
+      : "Type to search source text.";
     this.showLocalOverlay(
       "__timeline-search",
       new SearchDialog(
@@ -1654,6 +1661,14 @@ export class DeckTui {
   private updateTimelineSearch(query: string): void {
     this.searchQuery = query;
     this.timeline.searchText(query);
+    if (this.state.timeline.agentId) {
+      this.searchMatches = [];
+      this.searchFeedback = query.trim()
+        ? "Searching rendered timeline text."
+        : "Type to search rendered timeline text.";
+      this.renderScheduler.requestImmediate();
+      return;
+    }
     this.searchMatches = findTimelineMatches(this.state.timeline.items, query);
     this.searchIndex = 0;
     const match = this.searchMatches[0];
