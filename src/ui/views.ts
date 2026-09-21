@@ -365,7 +365,7 @@ class TimelineView implements Component {
     this.selectedIndex = Math.min(this.selectedIndex, Math.max(0, events.length - 1));
   }
   moveText(key: Parameters<typeof moveTimelineBuffer>[1]): void {
-    this.buffer = moveTimelineBuffer(this.buffer, key);
+    this.buffer = moveTimelineBuffer(this.buffer, key === "g" ? "gg" : key);
   }
   pageText(direction: -1 | 1, height: number): void {
     this.buffer = pageTimelineBuffer(this.buffer, direction, height);
@@ -1426,6 +1426,7 @@ export class DeckTui {
     }
     if (intent.type === "timeline-visual") {
       this.timeline.startVisual(intent.line);
+      this.emit({ type: "set-timeline-mode", mode: "visual" });
       this.renderScheduler.requestImmediate();
       return;
     }
@@ -1447,6 +1448,8 @@ export class DeckTui {
     }
     if (intent.type === "set-timeline-mode" && intent.mode === "normal")
       this.timeline.clearVisual();
+    if (intent.type === "set-timeline-mode" && intent.mode === "visual")
+      this.timeline.startVisual(false);
     if (intent.type === "scroll-timeline") {
       const amount = Math.max(1, Math.floor(this.transcript.viewportHeight * 0.75));
       this.transcript.scrollBy(intent.direction * amount);
@@ -1463,7 +1466,7 @@ export class DeckTui {
     }
     if (intent.type === "move-timeline-selection-boundary") {
       this.timeline.moveSelectionBoundary(intent.boundary);
-      if (intent.boundary === "start") this.transcript.scrollToStart();
+      if (intent.boundary === "start") this.transcript.scrollTo(0, { disableFollow: true });
       else this.transcript.scrollToEnd();
       this.setTimelineFollowing(intent.boundary === "end");
       this.renderScheduler.requestImmediate();

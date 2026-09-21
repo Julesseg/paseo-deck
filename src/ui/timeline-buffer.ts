@@ -139,7 +139,7 @@ export function searchTimelineBuffer(
   const start = state.search?.match.line ?? state.line;
   for (let step = 1; step <= state.lines.length; step += 1) {
     const index = (start + direction * step + state.lines.length * 2) % state.lines.length;
-    const haystack = state.lines[index]?.toLocaleLowerCase() ?? "";
+    const haystack = printableTimelineText(state.lines[index] ?? "").toLocaleLowerCase();
     const match = haystack.indexOf(needle);
     if (match >= 0)
       return {
