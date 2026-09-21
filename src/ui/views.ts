@@ -340,7 +340,7 @@ class ContentPane implements Component {
           this.theme.clipRendered(`${mode} Terminal${stale}`, width),
         ),
         ...(this.state.terminalLines?.[this.state.activeTerminalId] ?? [])
-          .slice(-Math.max(1, width))
+          .slice(this.state.terminalScrollTop?.[this.state.activeTerminalId] ?? 0)
           .map((line) => clipTerminalLine(line, width)),
       ];
     }

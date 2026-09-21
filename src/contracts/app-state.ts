@@ -150,6 +150,7 @@ export interface AppState {
   activeTerminalId?: string;
   terminalMode?: TerminalMode;
   terminalLines?: Readonly<Record<string, readonly string[]>>;
+  terminalScrollTop?: Readonly<Record<string, number>>;
   staleTerminalIds?: ReadonlySet<string>;
   /** Bounded FIFO; notification is retained as the currently selected entry. */
   notifications: readonly NotificationState[];

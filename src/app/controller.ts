@@ -255,6 +255,22 @@ export class ApplicationController {
         this.apply({ type: "switch-terminal-tab", direction: intent.direction });
         return;
       case "scroll-terminal":
+        if (this.#state.activeTerminalId) {
+          const id = this.#state.activeTerminalId;
+          const current = this.#state.terminalScrollTop?.[id] ?? 0;
+          this.apply({
+            type: "set-terminal-scroll",
+            terminalId: id,
+            offset: Math.max(0, current + (intent.direction < 0 ? -5 : 5)),
+          });
+        }
+        return;
+      case "reconnect-terminal":
+        if (this.#state.activeTerminalId)
+          await this.handleIntent({
+            type: "open-terminal",
+            terminalId: this.#state.activeTerminalId,
+          });
         return;
       case "kill-terminal": {
         const id = this.#state.activeTerminalId;

@@ -33,6 +33,7 @@ export type AppAction =
   | { type: "switch-terminal-tab"; direction: -1 | 1 }
   | { type: "set-terminal-mode"; mode: TerminalMode }
   | { type: "terminal-lines"; terminalId: string; lines: readonly string[]; stale?: boolean }
+  | { type: "set-terminal-scroll"; terminalId: string; offset: number }
   | { type: "select-sidebar"; selection?: AppState["sidebarSelection"] }
   | { type: "select-workspace"; workspaceId?: string }
   | { type: "select-project"; projectId?: string }
@@ -898,6 +899,14 @@ export function reduceApp(state: AppState, action: AppAction): AppState {
     }
     case "set-terminal-mode":
       return { ...state, terminalMode: action.mode };
+    case "set-terminal-scroll":
+      return {
+        ...state,
+        terminalScrollTop: {
+          ...(state.terminalScrollTop ?? {}),
+          [action.terminalId]: Math.max(0, action.offset),
+        },
+      };
     case "terminal-lines": {
       const stale = new Set(state.staleTerminalIds ?? []);
       if (action.stale) stale.add(action.terminalId);

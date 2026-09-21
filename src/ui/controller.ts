@@ -14,6 +14,7 @@ export type UiIntent =
   | { type: "kill-terminal-confirmed"; terminalId: string }
   | { type: "switch-terminal-tab"; direction: -1 | 1 }
   | { type: "scroll-terminal"; direction: -1 | 1 }
+  | { type: "reconnect-terminal" }
   | { type: "set-terminal-mode"; mode: "normal" | "insert" }
   | { type: "terminal-input"; data: string }
   | { type: "select-next"; direction: -1 | 1 }
@@ -128,6 +129,7 @@ export class DeckController {
           type: "scroll-terminal",
           direction: data === "\u001b[A" || data === "\u0015" ? -1 : 1,
         });
+      if (data === "r") return this.send({ type: "reconnect-terminal" });
     }
     // ProcessTerminal enables raw mode, so Ctrl+C is delivered as input rather
     // than raising SIGINT. It must remain a global escape hatch even while an
