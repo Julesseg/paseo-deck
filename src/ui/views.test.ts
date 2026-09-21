@@ -285,7 +285,95 @@ describe("fenced code highlighter", () => {
 });
 
 describe("terminal appearance", () => {
-  it("keeps the Ember sidebar on restrained surface layers", async () => {
+  it("paints an unlabeled sidebar frame through unused viewport rows", async () => {
+    const terminal = new RecordingTerminal(100, 22);
+    const deck = new DeckTui(terminal, state(), () => undefined, {
+      appearance: { color: "truecolor", unicode: true, theme: "ember", symbols: "unicode" },
+    });
+    deck.start();
+    await terminal.waitForRender();
+    deck.update(state());
+    await terminal.waitForRender();
+    const lines = terminal.viewport();
+    const backgrounds = terminal.viewportBackgrounds();
+    await deck.stop();
+
+    expect(lines.every((line) => line.startsWith("│"))).toBe(true);
+    expect(
+      backgrounds.every((line) => line.slice(0, 34).every((color) => color === "#1f1d1b")),
+    ).toBe(true);
+  });
+
+  it("keeps the active session visible after sidebar navigation moves away", async () => {
+    const terminal = new RecordingTerminal(100, 22);
+    const base = state();
+    const sidebarState: AppState = {
+      ...base,
+      focus: "tree",
+      activeSessionId: "agent-active",
+      sidebarSelection: { kind: "session", id: "agent-active" },
+      expandedIds: new Set(["project", "workspace"]),
+      directory: {
+        ...base.directory,
+        projects: [{ id: "project", name: "Project" }],
+        workspaces: [
+          {
+            id: "workspace",
+            projectId: "project",
+            title: "Workspace",
+            directory: "/workspace",
+            archived: false,
+          },
+        ],
+        agents: [
+          {
+            id: "agent-active",
+            workspaceId: "workspace",
+            title: "Active session",
+            status: "idle",
+            availableModeIds: [],
+            availableThinkingLevels: [],
+            pendingPermissions: [],
+            needsAttention: false,
+            archived: false,
+          },
+          {
+            id: "agent-other",
+            workspaceId: "workspace",
+            title: "Other session",
+            status: "idle",
+            availableModeIds: [],
+            availableThinkingLevels: [],
+            pendingPermissions: [],
+            needsAttention: false,
+            archived: false,
+          },
+        ],
+      },
+    };
+    const deck = new DeckTui(terminal, sidebarState, () => undefined, {
+      appearance: { color: "truecolor", unicode: true, theme: "ember", symbols: "unicode" },
+    });
+    deck.start();
+    await terminal.waitForRender();
+    const activeRow = terminal.viewport().findIndex((line) => line.includes("Active session ["));
+    expect(terminal.viewportBackgrounds()[activeRow]?.[4]).toBe("#332e27");
+
+    deck.update({
+      ...sidebarState,
+      focus: "composer",
+      sidebarSelection: { kind: "session", id: "agent-other" },
+    });
+    await terminal.waitForRender();
+    const inactiveRow = terminal.viewport().findIndex((line) => line.includes("Active session ["));
+    const workspaceRow = terminal.viewport().findIndex((line) => line.includes("Workspace"));
+    await deck.stop();
+
+    expect(terminal.viewportBackgrounds()[inactiveRow]?.[4]).toBe("#272421");
+    expect(terminal.viewportBackgrounds()[workspaceRow]?.[4]).toBe("#1f1d1b");
+  });
+
+  it("keeps the Ember sidebar on one restrained base layer", async () => {
     const terminal = new RecordingTerminal(100, 28);
     const deck = new DeckTui(terminal, state(), () => undefined, {
       appearance: {
@@ -304,7 +392,7 @@ describe("terminal appearance", () => {
 
     const output = terminal.writes.join("");
     expect(output).toContain("\u001b[48;2;232;222;212m");
-    expect(output).toContain("\u001b[48;2;226;216;207m");
+    expect(output).not.toContain("\u001b[48;2;226;216;207m");
     expect(output).not.toContain("\u001b[43m");
   });
 

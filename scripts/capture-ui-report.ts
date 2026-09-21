@@ -4,6 +4,7 @@ import type { AppState } from "../src/contracts/app-state.js";
 import type { TerminalAppearance } from "../src/ui/capabilities.js";
 import { NARROW_SIDEBAR_BREAKPOINT } from "../src/ui/layout.js";
 import { RecordingTerminal } from "../src/ui/terminal.js";
+import { terminalDisplayWidth } from "../src/ui/text-safety.js";
 import { DeckTui } from "../src/ui/views.js";
 
 const outputDirectory = process.argv[2];
@@ -27,6 +28,28 @@ const shots: Array<{
   appearance?: TerminalAppearance;
 }> = [
   { name: "project-ownership", columns: 160, rows: 42, state: baseState },
+  {
+    name: "sidebar-selection",
+    columns: 100,
+    rows: 28,
+    state: {
+      ...baseState,
+      activeSessionId: "agent-atlas-1234",
+      sidebarSelection: { kind: "session", id: "agent-harbor-5678" },
+    },
+  },
+  {
+    name: "sidebar-active-session",
+    columns: 100,
+    rows: 28,
+    state: {
+      ...baseState,
+      focus: "composer",
+      composerMode: "normal",
+      activeSessionId: "agent-atlas-1234",
+      sidebarSelection: { kind: "session", id: "agent-harbor-5678" },
+    },
+  },
   { name: "session-tree", columns: 100, rows: 28, state: baseState },
   {
     name: "terminal-discovery",
@@ -353,13 +376,15 @@ for (const shot of shots) {
   deck.update(shot.state);
   deck.start();
   await terminal.waitForRender();
+  await terminal.waitForRender();
   const viewport = terminal.viewport();
+  const backgrounds = terminal.viewportBackgrounds();
   await deck.stop();
   await writeFile(
     join(outputDirectory, `${shot.name}.svg`),
     terminalSvg(
       viewport,
-      terminal.viewportBackgrounds(),
+      backgrounds,
       shot.columns,
       shot.rows,
       `Paseo Deck ${shot.name.replaceAll("-", " ")}`,
@@ -609,10 +634,12 @@ function terminalSvg(
   const height = rows * lineHeight + padding * 2 + chromeHeight;
   const text = lines
     .slice(0, rows)
-    .map((line, index) => {
-      const leadingSpaces = line.length - line.trimStart().length;
-      return `<text x="${padding + leadingSpaces * cellWidth}" y="${chromeHeight + padding + (index + 1) * lineHeight - 4}">${escapeXml(line.slice(leadingSpaces))}</text>`;
-    })
+    .flatMap((line, row) =>
+      [...line.matchAll(/\S+/gu)].map((match) => {
+        const column = terminalDisplayWidth(line.slice(0, match.index ?? 0));
+        return `<text x="${padding + column * cellWidth}" y="${chromeHeight + padding + (row + 1) * lineHeight - 4}">${escapeXml(match[0])}</text>`;
+      }),
+    )
     .join("\n");
   const backgroundsSvg = backgrounds
     .flatMap((row, rowIndex) => {
@@ -644,7 +671,7 @@ function terminalSvg(
   <circle cx="36" cy="16" r="5" fill="#f59e0b"/>
   <circle cx="54" cy="16" r="5" fill="#22c55e"/>
   <g>${backgroundsSvg}</g>
-  <g fill="#f5f5f4" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="14" xml:space="preserve">
+  <g fill="#f5f5f4" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="14">
 ${text}
   </g>
 </svg>`;
