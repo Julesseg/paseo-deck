@@ -176,6 +176,7 @@ export type TimelineItem =
   | (TimelineBase & { type: "permission"; request: PermissionRequest; resolved?: boolean })
   | (TimelineBase & {
       type: "turn";
+      turnId?: string;
       status: "started" | "completed" | "failed" | "canceled";
       detail?: string;
       startedAt?: string;

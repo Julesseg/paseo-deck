@@ -839,6 +839,7 @@ function streamItem(
       return {
         id: `turn:${agentId}:${stringValue(stream.turnId) ?? "current"}`,
         type: "turn",
+        ...(stringValue(stream.turnId) ? { turnId: stringValue(stream.turnId) as string } : {}),
         status: "started",
         ...(timestamp === undefined ? {} : { startedAt: timestamp }),
       };
@@ -846,6 +847,7 @@ function streamItem(
       return {
         id: `turn:${agentId}:${stringValue(stream.turnId) ?? "current"}`,
         type: "turn",
+        ...(stringValue(stream.turnId) ? { turnId: stringValue(stream.turnId) as string } : {}),
         status: "completed",
         ...(timestamp === undefined ? {} : { completedAt: timestamp }),
       };
@@ -853,6 +855,7 @@ function streamItem(
       return {
         id: `turn:${agentId}:${stringValue(stream.turnId) ?? "current"}`,
         type: "turn",
+        ...(stringValue(stream.turnId) ? { turnId: stringValue(stream.turnId) as string } : {}),
         status: "failed",
         detail: String(stream.error ?? ""),
         ...(timestamp === undefined ? {} : { completedAt: timestamp }),
@@ -861,6 +864,7 @@ function streamItem(
       return {
         id: `turn:${agentId}:${stringValue(stream.turnId) ?? "current"}`,
         type: "turn",
+        ...(stringValue(stream.turnId) ? { turnId: stringValue(stream.turnId) as string } : {}),
         status: "canceled",
         detail: String(stream.reason ?? ""),
         ...(timestamp === undefined ? {} : { completedAt: timestamp }),

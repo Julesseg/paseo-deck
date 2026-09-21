@@ -9,7 +9,7 @@
   <g fill="#f5f5f4" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="14" xml:space="preserve">
 <text x="16" y="62">  Projects / workspaces             Tabs (open a session with Enter)                                </text>
 <text x="16" y="80"> ▾ Deck Labs                        NORMAL Active session timeline · Atlas [agent-at]               </text>
-<text x="16" y="98">   ▾ Main                           &gt; ── Turn completed · 3.2s: Release verified ──                 </text>
+<text x="16" y="98">   ▾ Main                           &gt;   ── Turn completed · 3.2s: Release verified ──               </text>
 <text x="16" y="116">    attention · 2 agents · !1       Assistant                                                       </text>
 <text x="16" y="134">     • Harbor [agent-ha] ✓ !          The release build is ready.                                   </text>
 <text x="16" y="152">      codex/gpt-5.6-terra                                                                           </text>

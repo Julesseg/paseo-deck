@@ -11,11 +11,11 @@
 <text x="16" y="80"> v Deck Labs                                 Active session timeline - Atlas [agent-at]             </text>
 <text x="16" y="98">   v Main                           You                                                             </text>
 <text x="16" y="116">    attention - 2 agents - !1         Check the release build.                                      </text>
-<text x="16" y="134">     * Harbor [agent-ha] [P] [!]    Reasoning                                                       </text>
-<text x="16" y="152">      codex/gpt-5.6-terra             I will run the focused checks, then verify the packaged execut</text>
-<text x="16" y="170">                                      able aliases.                                                 </text>
-<text x="16" y="188">     * Atlas [agent-at]             Tool completed: npm run check                                   </text>
-<text x="16" y="206">      codex/gpt-5.6-terra             71 tests passed; typecheck and build succeeded.               </text>
+<text x="16" y="134">     * Harbor [agent-ha] [P] [!]      Reasoning                                                     </text>
+<text x="16" y="152">      codex/gpt-5.6-terra               I will run the focused checks, then verify the packaged e...</text>
+<text x="16" y="170">                                        able aliases.                                               </text>
+<text x="16" y="188">     * Atlas [agent-at]               Tool completed: npm run check                                 </text>
+<text x="16" y="206">      codex/gpt-5.6-terra               71 tests passed; typecheck and build succeeded.             </text>
 <text x="16" y="224">   v Theme polish                   Assistant                                                       </text>
 <text x="16" y="242">    idle - 1 agent                    The release build is clean. Both executable aliases are       </text>
 <text x="16" y="260">     * Lumen [agent-lu]               ready.                                                        </text>

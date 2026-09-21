@@ -9,9 +9,9 @@
   <g fill="#f5f5f4" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="14" xml:space="preserve">
 <text x="16" y="62">  Projects / workspaces             Tabs (open a session with Enter)                                </text>
 <text x="16" y="80"> ▾ Deck Labs                        NORMAL Active session timeline · Atlas [agent-at]               </text>
-<text x="16" y="98">   ▾ Main                           &gt; Permission needed: Run release checks                         </text>
-<text x="16" y="116">    attention · 2 agents · !1         The session needs approval before running the command.        </text>
-<text x="16" y="134">     • Harbor [agent-ha] ✓ !                                                                        </text>
+<text x="16" y="98">   ▾ Main                           ─ Turn 1 ─                                                      </text>
+<text x="16" y="116">    attention · 2 agents · !1         Permission needed: Run release checks                         </text>
+<text x="16" y="134">     • Harbor [agent-ha] ✓ !            The session needs approval before running the command.      </text>
 <text x="16" y="152">      codex/gpt-5.6-terra                                                                           </text>
 <text x="16" y="170">                                                                                                    </text>
 <text x="16" y="188">     • Atlas [agent-at]                                                                             </text>

@@ -628,9 +628,7 @@ class TimelineView implements Component {
         ),
       ];
     }
-    const bodyLines = this.events.flatMap(
-      (event) => this.itemViews.get(event.item.id)?.render(width) ?? [],
-    );
+    const bodyLines = this.events.flatMap((_, index) => this.eventLines(index, width));
     const wasVisual = this.buffer.mode === "visual";
     this.buffer = replaceTimelineBuffer(this.buffer, bodyLines);
     if (wasVisual && this.buffer.mode !== "visual")
@@ -643,8 +641,8 @@ class TimelineView implements Component {
           width,
         ),
       ),
-      ...this.events.flatMap((event, index) => {
-        const lines = this.itemViews.get(event.item.id)?.render(width) ?? [];
+      ...this.events.flatMap((_event, index) => {
+        const lines = this.eventLines(index, width);
         const start = this.eventBodyLine(index);
         return lines.map((line, offset) => {
           const bodyLine = start + offset;
@@ -665,18 +663,18 @@ class TimelineView implements Component {
   }
 
   private eventBodyLine(index: number): number {
-    return this.events
+    const start = this.events
       .slice(0, index)
       .reduce(
-        (total, event) =>
-          total + (this.itemViews.get(event.item.id)?.render(this.renderedWidth).length ?? 0),
+        (total, _, priorIndex) => total + this.eventLines(priorIndex, this.renderedWidth).length,
         0,
       );
+    return start + (this.hasGroupHeader(index) ? 1 : 0);
   }
   private eventIndexAtBodyLine(line: number): number {
     let start = 0;
-    for (const [index, event] of this.events.entries()) {
-      const height = this.itemViews.get(event.item.id)?.render(this.renderedWidth).length ?? 0;
+    for (const [index, _event] of this.events.entries()) {
+      const height = this.eventLines(index, this.renderedWidth).length;
       if (line >= start && line < start + height) return index;
       start += height;
     }
@@ -686,8 +684,8 @@ class TimelineView implements Component {
   selectedLineRange(): { start: number; end: number } | undefined {
     if (this.events.length === 0) return undefined;
     let line = 1;
-    for (const [index, event] of this.events.entries()) {
-      const height = this.itemViews.get(event.item.id)?.render(this.renderedWidth).length ?? 0;
+    for (const [index, _event] of this.events.entries()) {
+      const height = this.eventLines(index, this.renderedWidth).length;
       if (index === this.selectedIndex) return { start: line, end: line + height - 1 };
       line += height;
     }
@@ -696,8 +694,8 @@ class TimelineView implements Component {
 
   cursorAtLine(line: number): { epoch: string; sequence: number } | undefined {
     let start = 1;
-    for (const event of this.events) {
-      const height = this.itemViews.get(event.item.id)?.render(this.renderedWidth).length ?? 0;
+    for (const [index, event] of this.events.entries()) {
+      const height = this.eventLines(index, this.renderedWidth).length;
       if (line >= start && line < start + height)
         return { epoch: event.epoch, sequence: event.sequence };
       start += height;
@@ -710,14 +708,69 @@ class TimelineView implements Component {
     sequence: number;
   }): { start: number; end: number } | undefined {
     let start = 1;
-    for (const event of this.events) {
-      const height = this.itemViews.get(event.item.id)?.render(this.renderedWidth).length ?? 0;
+    for (const [index, event] of this.events.entries()) {
+      const height = this.eventLines(index, this.renderedWidth).length;
       if (event.epoch === cursor.epoch && event.sequence === cursor.sequence)
         return { start, end: start + height - 1 };
       start += height;
     }
     return undefined;
   }
+
+  /** Render one event with its stable turn header and child indentation. */
+  private eventLines(index: number, width: number): string[] {
+    const event = this.events[index];
+    if (!event) return [];
+    const lines = this.itemViews.get(event.item.id)?.render(width) ?? [];
+    const primary = event.item.type === "user-message" || event.item.type === "assistant-message";
+    const prominent =
+      event.item.type === "error" || (event.item.type === "tool" && event.item.status === "failed");
+    const children =
+      primary || prominent
+        ? lines
+        : lines.map((line) => clipTerminalLine(`  ${line}`, width, this.theme.glyph("ellipsis")));
+    if (!this.hasGroupHeader(index)) return children;
+    const ordinal = this.events.slice(0, index + 1).filter((_, prior) => {
+      return (
+        prior === 0 ||
+        timelineGroupKey(this.events, prior - 1) !== timelineGroupKey(this.events, prior)
+      );
+    }).length;
+    const header = this.theme.styleRendered(
+      "border",
+      this.theme.clipRendered(
+        `${this.theme.glyph("divider")} Turn ${ordinal} ${this.theme.glyph("divider")}`,
+        width,
+      ),
+    );
+    return [header, ...children];
+  }
+
+  private hasGroupHeader(index: number): boolean {
+    const event = this.events[index];
+    if (!event) return false;
+    const firstInGroup =
+      index === 0 ||
+      timelineGroupKey(this.events, index - 1) !== timelineGroupKey(this.events, index);
+    return (
+      firstInGroup &&
+      event.item.type !== "user-message" &&
+      event.item.type !== "assistant-message" &&
+      event.item.type !== "turn"
+    );
+  }
+}
+
+function timelineGroupKey(events: readonly TimelineEvent[], index: number): string {
+  let current = "implicit:0";
+  for (let cursor = 0; cursor <= index; cursor += 1) {
+    const item = events[cursor]?.item;
+    if (!item) continue;
+    if (item.type === "user-message") current = `user:${item.id}`;
+    else if (item.type === "turn") current = `turn:${item.turnId ?? item.id}`;
+    else if (item.type === "assistant-message" && item.turnId) current = `turn:${item.turnId}`;
+  }
+  return current;
 }
 
 function landmark(item: TimelineItem, kind: "turn" | "error"): boolean {
@@ -1643,6 +1696,11 @@ export class DeckTui {
     this.timeline.toggle(itemId);
     this.emit({ type: "toggle-timeline-item", itemId });
     this.renderScheduler.requestImmediate();
+  }
+
+  /** Entry point for application-level timeline intents in production wiring. */
+  handleTimelineIntent(intent: UiIntent): void {
+    this.handleControllerIntent(intent);
   }
 
   private handleControllerIntent(intent: UiIntent): void {
