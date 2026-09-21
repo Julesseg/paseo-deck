@@ -101,6 +101,9 @@ export class DeckController {
 
   handleKey(data: string): boolean {
     const state = this.getState();
+    // This must precede terminal passthrough as well as every editor, modal,
+    // and focus branch. In raw mode Ctrl-C is Deck's unconditional exit key.
+    if (data === "\u0003") return this.send({ type: "quit" });
     if (
       state.activeTerminalId !== undefined &&
       state.terminalMode !== undefined &&
@@ -142,7 +145,6 @@ export class DeckController {
     // than raising SIGINT. It must remain a global escape hatch even while an
     // editor or modal owns the keyboard.
     const global = commandForKey(state, data);
-    if (data === "\u0003" && global?.id === "quit") return this.send(global.intent(state));
     // These two overlays are safe global escapes. They are intercepted before
     // every dialog/editor so opening and closing them cannot mutate its draft.
     if (global?.id === "command-palette" || global?.id === "help")
@@ -184,7 +186,6 @@ export class DeckController {
           return this.sendResolved(global, state);
         if (global?.id === "composer-history-previous" || global?.id === "composer-history-next")
           return this.send(global.intent(state));
-        if (data === "\u0003") return this.send({ type: "quit" });
         if (data === "\u0015" || data === "\u0004" || data === "\u001b[5~" || data === "\u001b[6~")
           return this.send({
             type: "scroll-timeline",
