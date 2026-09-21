@@ -303,6 +303,16 @@ export class DeckController {
       this.#tabPrefix += data;
       return true;
     }
+    if (this.#tabPrefix === "t" && data === "n") {
+      this.#tabPrefix = "";
+      if (state.selectedWorkspaceId)
+        return this.send({ type: "open-create-terminal", workspaceId: state.selectedWorkspaceId });
+      return true;
+    }
+    if (data === "t") {
+      this.#tabPrefix = "t";
+      return true;
+    }
     if (data === "\u0015" || data === "\u0004" || data === "\u001b[5~" || data === "\u001b[6~")
       return this.send({
         type: "scroll-timeline",

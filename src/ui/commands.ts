@@ -58,7 +58,7 @@ export const deckCommands: readonly DeckCommand[] = [
     id: "terminal-create",
     label: "Create named workspace terminal",
     group: "Sessions",
-    shortcuts: [],
+    shortcuts: ["tn"],
     contexts: ["tree", "timeline"],
     palette: true,
     disabledReason: (state) => (state.selectedWorkspaceId ? undefined : "Select a workspace first"),

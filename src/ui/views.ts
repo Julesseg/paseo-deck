@@ -2133,6 +2133,17 @@ export class DeckTui {
         close,
         this.theme,
       );
+    else if (modal.type === "create-terminal")
+      component = new InputDialog(
+        `Create terminal in ${modal.workspaceId}`,
+        modal.name,
+        (value) => {
+          this.emit({ type: "set-terminal-name", name: value });
+          this.emit({ type: "submit-terminal-name" });
+        },
+        close,
+        this.theme,
+      );
     else if (modal.type === "confirm")
       component = new Dialog(
         [
