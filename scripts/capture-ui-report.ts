@@ -4,6 +4,7 @@ import type { AppState } from "../src/contracts/app-state.js";
 import type { TerminalAppearance } from "../src/ui/capabilities.js";
 import { NARROW_SIDEBAR_BREAKPOINT } from "../src/ui/layout.js";
 import { RecordingTerminal } from "../src/ui/terminal.js";
+import { terminalDisplayWidth } from "../src/ui/text-safety.js";
 import { DeckTui } from "../src/ui/views.js";
 
 const outputDirectory = process.argv[2];
@@ -375,6 +376,7 @@ for (const shot of shots) {
   deck.update(shot.state);
   deck.start();
   await terminal.waitForRender();
+  await terminal.waitForRender();
   const viewport = terminal.viewport();
   const backgrounds = terminal.viewportBackgrounds();
   await deck.stop();
@@ -632,9 +634,9 @@ function terminalSvg(
   const height = rows * lineHeight + padding * 2 + chromeHeight;
   const text = lines
     .slice(0, rows)
-    .map((line, index) => {
-      const leadingSpaces = line.length - line.trimStart().length;
-      return `<text x="${padding + leadingSpaces * cellWidth}" y="${chromeHeight + padding + (index + 1) * lineHeight - 4}">${escapeXml(line.slice(leadingSpaces))}</text>`;
+    .map((line, row) => {
+      const cells = terminalDisplayWidth(line);
+      return `<text x="${padding}" y="${chromeHeight + padding + (row + 1) * lineHeight - 4}"${cells ? ` textLength="${cells * cellWidth}" lengthAdjust="spacingAndGlyphs"` : ""}>${escapeXml(line)}</text>`;
     })
     .join("\n");
   const backgroundsSvg = backgrounds

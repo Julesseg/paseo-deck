@@ -292,6 +292,8 @@ describe("terminal appearance", () => {
     });
     deck.start();
     await terminal.waitForRender();
+    deck.update(state());
+    await terminal.waitForRender();
     const lines = terminal.viewport();
     const backgrounds = terminal.viewportBackgrounds();
     await deck.stop();
