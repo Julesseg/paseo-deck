@@ -297,7 +297,9 @@ describe("terminal appearance", () => {
     await deck.stop();
 
     expect(lines.every((line) => line.startsWith("│"))).toBe(true);
-    expect(backgrounds.every((line) => line.slice(0, 34).every((color) => color === "#1f1d1b"))).toBe(true);
+    expect(
+      backgrounds.every((line) => line.slice(0, 34).every((color) => color === "#1f1d1b")),
+    ).toBe(true);
   });
 
   it("keeps the active session visible after sidebar navigation moves away", async () => {
@@ -313,7 +315,13 @@ describe("terminal appearance", () => {
         ...base.directory,
         projects: [{ id: "project", name: "Project" }],
         workspaces: [
-          { id: "workspace", projectId: "project", title: "Workspace", directory: "/workspace", archived: false },
+          {
+            id: "workspace",
+            projectId: "project",
+            title: "Workspace",
+            directory: "/workspace",
+            archived: false,
+          },
         ],
         agents: [
           {

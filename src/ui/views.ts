@@ -199,7 +199,8 @@ class TreeView implements Component {
             row.kind === "agent"
               ? `${row.permissionCount ? ` ${this.theme.glyph("permission")}` : ""}${row.attention ? ` ${this.theme.glyph("attention")}` : ""}`
               : "";
-          const secondary = width < 34 || row.kind !== "agent" ? "" : treeSecondary(row, this.theme);
+          const secondary =
+            width < 34 || row.kind !== "agent" ? "" : treeSecondary(row, this.theme);
           const primary = this.theme.clipRendered(
             `${selected}${"  ".repeat(row.depth)}${branch} ${sanitizeTerminalText(row.label)}${flags}${secondary}`,
             innerWidth,
@@ -276,7 +277,11 @@ class SidebarScrollView extends ScrollView {
     super(treeView, options);
   }
 
-  override updateLayout(contentHeight: number, viewportHeight: number, requestRender: () => void): void {
+  override updateLayout(
+    contentHeight: number,
+    viewportHeight: number,
+    requestRender: () => void,
+  ): void {
     const previousHeight = this.treeView.renderedViewportHeight;
     this.treeView.setViewportHeight(viewportHeight);
     super.updateLayout(contentHeight, viewportHeight, requestRender);
