@@ -2222,7 +2222,10 @@ export class DeckTui {
       } else {
         component = new ChoiceDialog(
           titleForModal(modal.type),
-          agentChoices(this.state, modal.type),
+          agentChoices(
+            this.state,
+            modal.type === "mode" || modal.type === "thinking" ? modal.type : "mode",
+          ),
           (choice) => this.emit({ type: "create-choice", choice }),
           close,
           this.theme,

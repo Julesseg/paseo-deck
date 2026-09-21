@@ -16,6 +16,8 @@ export type UiIntent =
   | { type: "scroll-terminal"; direction: -1 | 1 }
   | { type: "reconnect-terminal" }
   | { type: "open-create-terminal"; workspaceId: string }
+  | { type: "set-terminal-name"; name: string }
+  | { type: "submit-terminal-name" }
   | { type: "set-terminal-mode"; mode: "normal" | "insert" }
   | { type: "terminal-input"; data: string }
   | { type: "select-next"; direction: -1 | 1 }
@@ -151,6 +153,15 @@ export class DeckController {
     }
     if (state.modal.type === "notifications") {
       return this.sendResolved(global, state);
+    }
+    if (state.modal.type === "create-terminal") {
+      if (data === "\r") return this.send({ type: "submit-terminal-name" });
+      if (data === "\u001b") return this.send({ type: "close-modal" });
+      if (data === "\u007f")
+        return this.send({ type: "set-terminal-name", name: state.modal.name.slice(0, -1) });
+      if (data.length === 1 && data >= " ")
+        return this.send({ type: "set-terminal-name", name: state.modal.name + data });
+      return true;
     }
     // Ctrl-K/Cmd-P, help, and quit are explicit global precedence paths. The
     // composer otherwise behaves like a Vim buffer: normal mode owns commands,

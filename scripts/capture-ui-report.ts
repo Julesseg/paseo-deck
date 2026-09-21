@@ -19,6 +19,45 @@ const shots: Array<{
 }> = [
   { name: "session-tree", columns: 100, rows: 28, state: baseState },
   {
+    name: "terminal-discovery",
+    columns: 100,
+    rows: 28,
+    state: {
+      ...baseState,
+      workspaceTerminals: {
+        "workspace-main": [
+          { id: "terminal-1", workspaceId: "workspace-main", cwd: "/repo", name: "build" },
+        ],
+      },
+    },
+  },
+  {
+    name: "terminal-normal",
+    columns: 100,
+    rows: 28,
+    state: {
+      ...baseState,
+      focus: "timeline",
+      activeTerminalId: "terminal-1",
+      openTerminalIds: ["terminal-1"],
+      terminalMode: "normal",
+      terminalLines: { "terminal-1": ["$ npm test", "All tests passed"] },
+    },
+  },
+  {
+    name: "terminal-insert",
+    columns: 100,
+    rows: 28,
+    state: {
+      ...baseState,
+      focus: "timeline",
+      activeTerminalId: "terminal-1",
+      openTerminalIds: ["terminal-1"],
+      terminalMode: "insert",
+      terminalLines: { "terminal-1": ["$ "] },
+    },
+  },
+  {
     name: "composer-normal",
     columns: 100,
     rows: 28,

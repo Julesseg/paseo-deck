@@ -27,6 +27,7 @@ export type CommandContext =
   | "filter"
   | "rename"
   | "create-agent"
+  | "create-terminal"
   | "mode"
   | "thinking"
   | "error-details"

@@ -55,6 +55,7 @@ export type AppAction =
       value: AppState["creationDefaults"][string];
     }
   | { type: "open-modal"; modal: Exclude<ModalState, { type: "none" }> }
+  | { type: "set-terminal-name"; name: string }
   | { type: "close-modal" }
   | { type: "toggle-expanded"; id: string }
   | { type: "reveal-workspace"; workspaceId: string }
@@ -1062,6 +1063,10 @@ export function reduceApp(state: AppState, action: AppAction): AppState {
       };
     case "open-modal":
       return { ...state, modal: action.modal };
+    case "set-terminal-name":
+      return state.modal.type === "create-terminal"
+        ? { ...state, modal: { ...state.modal, name: action.name } }
+        : state;
     case "close-modal":
       return { ...state, modal: { type: "none" } };
     case "toggle-expanded": {

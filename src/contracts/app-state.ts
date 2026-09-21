@@ -20,6 +20,7 @@ export type ModalState =
   | { type: "help" }
   | { type: "notifications"; index: number }
   | { type: "filter"; query: string }
+  | { type: "create-terminal"; workspaceId: string; name: string; error?: string }
   | {
       type: "confirm";
       action: "stop" | "archive" | "detach" | "kill-terminal";

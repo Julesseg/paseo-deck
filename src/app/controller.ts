@@ -551,8 +551,29 @@ export class ApplicationController {
         await this.applyChoice(intent.choice);
         return;
       case "open-create-terminal":
-        if (intent.workspaceId) await this.createWorkspaceTerminal(intent.workspaceId, "Terminal");
+        if (intent.workspaceId)
+          this.apply({
+            type: "open-modal",
+            modal: { type: "create-terminal", workspaceId: intent.workspaceId, name: "" },
+          });
         return;
+      case "set-terminal-name":
+        this.apply({ type: "set-terminal-name", name: intent.name });
+        return;
+      case "submit-terminal-name": {
+        if (this.#state.modal.type !== "create-terminal") return;
+        const name = this.#state.modal.name.trim();
+        if (!name || name.length > 64) {
+          this.apply({
+            type: "open-modal",
+            modal: { ...this.#state.modal, error: "Enter a name between 1 and 64 characters." },
+          });
+          return;
+        }
+        await this.createWorkspaceTerminal(this.#state.modal.workspaceId, name);
+        this.apply({ type: "close-modal" });
+        return;
+      }
     }
   }
 
