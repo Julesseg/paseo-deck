@@ -2,6 +2,7 @@ import type {
   AppState,
   FocusArea,
   ModalState,
+  TerminalMode,
   TimelineNavigationState,
   TreeOrder,
 } from "../contracts/app-state.js";
@@ -17,6 +18,7 @@ import type {
   TimelineItem,
   TimelineUpdate,
 } from "../contracts/domain.js";
+import type { TerminalRecord } from "../contracts/terminal.js";
 import { createComposerState } from "./composer.js";
 
 export type AppAction =
@@ -25,6 +27,13 @@ export type AppAction =
   | { type: "open-session-tab"; agentId: string; preserveSidebar?: boolean }
   | { type: "close-session-tab"; agentId: string }
   | { type: "switch-session-tab"; direction: -1 | 1; count?: number }
+  | { type: "set-terminals"; workspaceId: string; terminals: readonly TerminalRecord[] }
+  | { type: "open-terminal-tab"; terminalId: string }
+  | { type: "close-terminal-tab"; terminalId?: string }
+  | { type: "switch-terminal-tab"; direction: -1 | 1 }
+  | { type: "set-terminal-mode"; mode: TerminalMode }
+  | { type: "terminal-lines"; terminalId: string; lines: readonly string[]; stale?: boolean }
+  | { type: "set-terminal-scroll"; terminalId: string; offset: number }
   | { type: "select-sidebar"; selection?: AppState["sidebarSelection"] }
   | { type: "select-workspace"; workspaceId?: string }
   | { type: "select-project"; projectId?: string }
@@ -46,6 +55,7 @@ export type AppAction =
       value: AppState["creationDefaults"][string];
     }
   | { type: "open-modal"; modal: Exclude<ModalState, { type: "none" }> }
+  | { type: "set-terminal-name"; name: string }
   | { type: "close-modal" }
   | { type: "toggle-expanded"; id: string }
   | { type: "reveal-workspace"; workspaceId: string }
@@ -97,6 +107,11 @@ export function createInitialState(): AppState {
     openSessionIds: {},
     composer: createComposerState(),
     creationDefaults: {},
+    workspaceTerminals: {},
+    openTerminalIds: [],
+    terminalMode: "normal",
+    terminalLines: {},
+    staleTerminalIds: new Set(),
     notifications: [],
   };
 }
@@ -822,6 +837,87 @@ export function reduceApp(state: AppState, action: AppAction): AppState {
         ? reduceApp(state, { type: "select-agent", agentId: nextId, preserveSidebar: true })
         : state;
     }
+    case "set-terminals": {
+      const known = new Set(action.terminals.map((terminal) => terminal.id));
+      const previous = state.workspaceTerminals?.[action.workspaceId] ?? [];
+      const missing = new Set(
+        previous.map((terminal) => terminal.id).filter((id) => !known.has(id)),
+      );
+      const openTerminalIds = (state.openTerminalIds ?? []).filter((id) => !missing.has(id));
+      const next: AppState = {
+        ...state,
+        workspaceTerminals: { ...state.workspaceTerminals, [action.workspaceId]: action.terminals },
+        openTerminalIds,
+        staleTerminalIds: new Set(
+          [...(state.staleTerminalIds ?? [])].filter((id) =>
+            action.terminals.some((terminal) => terminal.id === id),
+          ),
+        ),
+      };
+      if (missing.has(state.activeTerminalId ?? "")) delete next.activeTerminalId;
+      return next;
+    }
+    case "open-terminal-tab": {
+      const terminal = Object.values(state.workspaceTerminals ?? {})
+        .flat()
+        .find((item) => item.id === action.terminalId);
+      if (!terminal) return state;
+      return {
+        ...state,
+        openTerminalIds: (state.openTerminalIds ?? []).includes(terminal.id)
+          ? (state.openTerminalIds ?? [])
+          : [...(state.openTerminalIds ?? []), terminal.id],
+        activeTerminalId: terminal.id,
+        terminalMode: "normal",
+        focus: "timeline",
+      };
+    }
+    case "close-terminal-tab": {
+      const id = action.terminalId ?? state.activeTerminalId;
+      if (!id) return state;
+      const ids = (state.openTerminalIds ?? []).filter((item) => item !== id);
+      const next: AppState = { ...state, openTerminalIds: ids };
+      if (state.activeTerminalId === id) {
+        const replacement = ids.at(-1);
+        if (replacement) next.activeTerminalId = replacement;
+        else delete next.activeTerminalId;
+      }
+      return next;
+    }
+    case "switch-terminal-tab": {
+      const ids = state.openTerminalIds ?? [];
+      if (ids.length < 2) return state;
+      const current = state.activeTerminalId ?? ids[0];
+      if (!current) return state;
+      const index = Math.max(0, ids.indexOf(current));
+      const nextId = ids[(index + action.direction + ids.length) % ids.length];
+      if (!nextId) return state;
+      return {
+        ...state,
+        activeTerminalId: nextId,
+        terminalMode: "normal",
+      };
+    }
+    case "set-terminal-mode":
+      return { ...state, terminalMode: action.mode };
+    case "set-terminal-scroll":
+      return {
+        ...state,
+        terminalScrollTop: {
+          ...(state.terminalScrollTop ?? {}),
+          [action.terminalId]: Math.max(0, action.offset),
+        },
+      };
+    case "terminal-lines": {
+      const stale = new Set(state.staleTerminalIds ?? []);
+      if (action.stale) stale.add(action.terminalId);
+      else stale.delete(action.terminalId);
+      return {
+        ...state,
+        terminalLines: { ...state.terminalLines, [action.terminalId]: action.lines },
+        staleTerminalIds: stale,
+      };
+    }
     case "select-sidebar": {
       const selection = action.selection;
       if (!selection) {
@@ -967,6 +1063,10 @@ export function reduceApp(state: AppState, action: AppAction): AppState {
       };
     case "open-modal":
       return { ...state, modal: action.modal };
+    case "set-terminal-name":
+      return state.modal.type === "create-terminal"
+        ? { ...state, modal: { ...state.modal, name: action.name } }
+        : state;
     case "close-modal":
       return { ...state, modal: { type: "none" } };
     case "toggle-expanded": {

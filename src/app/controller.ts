@@ -2,6 +2,7 @@ import type { AppState, ModalState, PaseoFailureKind } from "../contracts/app-st
 import type { AgentCommand } from "../contracts/commands.js";
 import type { DirectoryUpdate } from "../contracts/domain.js";
 import type { Observation, PaseoGateway } from "../contracts/gateway.js";
+import type { TerminalObservation } from "../contracts/terminal.js";
 import { PaseoGatewayError, paseoFailure, redactTransportDetail } from "../paseo/errors.js";
 import { composerAvailability } from "../state/composer.js";
 import {
@@ -12,6 +13,7 @@ import {
   reduceApp,
 } from "../state/store.js";
 import type { UiIntent } from "../ui/controller.js";
+import { sanitizeTerminalText } from "../ui/text-safety.js";
 import { deriveTreeRows, type TreeRow } from "../ui/view-model.js";
 
 export interface ApplicationControllerOptions {
@@ -38,6 +40,7 @@ export class ApplicationController {
   #recoveryGeneration = 0;
   #nextRetryToken = 0;
   #reconnectRetrying = false;
+  readonly #terminalObservations = new Map<string, TerminalObservation>();
   readonly #retryOperations = new Map<
     number,
     { running: boolean; completed: boolean; operation: RetryOperation }
@@ -75,6 +78,24 @@ export class ApplicationController {
       });
       const snapshot = await this.gateway.getDirectorySnapshot();
       this.apply({ type: "directory", update: { type: "snapshot", snapshot } });
+      await Promise.all(
+        snapshot.workspaces.map(async (workspace) => {
+          try {
+            this.apply({
+              type: "set-terminals",
+              workspaceId: workspace.id,
+              terminals: await this.gateway.listTerminals(workspace.id),
+            });
+          } catch (error) {
+            this.apply({
+              type: "notify",
+              message: `Could not discover terminals for ${workspace.title}.`,
+              detail: errorMessage(error),
+              kind: "error",
+            });
+          }
+        }),
+      );
       hydrating = false;
       for (const update of pending) this.receiveDirectoryUpdate(update);
       this.apply({
@@ -106,10 +127,30 @@ export class ApplicationController {
     this.#timelineObservation = undefined;
     this.#directoryObservation = undefined;
     await Promise.all(observations.map(async (observation) => observation?.release()));
+    await Promise.all(
+      [...this.#terminalObservations.values()].map((observation) => observation.release()),
+    );
+    this.#terminalObservations.clear();
   }
 
   setComposerText(text: string): void {
     this.apply({ type: "set-composer", text });
+  }
+
+  async createWorkspaceTerminal(workspaceId: string, name: string): Promise<void> {
+    try {
+      const terminal = await this.gateway.createTerminal(workspaceId, { name });
+      const existing = this.#state.workspaceTerminals?.[workspaceId] ?? [];
+      this.apply({ type: "set-terminals", workspaceId, terminals: [...existing, terminal] });
+      await this.handleIntent({ type: "open-terminal", terminalId: terminal.id });
+    } catch (error) {
+      this.apply({
+        type: "notify",
+        message: "Could not create workspace terminal.",
+        detail: errorMessage(error),
+        kind: "error",
+      });
+    }
   }
 
   async selectAgent(agentId: string, preserveSidebar = false): Promise<void> {
@@ -168,6 +209,111 @@ export class ApplicationController {
 
   async handleIntent(intent: UiIntent): Promise<void> {
     switch (intent.type) {
+      case "open-terminal": {
+        const terminal = Object.values(this.#state.workspaceTerminals ?? {})
+          .flat()
+          .find((item) => item.id === intent.terminalId);
+        if (!terminal) return;
+        try {
+          const capture = await this.gateway.captureTerminal(terminal.id, { start: -2000 });
+          this.apply({
+            type: "terminal-lines",
+            terminalId: terminal.id,
+            lines: capture.lines.map(sanitizeObservedTerminal),
+          });
+          this.apply({ type: "open-terminal-tab", terminalId: terminal.id });
+          const observation = await this.gateway.observeTerminal(terminal.id, (update) => {
+            if (update.type === "exited")
+              this.apply({
+                type: "terminal-lines",
+                terminalId: terminal.id,
+                lines: this.#state.terminalLines?.[terminal.id] ?? [],
+                stale: true,
+              });
+            else if (update.type === "output")
+              this.apply({
+                type: "terminal-lines",
+                terminalId: terminal.id,
+                lines: [
+                  ...(this.#state.terminalLines?.[terminal.id] ?? []),
+                  sanitizeObservedTerminal(new TextDecoder().decode(update.data)),
+                ],
+              });
+            else if (update.type === "snapshot")
+              this.apply({
+                type: "terminal-lines",
+                terminalId: terminal.id,
+                lines: update.lines.map(sanitizeObservedTerminal),
+              });
+          });
+          this.#terminalObservations.set(terminal.id, observation);
+        } catch (error) {
+          this.apply({
+            type: "notify",
+            message: "Could not open terminal.",
+            detail: errorMessage(error),
+            kind: "error",
+          });
+        }
+        return;
+      }
+      case "close-terminal":
+        this.apply({ type: "close-terminal-tab" });
+        return;
+      case "switch-terminal-tab":
+        this.apply({ type: "switch-terminal-tab", direction: intent.direction });
+        return;
+      case "scroll-terminal":
+        if (this.#state.activeTerminalId) {
+          const id = this.#state.activeTerminalId;
+          const current = this.#state.terminalScrollTop?.[id] ?? 0;
+          this.apply({
+            type: "set-terminal-scroll",
+            terminalId: id,
+            offset: Math.max(0, current + (intent.direction < 0 ? -5 : 5)),
+          });
+        }
+        return;
+      case "reconnect-terminal":
+        if (this.#state.activeTerminalId)
+          await this.handleIntent({
+            type: "open-terminal",
+            terminalId: this.#state.activeTerminalId,
+          });
+        return;
+      case "kill-terminal": {
+        const id = this.#state.activeTerminalId;
+        if (!id) return;
+        this.apply({
+          type: "open-modal",
+          modal: { type: "confirm", action: "kill-terminal", terminalId: id },
+        });
+        return;
+      }
+      case "kill-terminal-confirmed": {
+        try {
+          await this.gateway.killTerminal(intent.terminalId);
+          await this.#terminalObservations.get(intent.terminalId)?.release();
+          this.#terminalObservations.delete(intent.terminalId);
+          this.apply({ type: "close-terminal-tab", terminalId: intent.terminalId });
+          this.apply({ type: "close-modal" });
+        } catch (error) {
+          this.apply({
+            type: "notify",
+            message: "Could not terminate terminal.",
+            detail: errorMessage(error),
+            kind: "error",
+          });
+        }
+        return;
+      }
+      case "set-terminal-mode":
+        this.apply({ type: "set-terminal-mode", mode: intent.mode });
+        return;
+      case "terminal-input":
+        if (this.#state.activeTerminalId && this.#state.terminalMode === "insert")
+          this.gateway.sendTerminalInput(this.#state.activeTerminalId, intent.data);
+        return;
       case "select-next":
         await this.moveSelection(intent.direction);
         return;
@@ -253,6 +399,18 @@ export class ApplicationController {
         return;
       case "open-confirmation":
         {
+          if (intent.action === "kill-terminal") {
+            this.apply({
+              type: "open-modal",
+              modal: {
+                type: "confirm",
+                action: intent.action,
+                ...(intent.terminalId ? { terminalId: intent.terminalId } : {}),
+              },
+            });
+            return;
+          }
+          if (!intent.agentId) return;
           const draft = this.#state.composer.drafts[intent.agentId] ?? "";
           this.apply({
             type: "open-modal",
@@ -392,6 +550,30 @@ export class ApplicationController {
       case "create-choice":
         await this.applyChoice(intent.choice);
         return;
+      case "open-create-terminal":
+        if (intent.workspaceId)
+          this.apply({
+            type: "open-modal",
+            modal: { type: "create-terminal", workspaceId: intent.workspaceId, name: "" },
+          });
+        return;
+      case "set-terminal-name":
+        this.apply({ type: "set-terminal-name", name: intent.name });
+        return;
+      case "submit-terminal-name": {
+        if (this.#state.modal.type !== "create-terminal") return;
+        const name = this.#state.modal.name.trim();
+        if (!name || name.length > 64) {
+          this.apply({
+            type: "open-modal",
+            modal: { ...this.#state.modal, error: "Enter a name between 1 and 64 characters." },
+          });
+          return;
+        }
+        await this.createWorkspaceTerminal(this.#state.modal.workspaceId, name);
+        this.apply({ type: "close-modal" });
+        return;
+      }
     }
   }
 
@@ -482,6 +664,13 @@ export class ApplicationController {
     if (selection?.kind === "session") {
       await this.selectAgent(selection.id);
       return;
+    }
+    if (selection?.kind === "workspace") {
+      const terminal = this.#state.workspaceTerminals?.[selection.id]?.[0];
+      if (terminal) {
+        await this.handleIntent({ type: "open-terminal", terminalId: terminal.id });
+        return;
+      }
     }
     const id = selection?.id ?? this.#state.selectedWorkspaceId ?? this.#state.selectedProjectId;
     if (id) this.apply({ type: "toggle-expanded", id });
@@ -930,6 +1119,15 @@ function errorMessage(error: unknown): string {
   return error instanceof PaseoGatewayError
     ? error.message
     : redactTransportDetail(error instanceof Error ? error.message : String(error));
+}
+
+function sanitizeObservedTerminal(value: string): string {
+  const esc = String.fromCharCode(0x1b);
+  return sanitizeTerminalText(
+    value
+      .replaceAll(new RegExp(`${esc}\\][^\\u0007]*(?:\\u0007|${esc}\\\\)`, "g"), "")
+      .replaceAll(new RegExp(`${esc}\\[[0-?]*[ -/]*[@-~]`, "g"), ""),
+  );
 }
 
 function errorDetail(error: unknown): string {

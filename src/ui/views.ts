@@ -262,11 +262,18 @@ class SessionTabsView implements Component {
       .flat()
       .map((id) => this.state.directory.agents.find((agent) => agent.id === id))
       .filter((agent): agent is NonNullable<typeof agent> => agent !== undefined);
-    if (!tabs.length)
+    const terminals = (this.state.openTerminalIds ?? [])
+      .map((id) =>
+        Object.values(this.state.workspaceTerminals ?? {})
+          .flat()
+          .find((terminal) => terminal.id === id),
+      )
+      .filter((item): item is NonNullable<typeof item> => item !== undefined);
+    if (!tabs.length && !terminals.length)
       return [
         this.theme.style(
           "muted",
-          `Tabs ${this.paseoHost ? `${this.paseoHost} ${this.theme.glyph("bullet")} ` : ""}(open a session with Enter)`,
+          `Tabs ${this.paseoHost ? `${this.paseoHost} ${this.theme.glyph("bullet")} ` : ""}(open a session or terminal with Enter)`,
         ),
       ];
     const activeIndex = Math.max(
@@ -294,7 +301,55 @@ class SessionTabsView implements Component {
       used += label.length;
     }
     const prefix = activeIndex > 0 ? `${this.theme.glyph("ellipsis")} ` : "";
-    return [this.theme.clipOwnedLabel(prefix + labels.join(this.theme.glyph("divider")), width)];
+    const terminalLabels = terminals.map((terminal) =>
+      this.theme.styleRendered(
+        terminal.id === this.state.activeTerminalId ? "selection" : "muted",
+        ` ⌁ ${terminal.name} `,
+      ),
+    );
+    return [
+      this.theme.clipOwnedLabel(
+        prefix +
+          labels.join(this.theme.glyph("divider")) +
+          terminalLabels.join(this.theme.glyph("divider")),
+        width,
+      ),
+    ];
+  }
+}
+
+class ContentPane implements Component {
+  private state: AppState;
+  constructor(
+    private readonly timeline: TimelineView,
+    private readonly theme: DeckTheme,
+    state: AppState,
+  ) {
+    this.state = state;
+  }
+  update(state: AppState): void {
+    this.state = state;
+  }
+  invalidate(): void {
+    this.timeline.invalidate();
+  }
+  render(width: number): string[] {
+    if (this.state.activeTerminalId) {
+      const mode = (this.state.terminalMode ?? "normal").toUpperCase();
+      const stale = (this.state.staleTerminalIds ?? new Set()).has(this.state.activeTerminalId)
+        ? " STALE"
+        : "";
+      return [
+        this.theme.styleRendered(
+          "header",
+          this.theme.clipRendered(`${mode} Terminal${stale}`, width),
+        ),
+        ...(this.state.terminalLines?.[this.state.activeTerminalId] ?? [])
+          .slice(this.state.terminalScrollTop?.[this.state.activeTerminalId] ?? 0)
+          .map((line) => clipTerminalLine(line, width)),
+      ];
+    }
+    return this.timeline.render(width);
   }
 }
 
@@ -1296,6 +1351,7 @@ export class DeckTui {
   private readonly treeTranscript: ScrollView;
   private sidebarOverlay: OverlayHandle | undefined;
   private readonly transcript: TimelineScrollView;
+  private readonly contentPane: ContentPane;
   private readonly minimumSize: MinimumSizeView;
   private treeWidth: number;
   private appOverlay: OverlayHandle | undefined;
@@ -1355,11 +1411,12 @@ export class DeckTui {
     this.timeline = new TimelineView(this.theme);
     this.timeline.update(initialState.timeline.items);
     this.timeline.updateSelection(initialState);
+    this.contentPane = new ContentPane(this.timeline, this.theme, initialState);
     this.composer = new ComposerView(this.tui, initialState, emit, this.theme);
     this.status = new StatusView(initialState, this.theme, () => this.reconnectClock.now());
     this.minimumSize = new MinimumSizeView(this.theme);
     this.treeTranscript = new ScrollView(this.tree, { follow: "none", scrollbar: "auto" });
-    this.transcript = new TimelineScrollView(this.timeline, (following) => {
+    this.transcript = new TimelineScrollView(this.contentPane, (following) => {
       if (following) this.setTimelineFollowing(true);
       else this.pauseTimeline();
     });
@@ -1500,9 +1557,10 @@ export class DeckTui {
     const recoveryChanged =
       state.timeline.recoveryRevision !== this.state.timeline.recoveryRevision;
     this.state = state;
+    this.tabs.update(state);
+    this.contentPane.update(state);
     this.syncReconnectTicker();
     this.tree.update(state);
-    this.tabs.update(state);
     this.timeline.update(state.timeline.items);
     this.timeline.updateSelection(state);
     this.composer.update(state);
@@ -2075,6 +2133,17 @@ export class DeckTui {
         close,
         this.theme,
       );
+    else if (modal.type === "create-terminal")
+      component = new InputDialog(
+        `Create terminal in ${modal.workspaceId}`,
+        modal.name,
+        (value) => {
+          this.emit({ type: "set-terminal-name", name: value });
+          this.emit({ type: "submit-terminal-name" });
+        },
+        close,
+        this.theme,
+      );
     else if (modal.type === "confirm")
       component = new Dialog(
         [
@@ -2164,7 +2233,10 @@ export class DeckTui {
       } else {
         component = new ChoiceDialog(
           titleForModal(modal.type),
-          agentChoices(this.state, modal.type),
+          agentChoices(
+            this.state,
+            modal.type === "mode" || modal.type === "thinking" ? modal.type : "mode",
+          ),
           (choice) => this.emit({ type: "create-choice", choice }),
           close,
           this.theme,

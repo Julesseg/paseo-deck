@@ -27,6 +27,7 @@ export type CommandContext =
   | "filter"
   | "rename"
   | "create-agent"
+  | "create-terminal"
   | "mode"
   | "thinking"
   | "error-details"
@@ -53,6 +54,39 @@ const requireRemoteAgent = (state: AppState): string | undefined =>
   requireConnected(state) ?? requireAgent(state);
 
 export const deckCommands: readonly DeckCommand[] = [
+  {
+    id: "terminal-create",
+    label: "Create named workspace terminal",
+    group: "Sessions",
+    shortcuts: [],
+    contexts: ["tree", "timeline"],
+    palette: true,
+    disabledReason: (state) => (state.selectedWorkspaceId ? undefined : "Select a workspace first"),
+    intent: (state) => ({
+      type: "open-create-terminal",
+      workspaceId: state.selectedWorkspaceId ?? "",
+    }),
+  },
+  {
+    id: "terminal-kill",
+    label: "Terminate active terminal (confirm)",
+    group: "Sessions",
+    shortcuts: ["gk"],
+    contexts: ["timeline", "tree"],
+    palette: true,
+    disabledReason: (state) => (state.activeTerminalId ? undefined : "No active terminal tab"),
+    intent: () => ({ type: "kill-terminal" }),
+  },
+  {
+    id: "terminal-close",
+    label: "Close active terminal tab",
+    group: "Sessions",
+    shortcuts: ["gc"],
+    contexts: ["timeline", "tree"],
+    palette: true,
+    disabledReason: (state) => (state.activeTerminalId ? undefined : "No active terminal tab"),
+    intent: () => ({ type: "close-terminal" }),
+  },
   {
     id: "tab-close",
     label: "Close active session tab",

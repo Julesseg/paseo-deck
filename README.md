@@ -94,6 +94,16 @@ CI enforces one required `check` result backed by:
 | `Esc` | Close a dialog or cancel editing |
 | `q` / `Ctrl-C` | Quit and restore the terminal |
 
+Workspace terminals are separate from session tabs. Select a workspace to discover its
+daemon-owned terminals, then open one as a terminal tab. Terminal tabs start in normal
+mode: `gt`/`gT` switch tabs, `gc` closes the tab without stopping its process, `i` enters
+insert mode and forwards literal input (including supported escape sequences), and `Esc`
+returns to terminal normal mode. `r` reconnects a stale terminal; killing a terminal is a
+separate confirmed action (`gk`). In terminal normal mode, `gt`/`gT` switch terminal tabs
+and Ctrl-D/Ctrl-U or the arrow keys scroll captured output. Unsupported daemon terminal
+capabilities are reported as an actionable notification; named terminals can be created
+through the command palette for the selected workspace.
+
 ## Supported in v0.1
 
 - Project, workspace, and session discovery with filtering and attention markers
@@ -108,6 +118,7 @@ CI enforces one required `check` result backed by:
 - Default local, `--home`, and direct TCP daemon targets
 - Responsive narrow-terminal layout, semantic color, no-color and ASCII fallbacks, and terminal restoration on exit
 - Versioned, target-scoped persistence for safe presentation preferences and open session tabs
+- Workspace terminal discovery, captured scrollback, reconnect, safe tab closure, and explicit termination
 
 ## Preferences
 

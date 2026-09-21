@@ -6,10 +6,12 @@ import type {
   TimelineEvent,
   UsageSummary,
 } from "./domain.js";
+import type { TerminalRecord } from "./terminal.js";
 
 export type FocusArea = "tree" | "timeline" | "composer";
 export type ComposerMode = "normal" | "insert" | "visual";
 export type TimelineMode = "normal" | "visual";
+export type TerminalMode = "normal" | "insert";
 export type TreeOrder = "attention" | "alphabetical";
 export type SidebarSelection = { kind: "project" | "workspace" | "session"; id: string };
 
@@ -18,10 +20,12 @@ export type ModalState =
   | { type: "help" }
   | { type: "notifications"; index: number }
   | { type: "filter"; query: string }
+  | { type: "create-terminal"; workspaceId: string; name: string; error?: string }
   | {
       type: "confirm";
-      action: "stop" | "archive" | "detach";
-      agentId: string;
+      action: "stop" | "archive" | "detach" | "kill-terminal";
+      agentId?: string;
+      terminalId?: string;
       draftWarning?: boolean;
     }
   | {
@@ -141,6 +145,14 @@ export interface AppState {
   composer: ComposerState;
   /** Successful creation choices, isolated by workspace for the current run. */
   creationDefaults: Readonly<Record<string, CreationDefaults>>;
+  /** Workspace terminals are presentation tabs, never session tabs. */
+  workspaceTerminals?: Readonly<Record<string, readonly TerminalRecord[]>>;
+  openTerminalIds?: readonly string[];
+  activeTerminalId?: string;
+  terminalMode?: TerminalMode;
+  terminalLines?: Readonly<Record<string, readonly string[]>>;
+  terminalScrollTop?: Readonly<Record<string, number>>;
+  staleTerminalIds?: ReadonlySet<string>;
   /** Bounded FIFO; notification is retained as the currently selected entry. */
   notifications: readonly NotificationState[];
   activeNotificationId?: number;
