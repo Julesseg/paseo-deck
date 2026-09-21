@@ -22,8 +22,9 @@ export type ModalState =
   | { type: "filter"; query: string }
   | {
       type: "confirm";
-      action: "stop" | "archive" | "detach";
-      agentId: string;
+      action: "stop" | "archive" | "detach" | "kill-terminal";
+      agentId?: string;
+      terminalId?: string;
       draftWarning?: boolean;
     }
   | {

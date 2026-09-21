@@ -30,6 +30,7 @@ export type AppAction =
   | { type: "set-terminals"; workspaceId: string; terminals: readonly TerminalRecord[] }
   | { type: "open-terminal-tab"; terminalId: string }
   | { type: "close-terminal-tab"; terminalId?: string }
+  | { type: "switch-terminal-tab"; direction: -1 | 1 }
   | { type: "set-terminal-mode"; mode: TerminalMode }
   | { type: "terminal-lines"; terminalId: string; lines: readonly string[]; stale?: boolean }
   | { type: "select-sidebar"; selection?: AppState["sidebarSelection"] }
@@ -834,16 +835,26 @@ export function reduceApp(state: AppState, action: AppAction): AppState {
         ? reduceApp(state, { type: "select-agent", agentId: nextId, preserveSidebar: true })
         : state;
     }
-    case "set-terminals":
-      return {
+    case "set-terminals": {
+      const known = new Set(action.terminals.map((terminal) => terminal.id));
+      const previous = state.workspaceTerminals?.[action.workspaceId] ?? [];
+      const missing = new Set(
+        previous.map((terminal) => terminal.id).filter((id) => !known.has(id)),
+      );
+      const openTerminalIds = (state.openTerminalIds ?? []).filter((id) => !missing.has(id));
+      const next: AppState = {
         ...state,
         workspaceTerminals: { ...state.workspaceTerminals, [action.workspaceId]: action.terminals },
+        openTerminalIds,
         staleTerminalIds: new Set(
           [...(state.staleTerminalIds ?? [])].filter((id) =>
             action.terminals.some((terminal) => terminal.id === id),
           ),
         ),
       };
+      if (missing.has(state.activeTerminalId ?? "")) delete next.activeTerminalId;
+      return next;
+    }
     case "open-terminal-tab": {
       const terminal = Object.values(state.workspaceTerminals ?? {})
         .flat()
@@ -870,6 +881,20 @@ export function reduceApp(state: AppState, action: AppAction): AppState {
         else delete next.activeTerminalId;
       }
       return next;
+    }
+    case "switch-terminal-tab": {
+      const ids = state.openTerminalIds ?? [];
+      if (ids.length < 2) return state;
+      const current = state.activeTerminalId ?? ids[0];
+      if (!current) return state;
+      const index = Math.max(0, ids.indexOf(current));
+      const nextId = ids[(index + action.direction + ids.length) % ids.length];
+      if (!nextId) return state;
+      return {
+        ...state,
+        activeTerminalId: nextId,
+        terminalMode: "normal",
+      };
     }
     case "set-terminal-mode":
       return { ...state, terminalMode: action.mode };

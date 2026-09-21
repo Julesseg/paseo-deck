@@ -99,8 +99,10 @@ daemon-owned terminals, then open one as a terminal tab. Terminal tabs start in 
 mode: `gt`/`gT` switch tabs, `gc` closes the tab without stopping its process, `i` enters
 insert mode and forwards literal input (including supported escape sequences), and `Esc`
 returns to terminal normal mode. `r` reconnects a stale terminal; killing a terminal is a
-separate confirmed action. Unsupported daemon terminal capabilities are reported as an
-actionable notification.
+separate confirmed action (`gk`). In terminal normal mode, `gt`/`gT` switch terminal tabs
+and Ctrl-D/Ctrl-U or the arrow keys scroll captured output. Unsupported daemon terminal
+capabilities are reported as an actionable notification; named terminals can be created
+through the command palette for the selected workspace.
 
 ## Supported in v0.1
 

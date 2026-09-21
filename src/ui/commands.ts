@@ -54,6 +54,16 @@ const requireRemoteAgent = (state: AppState): string | undefined =>
 
 export const deckCommands: readonly DeckCommand[] = [
   {
+    id: "terminal-kill",
+    label: "Terminate active terminal (confirm)",
+    group: "Sessions",
+    shortcuts: ["gk"],
+    contexts: ["timeline", "tree"],
+    palette: true,
+    disabledReason: (state) => (state.activeTerminalId ? undefined : "No active terminal tab"),
+    intent: () => ({ type: "kill-terminal" }),
+  },
+  {
     id: "terminal-close",
     label: "Close active terminal tab",
     group: "Sessions",

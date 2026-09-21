@@ -251,14 +251,27 @@ export class ApplicationController {
       case "close-terminal":
         this.apply({ type: "close-terminal-tab" });
         return;
+      case "switch-terminal-tab":
+        this.apply({ type: "switch-terminal-tab", direction: intent.direction });
+        return;
+      case "scroll-terminal":
+        return;
       case "kill-terminal": {
         const id = this.#state.activeTerminalId;
         if (!id) return;
+        this.apply({
+          type: "open-modal",
+          modal: { type: "confirm", action: "kill-terminal", terminalId: id },
+        });
+        return;
+      }
+      case "kill-terminal-confirmed": {
         try {
-          await this.gateway.killTerminal(id);
-          await this.#terminalObservations.get(id)?.release();
-          this.#terminalObservations.delete(id);
-          this.apply({ type: "close-terminal-tab", terminalId: id });
+          await this.gateway.killTerminal(intent.terminalId);
+          await this.#terminalObservations.get(intent.terminalId)?.release();
+          this.#terminalObservations.delete(intent.terminalId);
+          this.apply({ type: "close-terminal-tab", terminalId: intent.terminalId });
+          this.apply({ type: "close-modal" });
         } catch (error) {
           this.apply({
             type: "notify",
@@ -361,6 +374,18 @@ export class ApplicationController {
         return;
       case "open-confirmation":
         {
+          if (intent.action === "kill-terminal") {
+            this.apply({
+              type: "open-modal",
+              modal: {
+                type: "confirm",
+                action: intent.action,
+                ...(intent.terminalId ? { terminalId: intent.terminalId } : {}),
+              },
+            });
+            return;
+          }
+          if (!intent.agentId) return;
           const draft = this.#state.composer.drafts[intent.agentId] ?? "";
           this.apply({
             type: "open-modal",

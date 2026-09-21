@@ -11,6 +11,9 @@ export type UiIntent =
   | { type: "open-terminal"; terminalId: string }
   | { type: "close-terminal" }
   | { type: "kill-terminal" }
+  | { type: "kill-terminal-confirmed"; terminalId: string }
+  | { type: "switch-terminal-tab"; direction: -1 | 1 }
+  | { type: "scroll-terminal"; direction: -1 | 1 }
   | { type: "set-terminal-mode"; mode: "normal" | "insert" }
   | { type: "terminal-input"; data: string }
   | { type: "select-next"; direction: -1 | 1 }
@@ -33,7 +36,12 @@ export type UiIntent =
   | { type: "toggle-symbol-set" }
   | { type: "open-create-agent"; workspaceId: string; step: "provider" }
   | { type: "creation-back" }
-  | { type: "open-confirmation"; action: "stop" | "archive" | "detach"; agentId: string }
+  | {
+      type: "open-confirmation";
+      action: "stop" | "archive" | "detach" | "kill-terminal";
+      agentId?: string;
+      terminalId?: string;
+    }
   | { type: "open-rename"; agentId: string }
   | { type: "open-mode"; agentId: string }
   | { type: "open-thinking"; agentId: string }
@@ -103,8 +111,23 @@ export class DeckController {
       if (state.terminalMode === "insert") return this.send({ type: "terminal-input", data });
       if (data === "i") return this.send({ type: "set-terminal-mode", mode: "insert" });
       if (data === "q") return this.send({ type: "close-terminal" });
-      if (data === "k") return this.send({ type: "kill-terminal" });
-      if (data === "g") return false;
+      if (data === "g") {
+        this.#tabPrefix = "g";
+        return true;
+      }
+      if (this.#tabPrefix === "g" && (data === "t" || data === "T")) {
+        this.#tabPrefix = "";
+        return this.send({ type: "switch-terminal-tab", direction: data === "t" ? 1 : -1 });
+      }
+      if (this.#tabPrefix === "g" && data === "k") {
+        this.#tabPrefix = "";
+        return this.send({ type: "kill-terminal" });
+      }
+      if (data === "\u001b[A" || data === "\u001b[B" || data === "\u0004" || data === "\u0015")
+        return this.send({
+          type: "scroll-terminal",
+          direction: data === "\u001b[A" || data === "\u0015" ? -1 : 1,
+        });
     }
     // ProcessTerminal enables raw mode, so Ctrl+C is delivered as input rather
     // than raising SIGINT. It must remain a global escape hatch even while an
@@ -285,6 +308,12 @@ export class DeckController {
   }
 
   confirm(modal: Extract<ModalState, { type: "confirm" }>): void {
+    if (modal.action === "kill-terminal") {
+      if (modal.terminalId)
+        this.emit({ type: "kill-terminal-confirmed", terminalId: modal.terminalId });
+      return;
+    }
+    if (!modal.agentId) return;
     const command = confirmedCommand(modal.action, modal.agentId);
     this.emit({ type: "command", command });
   }
