@@ -270,7 +270,12 @@ class SessionTabsView implements Component {
       )
       .filter((item): item is NonNullable<typeof item> => item !== undefined);
     if (!tabs.length && !terminals.length)
-      return [this.theme.style("muted", `Tabs ${this.paseoHost ? `${this.paseoHost} ${this.theme.glyph("bullet")} ` : ""}(open a session or terminal with Enter)`)];
+      return [
+        this.theme.style(
+          "muted",
+          `Tabs ${this.paseoHost ? `${this.paseoHost} ${this.theme.glyph("bullet")} ` : ""}(open a session or terminal with Enter)`,
+        ),
+      ];
     const activeIndex = Math.max(
       0,
       tabs.findIndex((agent) => agent.id === active),
