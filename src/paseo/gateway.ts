@@ -180,6 +180,13 @@ export class ProductionPaseoGateway implements PaseoGateway {
     const client = this.requireClient();
     let active = true;
     let previous = "";
+    try {
+      previous = (await client.terminals.ref(terminalId).capture({ start: -2000 })).lines.join(
+        "\n",
+      );
+    } catch (error) {
+      throw paseoFailure(error, "subscription");
+    }
     const poll = async (): Promise<void> => {
       if (!active) return;
       try {

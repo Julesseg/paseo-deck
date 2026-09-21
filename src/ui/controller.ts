@@ -8,6 +8,11 @@ type TimelineTextMotionKey = (typeof timelineTextMotionKeys)[number];
 export type UiIntent =
   | { type: "switch-tab"; direction: -1 | 1; count?: number }
   | { type: "close-tab" }
+  | { type: "open-terminal"; terminalId: string }
+  | { type: "close-terminal" }
+  | { type: "kill-terminal" }
+  | { type: "set-terminal-mode"; mode: "normal" | "insert" }
+  | { type: "terminal-input"; data: string }
   | { type: "select-next"; direction: -1 | 1 }
   | { type: "select-boundary"; boundary: "start" | "end" }
   | { type: "collapse-or-expand"; direction: -1 | 1 }
@@ -84,6 +89,23 @@ export class DeckController {
 
   handleKey(data: string): boolean {
     const state = this.getState();
+    if (
+      state.activeTerminalId !== undefined &&
+      state.terminalMode !== undefined &&
+      state.terminalLines !== undefined &&
+      state.focus === "timeline" &&
+      state.modal.type === "none"
+    ) {
+      if (data === "\u001b")
+        return state.terminalMode === "insert"
+          ? this.send({ type: "set-terminal-mode", mode: "normal" })
+          : this.send({ type: "set-focus", focus: "composer" });
+      if (state.terminalMode === "insert") return this.send({ type: "terminal-input", data });
+      if (data === "i") return this.send({ type: "set-terminal-mode", mode: "insert" });
+      if (data === "q") return this.send({ type: "close-terminal" });
+      if (data === "k") return this.send({ type: "kill-terminal" });
+      if (data === "g") return false;
+    }
     // ProcessTerminal enables raw mode, so Ctrl+C is delivered as input rather
     // than raising SIGINT. It must remain a global escape hatch even while an
     // editor or modal owns the keyboard.
