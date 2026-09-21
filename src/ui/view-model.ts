@@ -5,6 +5,7 @@ import { activeNotification } from "../state/store.js";
 import { clipTerminalLine, sanitizeTerminalText, wrapTerminalText } from "./text-safety.js";
 
 export type TreeRowKind = "project" | "workspace" | "agent";
+export type WorkspaceActivity = "attention" | "working" | "idle" | "done";
 
 export interface TreeRow {
   id: string;
@@ -20,6 +21,12 @@ export interface TreeRow {
   permissionCount: number;
   agentCount?: number;
   attentionCount?: number;
+  /** Derived workspace activity, or an agent's status for session rows. */
+  activity?: WorkspaceActivity;
+  /** The workspace containing the active session. */
+  active?: boolean;
+  /** Number of blank lines before this row, used for semantic grouping. */
+  gapBefore?: number;
 }
 
 const OTHER_ID = "__paseo_deck_other__";
@@ -45,6 +52,22 @@ function activityTimestamp(agent: AgentRecord): number {
   if (agent.lastActivityAt === undefined) return Number.NEGATIVE_INFINITY;
   const timestamp = Date.parse(agent.lastActivityAt);
   return Number.isNaN(timestamp) ? Number.NEGATIVE_INFINITY : timestamp;
+}
+
+export function activityForAgent(agent: AgentRecord): WorkspaceActivity {
+  if (needsIntervention(agent)) return "attention";
+  if (agent.status === "running" || agent.status === "starting") return "working";
+  if (["stopped", "archived", "failed"].includes(agent.status)) return "done";
+  return "idle";
+}
+
+export function activityForAgents(agents: readonly AgentRecord[]): WorkspaceActivity {
+  if (agents.some(needsIntervention)) return "attention";
+  if (agents.some((agent) => agent.status === "running" || agent.status === "starting"))
+    return "working";
+  if (agents.some((agent) => !["stopped", "archived", "failed"].includes(agent.status)))
+    return "idle";
+  return "done";
 }
 
 function compareAgents(
@@ -163,6 +186,13 @@ export function deriveTreeRows(state: AppState): TreeRow[] {
         permissionCount: 0,
         agentCount: workspaceAllAgents.length,
         attentionCount: workspaceAllAgents.filter(needsIntervention).length,
+        activity: activityForAgents(workspaceAllAgents),
+        active:
+          workspace.id ===
+          state.directory.agents.find(
+            (agent) => agent.id === (state.activeSessionId ?? state.selectedAgentId),
+          )?.workspaceId,
+        gapBefore: rows.at(-1)?.kind === "workspace" ? 1 : 0,
       });
       if (!workspaceExpanded) continue;
       const workspaceAgents = state.directory.agents
@@ -175,7 +205,8 @@ export function deriveTreeRows(state: AppState): TreeRow[] {
         )
         .sort((left, right) => compareAgents(left, right, state.treeOrder));
       for (const agent of workspaceAgents) {
-        rows.push(agentRow(agent, state.selectedAgentId, state.sidebarSelection));
+        const row = agentRow(agent, state.selectedAgentId, state.sidebarSelection);
+        rows.push({ ...row, gapBefore: workspaceAgents.indexOf(agent) > 0 ? 1 : 0 });
       }
     }
   }
@@ -200,6 +231,7 @@ function agentRow(
     attention: needsIntervention(agent),
     permissionCount: agent.pendingPermissions.length,
     ...(activityLabel === undefined ? {} : { activityLabel }),
+    activity: activityForAgent(agent),
   };
 }
 

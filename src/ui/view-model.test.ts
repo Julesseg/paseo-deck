@@ -4,6 +4,8 @@ import type { AppState } from "../contracts/app-state.js";
 import { emptyDirectory } from "../contracts/app-state.js";
 import { terminalDisplayWidth } from "./text-safety.js";
 import {
+  activityForAgent,
+  activityForAgents,
   deriveTreeRows,
   renderDashboard,
   timelineDisplay,
@@ -63,6 +65,29 @@ function state(): AppState {
 }
 
 describe("tree view model", () => {
+  it.each([
+    ["attention", { status: "idle", needsAttention: true, pendingPermissions: [] }],
+    ["working", { status: "running", needsAttention: false, pendingPermissions: [] }],
+    ["idle", { status: "idle", needsAttention: false, pendingPermissions: [] }],
+    ["done", { status: "stopped", needsAttention: false, pendingPermissions: [] }],
+  ] as const)("derives %s session activity", (expected, overrides) => {
+    const base = state().directory.agents[0];
+    if (!base) throw new Error("fixture requires an agent");
+    const agent = { ...base, ...overrides };
+    expect(activityForAgent(agent)).toBe(expected);
+  });
+
+  it("gives workspace attention precedence over working activity", () => {
+    const base = state().directory.agents[0];
+    if (!base) throw new Error("fixture requires an agent");
+    expect(
+      activityForAgents([
+        { ...base, status: "running", needsAttention: false },
+        { ...base, id: "attention", status: "idle", needsAttention: true },
+      ]),
+    ).toBe("attention");
+  });
+
   it("keeps workspace identity and places unowned workspaces in Other", () => {
     const rows = deriveTreeRows(state());
 
@@ -219,6 +244,35 @@ describe("tree view model", () => {
         .filter((row) => row.kind === "agent")
         .map((row) => row.id),
     ).toEqual(["permission", "failed", "older", "recent", "running"]);
+  });
+
+  it("derives workspace activity with attention taking precedence and groups sessions", () => {
+    const base = state().directory.agents[0];
+    if (!base) throw new Error("fixture requires an agent");
+    const rows = deriveTreeRows({
+      ...state(),
+      directory: {
+        ...state().directory,
+        projects: [{ id: "p", name: "Project" }],
+        workspaces: [
+          { id: "w", projectId: "p", title: "Workspace", directory: "/w", archived: false },
+        ],
+        agents: [
+          { ...base, id: "working", status: "running", needsAttention: false },
+          { ...base, id: "attention", status: "idle", needsAttention: true },
+        ],
+      },
+      expandedIds: new Set(["p", "w"]),
+    });
+    expect(rows.find((row) => row.kind === "workspace")).toMatchObject({
+      activity: "attention",
+    });
+    expect(
+      rows
+        .filter((row) => row.kind === "agent")
+        .slice(1)
+        .every((row) => row.gapBefore === 1),
+    ).toBe(true);
   });
 
   it("filters to attention while retaining context, hides archived records, and omits empty groups", () => {

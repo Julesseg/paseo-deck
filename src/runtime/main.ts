@@ -135,6 +135,7 @@ export async function runInteractive(
     {
       appearance,
       treeWidth: preferenceSession.treeWidth(),
+      ...(target.type === "host" ? { paseoHost: target.value } : {}),
       ...(requestedTheme ? { requestedTheme } : {}),
       ...(requested.symbolSet ? { requestedSymbolSet: requested.symbolSet } : {}),
       onPreferencesChanged: (value) => {

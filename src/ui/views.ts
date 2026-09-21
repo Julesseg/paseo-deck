@@ -34,6 +34,7 @@ import {
   MIN_TERMINAL_COLUMNS,
   MIN_TERMINAL_ROWS,
   MIN_TREE_WIDTH,
+  NARROW_SIDEBAR_WIDTH,
   shellLayout,
 } from "./layout.js";
 import { type RenderClock, RenderScheduler } from "./render-scheduler.js";
@@ -88,6 +89,7 @@ export interface DeckTuiOptions {
     theme?: "ember" | "plain";
     symbolSet?: "unicode" | "ascii";
   }) => void;
+  paseoHost?: string;
 }
 
 const systemRenderClock: RenderClock = {
@@ -96,11 +98,22 @@ const systemRenderClock: RenderClock = {
   clearTimeout: (handle) => clearTimeout(handle as ReturnType<typeof setTimeout>),
 };
 
+function hostLabel(target: string | undefined): string | undefined {
+  if (!target?.trim()) return undefined;
+  const value = target.trim().replace(/^tcp:\/\//i, "");
+  const host = value.split("/")[0]?.trim();
+  return host || undefined;
+}
+
 class TreeView implements Component {
   constructor(
     private state: AppState,
     private readonly theme: DeckTheme,
-  ) {}
+    paseoHost?: string,
+  ) {
+    this.paseoHost = hostLabel(paseoHost);
+  }
+  private readonly paseoHost: string | undefined;
   update(state: AppState): void {
     this.state = state;
   }
@@ -128,10 +141,10 @@ class TreeView implements Component {
     return [
       this.theme.style(
         this.state.focus === "tree" ? "focus" : "header",
-        `${this.state.focus === "tree" ? "" : "  "}Projects / workspaces`,
+        `${this.state.focus === "tree" ? "" : "  "}Projects / workspaces${this.paseoHost ? ` ${this.theme.glyph("bullet")} ${sanitizeTerminalText(this.paseoHost)}` : ""}`,
       ),
       ...rows.flatMap((row) => {
-        const selected = row.selected ? ">" : " ";
+        const selected = " ";
         const branch =
           row.kind === "agent"
             ? this.theme.glyph("agent")
@@ -140,45 +153,58 @@ class TreeView implements Component {
               : this.theme.glyph("collapsed");
         const flags =
           row.kind === "agent"
-            ? `${row.permissionCount ? ` ${this.theme.glyph("permission")}` : ""}${row.attention ? ` ${this.theme.glyph("attention")}` : ""}${row.status ? ` ${row.status}` : ""}`
+            ? `${row.permissionCount ? ` ${this.theme.glyph("permission")}` : ""}${row.attention ? ` ${this.theme.glyph("attention")}` : ""}`
             : "";
-        const secondary = row.kind === "agent" || width < 34 ? "" : treeSecondary(row, this.theme);
+        const secondary = width < 34 || row.kind !== "agent" ? "" : treeSecondary(row, this.theme);
         const primary = this.theme.clipRendered(
           `${selected}${"  ".repeat(row.depth)}${branch} ${sanitizeTerminalText(row.label)}${flags}${secondary}`,
           width,
         );
+        const tone = row.attention
+          ? "attention"
+          : row.status === "failed"
+            ? "failure"
+            : row.status === "running"
+              ? "running"
+              : row.kind === "project"
+                ? "header"
+                : "muted";
         const styled = row.selected
           ? this.theme.styleBackground("selection", primary)
-          : this.theme.styleRendered(
-              row.attention
-                ? "attention"
-                : row.status === "failed"
-                  ? "failure"
-                  : row.status === "running"
-                    ? "running"
-                    : "muted",
-              primary,
-            );
-        if (row.kind !== "agent" || width < 34) return [styled];
+          : row.active
+            ? this.theme.styleBackground("muted", primary)
+            : row.kind === "project"
+              ? this.theme.styleBackground("header", primary)
+              : row.kind === "workspace"
+                ? this.theme.styleBackground("muted", primary)
+                : this.theme.styleRendered(tone, primary);
+        const output = row.gapBefore ? [" ".repeat(width), styled] : [styled];
+        const rowMetadata =
+          row.kind !== "agent" && row.activity
+            ? this.theme.styleRendered(
+                "muted",
+                this.theme.clipRendered(
+                  `${"  ".repeat(row.depth + 1)}${row.activity}${treeSecondary(row, this.theme)}`,
+                  width,
+                ),
+              )
+            : undefined;
+        if (rowMetadata && width >= 34) output.push(rowMetadata);
+        if (row.kind !== "agent" || width < 34) return output;
         const metadata = [row.providerModel, row.activityLabel]
           .filter((value): value is string => value !== undefined && value !== "")
           .map((value) => sanitizeTerminalText(value))
           .join(` ${this.theme.glyph("bullet")} `);
-        return metadata
+        const agentMetadata = metadata;
+        return agentMetadata
           ? [
-              styled,
+              ...output,
               this.theme.styleRendered(
                 "muted",
-                this.theme.clipRendered(
-                  `${"  ".repeat(row.depth + 1)}${metadata
-                    .split(" · ")
-                    .map((value) => sanitizeTerminalText(value))
-                    .join(` ${this.theme.glyph("bullet")} `)}`,
-                  width,
-                ),
+                this.theme.clipRendered(`${"  ".repeat(row.depth + 1)}${agentMetadata}`, width),
               ),
             ]
-          : [styled];
+          : output;
       }),
     ];
   }
@@ -186,12 +212,68 @@ class TreeView implements Component {
   selectedLineRange(width: number): { start: number; end: number } | undefined {
     let line = 1;
     for (const row of deriveTreeRows(this.state)) {
-      const height =
-        row.kind === "agent" && width >= 34 && (row.providerModel || row.activityLabel) ? 2 : 1;
+      const height = (row.gapBefore ?? 0) + (width >= 34 && row.activity ? 2 : 1);
       if (row.selected) return { start: line, end: line + height - 1 };
       line += height;
     }
     return undefined;
+  }
+}
+
+class SessionTabsView implements Component {
+  private state: AppState;
+  private readonly paseoHost: string | undefined;
+  constructor(
+    state: AppState,
+    private readonly theme: DeckTheme,
+    paseoHost?: string,
+  ) {
+    this.state = state;
+    this.paseoHost = hostLabel(paseoHost);
+  }
+  update(state: AppState): void {
+    this.state = state;
+  }
+  invalidate(): void {}
+  render(width: number): string[] {
+    const active = this.state.activeSessionId;
+    const tabs = Object.values(this.state.openSessionIds ?? {})
+      .flat()
+      .map((id) => this.state.directory.agents.find((agent) => agent.id === id))
+      .filter((agent): agent is NonNullable<typeof agent> => agent !== undefined);
+    if (!tabs.length)
+      return [
+        this.theme.style(
+          "muted",
+          `Tabs ${this.paseoHost ? `${this.paseoHost} ${this.theme.glyph("bullet")} ` : ""}(open a session with Enter)`,
+        ),
+      ];
+    const activeIndex = Math.max(
+      0,
+      tabs.findIndex((agent) => agent.id === active),
+    );
+    const visibleOrder = [...tabs.slice(activeIndex), ...tabs.slice(0, activeIndex)];
+    let used = 0;
+    const labels: string[] = [];
+    for (const agent of visibleOrder) {
+      const attention = agent.needsAttention || agent.pendingPermissions.length > 0;
+      const marker = attention
+        ? this.theme.glyph("attention")
+        : agent.status === "running"
+          ? this.theme.glyph("running")
+          : this.theme.glyph("bullet");
+      const label = ` ${marker} ${sanitizeTerminalText(agent.title)} `;
+      if (used + label.length > width) break;
+      labels.push(
+        this.theme.styleRendered(
+          agent.id === active ? "selection" : attention ? "attention" : "muted",
+          label,
+        ),
+      );
+      used += label.length;
+    }
+    const prefix = activeIndex > 0 ? `${this.theme.glyph("ellipsis")} ` : "";
+    return [this.theme.clipOwnedLabel(prefix + labels.join(this.theme.glyph("divider")), width)];
   }
 }
 
@@ -209,54 +291,6 @@ class MinimumSizeView implements Component {
         ),
       ),
     ];
-  }
-}
-
-class SessionTabsView implements Component {
-  private state: AppState;
-  constructor(
-    state: AppState,
-    private readonly theme: DeckTheme,
-  ) {
-    this.state = state;
-  }
-  update(state: AppState): void {
-    this.state = state;
-  }
-  invalidate(): void {}
-  render(width: number): string[] {
-    const active = this.state.activeSessionId;
-    const tabs = Object.values(this.state.openSessionIds ?? {})
-      .flat()
-      .map((id) => this.state.directory.agents.find((agent) => agent.id === id))
-      .filter((agent): agent is NonNullable<typeof agent> => agent !== undefined);
-    if (!tabs.length) return [this.theme.style("muted", "Tabs  (open a session with Enter)")];
-    const activeIndex = Math.max(
-      0,
-      tabs.findIndex((agent) => agent.id === active),
-    );
-    const visibleOrder = [...tabs.slice(activeIndex), ...tabs.slice(0, activeIndex)];
-    let used = 0;
-    const labels: string[] = [];
-    for (const agent of visibleOrder) {
-      const attention = agent.needsAttention || agent.pendingPermissions.length > 0;
-      const marker = attention
-        ? this.theme.glyph("attention")
-        : agent.status === "running"
-          ? this.theme.glyph("running")
-          : this.theme.glyph("bullet");
-      const label = ` ${marker} ${agent.title} `;
-      if (used + label.length > width) break;
-      labels.push(
-        this.theme.styleRendered(
-          agent.id === active ? "selection" : attention ? "attention" : "muted",
-          label,
-        ),
-      );
-      used += label.length;
-    }
-    const prefix = activeIndex > 0 ? `${this.theme.glyph("ellipsis")} ` : "";
-    return [this.theme.clipOwnedLabel(prefix + labels.join(this.theme.glyph("divider")), width)];
   }
 }
 
@@ -709,7 +743,7 @@ class StatusView implements Component {
       : "";
     const context = footerContext(this.state, width);
     const line = this.theme.clipRendered(
-      `${this.theme.label(context)} ${this.theme.glyph("bullet")} ${connection}${compact ? "" : `${separator}${details}${separator}permissions ${permissions}`}${notification}`,
+      `${selected ? `${details}${separator}` : `${this.theme.label(context)}${separator}`}${connection}${compact ? "" : `${separator}${selected ? this.theme.label(context) + separator : ""}${selected ? details + separator : ""}permissions ${permissions}`}${notification}`,
       width,
     );
     const tone =
@@ -728,7 +762,7 @@ function elapsed(since: number, now: number): string {
 
 function footerContext(state: AppState, width: number): string {
   if (state.modal.type !== "none") return "Dialog: Esc";
-  if (width < 70) {
+  if (width < 50) {
     switch (state.focus) {
       case "tree":
         return "Sidebar j/k Enter Esc";
@@ -1093,6 +1127,7 @@ export class DeckTui {
   private reconnectTicker: unknown;
   private started = false;
   private readonly treeTranscript: ScrollView;
+  private sidebarOverlay: OverlayHandle | undefined;
   private readonly transcript: TimelineScrollView;
   private readonly minimumSize: MinimumSizeView;
   private treeWidth: number;
@@ -1148,8 +1183,8 @@ export class DeckTui {
       () => this.state,
       (intent) => this.handleControllerIntent(intent),
     );
-    this.tree = new TreeView(initialState, this.theme);
-    this.tabs = new SessionTabsView(initialState, this.theme);
+    this.tree = new TreeView(initialState, this.theme, options.paseoHost);
+    this.tabs = new SessionTabsView(initialState, this.theme, options.paseoHost);
     this.timeline = new TimelineView(this.theme);
     this.timeline.update(initialState.timeline.items);
     this.timeline.updateSelection(initialState);
@@ -1210,7 +1245,6 @@ export class DeckTui {
       shellLayout(viewport.width, viewport.height, this.treeWidth).supported;
     this.tui.setLayoutRoot(
       new VStack([
-        { component: this.tabs, basis: "auto", minSize: 0, visible: supported },
         {
           component: new HStack(
             [
@@ -1219,8 +1253,21 @@ export class DeckTui {
                 basis: this.treeWidth,
                 shrink: 1,
                 minSize: MIN_TREE_WIDTH,
+                visible: (viewport) =>
+                  shellLayout(viewport.width, viewport.height, this.treeWidth).supported &&
+                  !shellLayout(viewport.width, viewport.height, this.treeWidth).narrow,
               },
-              { component: this.transcript, basis: 0, grow: 1, minSize: 10 },
+              {
+                component: new VStack([
+                  { component: this.tabs, basis: 1, minSize: 1 },
+                  { component: this.transcript, basis: 0, grow: 1, minSize: 8 },
+                  { component: this.composer, basis: "auto", minSize: 3 },
+                  { component: this.status, basis: 1, minSize: 1 },
+                ]),
+                basis: 0,
+                grow: 1,
+                minSize: 10,
+              },
             ],
             { gap: 2 },
           ),
@@ -1229,8 +1276,6 @@ export class DeckTui {
           minSize: 8,
           visible: supported,
         },
-        { component: this.composer, basis: "auto", minSize: 3, visible: supported },
-        { component: this.status, basis: 1, minSize: 1, visible: supported },
         {
           component: this.minimumSize,
           basis: 0,
@@ -1239,6 +1284,29 @@ export class DeckTui {
         },
       ]),
     );
+    this.syncSidebarOverlay();
+  }
+
+  private syncSidebarOverlay(): void {
+    const narrow = shellLayout(this.terminal.columns, this.terminal.rows, this.treeWidth).narrow;
+    const shouldShow = narrow && this.state.focus === "tree" && this.state.modal.type === "none";
+    if (shouldShow && !this.sidebarOverlay) {
+      this.sidebarOverlay = this.tui.showOverlay(this.treeTranscript, {
+        width: NARROW_SIDEBAR_WIDTH,
+        minWidth: MIN_TREE_WIDTH,
+        maxHeight: "100%",
+        margin: 0,
+        visible: (columns, rows) =>
+          shellLayout(columns, rows, this.treeWidth).supported &&
+          shellLayout(columns, rows, this.treeWidth).narrow &&
+          this.state.focus === "tree" &&
+          this.state.modal.type === "none",
+      });
+      this.sidebarOverlay.focus();
+    } else if (!shouldShow && this.sidebarOverlay) {
+      this.sidebarOverlay.hide();
+      this.sidebarOverlay = undefined;
+    }
   }
 
   start(): void {
@@ -1248,6 +1316,8 @@ export class DeckTui {
   }
   async stop(): Promise<void> {
     this.started = false;
+    this.sidebarOverlay?.hide();
+    this.sidebarOverlay = undefined;
     this.stopReconnectTicker();
     this.renderScheduler.stop();
     await this.lifecycle.stop();
@@ -1263,15 +1333,16 @@ export class DeckTui {
     const recoveryChanged =
       state.timeline.recoveryRevision !== this.state.timeline.recoveryRevision;
     this.state = state;
-    this.tabs.update(state);
     this.syncReconnectTicker();
     this.tree.update(state);
+    this.tabs.update(state);
     this.timeline.update(state.timeline.items);
     this.timeline.updateSelection(state);
     this.composer.update(state);
     this.status.update(state);
     this.tui.setFocus(state.focus === "composer" ? this.composer : null);
     this.syncModal();
+    this.syncSidebarOverlay();
     if (
       state.modal.type === "permission" &&
       state.modal.agentId === state.selectedAgentId &&
@@ -1290,6 +1361,10 @@ export class DeckTui {
     if (focusChanged || treeSelectionChanged) {
       if (state.focus === "timeline" && !restoredPaused) this.revealTimelineSelection();
       else if (state.focus === "tree") this.revealTreeSelection();
+      // Nested main-column layouts measure scroll views on the next frame.
+      // Repeat the reveal after that measurement so selected rows remain visible.
+      if (state.focus === "tree")
+        this.reconnectClock.setTimeout(() => this.revealTreeSelection(), 10);
     }
     if (timelineChanged) this.renderScheduler.request();
     else this.renderScheduler.requestImmediate();
@@ -1714,15 +1789,16 @@ export class DeckTui {
     range: { start: number; end: number } | undefined,
   ): void {
     if (range === undefined) return;
-    if (scrollView.viewportHeight <= 0) {
+    const viewportHeight = Math.min(scrollView.viewportHeight, Math.max(1, this.terminal.rows - 4));
+    if (viewportHeight <= 0) {
       scrollView.scrollTo(range.start, { disableFollow: true });
       return;
     }
     const top = scrollView.scrollTop;
-    const bottom = top + scrollView.viewportHeight - 1;
+    const bottom = top + viewportHeight - 1;
     if (range.start < top) scrollView.scrollTo(range.start, { disableFollow: true });
     else if (range.end > bottom)
-      scrollView.scrollTo(range.end - scrollView.viewportHeight + 1, { disableFollow: true });
+      scrollView.scrollTo(range.end - viewportHeight + 1, { disableFollow: true });
   }
 
   private syncModal(): void {

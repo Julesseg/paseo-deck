@@ -118,7 +118,7 @@ export class DeckTheme {
 
   /** Styles a semantic background while retaining the same safety boundary. */
   styleBackground(tone: SemanticTone, value: string): string {
-    const safe = this.label(sanitizeTerminalText(value));
+    const safe = sanitizeTerminalText(value);
     if (this.appearance.color === "none" || this.appearance.theme === "plain") return safe;
     return `${this.backgroundPrefix(tone)}${safe}\u001b[0m`;
   }
