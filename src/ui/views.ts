@@ -10,6 +10,7 @@ import {
   ScrollView,
   type SelectItem,
   SelectList,
+  Spacer,
   type Terminal,
   type TUI,
   TuiAltScreen,
@@ -140,6 +141,10 @@ class TreeView implements Component {
   }
   invalidate(): void {}
   render(width: number): string[] {
+    const sidebarLine = (line: string): string => {
+      const padding = " ".repeat(Math.max(0, width - terminalDisplayWidth(line)));
+      return this.theme.styleRenderedBackground("sidebar", `${line}${padding}`);
+    };
     const rows = deriveTreeRows(this.state);
     if (rows.length === 0) {
       const message =
@@ -157,7 +162,7 @@ class TreeView implements Component {
         ...wrapTerminalProse(this.theme.label(message), width).map((line) =>
           this.theme.styleRendered("muted", line),
         ),
-      ];
+      ].map(sidebarLine);
     }
     return [
       this.theme.style(
@@ -190,14 +195,15 @@ class TreeView implements Component {
               : row.kind === "project"
                 ? "header"
                 : "muted";
+        const filledPrimary = `${primary}${" ".repeat(Math.max(0, width - terminalDisplayWidth(primary)))}`;
         const styled = row.selected
-          ? this.theme.styleBackground("selection", primary)
+          ? this.theme.styleBackground("selection", filledPrimary)
           : row.active
-            ? this.theme.styleBackground("muted", primary)
+            ? this.theme.styleBackground("surface", filledPrimary)
             : row.kind === "project"
-              ? this.theme.styleBackground("header", primary)
+              ? this.theme.styleBackground("surface", filledPrimary)
               : row.kind === "workspace"
-                ? this.theme.styleBackground("muted", primary)
+                ? this.theme.styleBackground("surface", filledPrimary)
                 : this.theme.styleRendered(tone, primary);
         const output = row.gapBefore ? [" ".repeat(width), styled] : [styled];
         const rowMetadata =
@@ -227,7 +233,7 @@ class TreeView implements Component {
             ]
           : output;
       }),
-    ];
+    ].map(sidebarLine);
   }
 
   selectedLineRange(width: number): { start: number; end: number } | undefined {
@@ -1559,6 +1565,7 @@ export class DeckTui {
                 component: new VStack([
                   { component: this.tabs, basis: 1, minSize: 1 },
                   { component: this.transcript, basis: 0, grow: 1, minSize: 8 },
+                  { component: new Spacer(1), basis: 1, minSize: 1 },
                   { component: this.composer, basis: "auto", minSize: 3 },
                   { component: this.status, basis: 1, minSize: 1 },
                 ]),

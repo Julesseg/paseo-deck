@@ -14,6 +14,9 @@ export type SemanticTone =
   | "header"
   | "code";
 
+/** Background layers are intentionally separate from semantic foreground hues. */
+export type BackgroundTone = "sidebar" | "surface" | "selection";
+
 export type DeckGlyph =
   | "agent"
   | "expanded"
@@ -69,6 +72,25 @@ const truecolor: Readonly<Record<SemanticTone, readonly [number, number, number]
   code: [134, 239, 172],
 };
 
+// These are restrained overlays over Ember's dark terminal ground, rather than
+// independent panel colours. The small steps preserve hierarchy without making
+// the interface feel like a collection of coloured cards.
+const emberBackground: Readonly<Record<BackgroundTone, readonly [number, number, number]>> = {
+  sidebar: [31, 29, 27],
+  surface: [39, 36, 33],
+  selection: [51, 46, 39],
+};
+const emberBackground256: Readonly<Record<BackgroundTone, number>> = {
+  sidebar: 235,
+  surface: 237,
+  selection: 239,
+};
+const emberBackground16: Readonly<Record<BackgroundTone, number>> = {
+  sidebar: 40,
+  surface: 100,
+  selection: 100,
+};
+
 const unicodeGlyphs: Readonly<Record<DeckGlyph, string>> = {
   agent: "•",
   expanded: "▾",
@@ -117,10 +139,25 @@ export class DeckTheme {
   }
 
   /** Styles a semantic background while retaining the same safety boundary. */
-  styleBackground(tone: SemanticTone, value: string): string {
-    const safe = sanitizeTerminalText(value);
-    if (this.appearance.color === "none" || this.appearance.theme === "plain") return safe;
-    return `${this.backgroundPrefix(tone)}${safe}\u001b[0m`;
+  styleBackground(tone: BackgroundTone, value: string): string {
+    return this.styleRenderedBackground(tone, sanitizeTerminalText(value));
+  }
+
+  /** Adds a background behind trusted Deck-rendered output. */
+  styleRenderedBackground(tone: BackgroundTone, value: string): string {
+    const safe = value;
+    // A terminal palette belongs to its owner. Do not turn semantic surfaces
+    // into bright ANSI swatches on a background we cannot inspect.
+    if (
+      this.appearance.color === "none" ||
+      this.appearance.theme === "plain" ||
+      this.paletteId() === "terminal"
+    )
+      return safe;
+    const prefix = this.backgroundPrefix(tone);
+    // Nested foreground styling resets SGR. Reapply the surface so an outer
+    // panel background survives its labels without leaking beyond the line.
+    return `${prefix}${safe.replaceAll("\u001b[0m", `\u001b[0m${prefix}`)}\u001b[0m`;
   }
 
   /**
@@ -191,15 +228,10 @@ export class DeckTheme {
     return `\u001b[38;2;${red};${green};${blue}m`;
   }
 
-  private backgroundPrefix(tone: SemanticTone): string {
-    const palette = this.paletteId();
-    if (palette === "terminal") return `\u001b[${ansi16[tone] + 10}m`;
-    if (this.appearance.color === "ansi16") {
-      const foreground = ansi16[tone];
-      return `\u001b[${foreground + 10}m`;
-    }
-    if (this.appearance.color === "ansi256") return `\u001b[48;5;${ansi256[tone]}m`;
-    const [red, green, blue] = truecolor[tone];
+  private backgroundPrefix(tone: BackgroundTone): string {
+    if (this.appearance.color === "ansi16") return `\u001b[${emberBackground16[tone]}m`;
+    if (this.appearance.color === "ansi256") return `\u001b[48;5;${emberBackground256[tone]}m`;
+    const [red, green, blue] = emberBackground[tone];
     return `\u001b[48;2;${red};${green};${blue}m`;
   }
 

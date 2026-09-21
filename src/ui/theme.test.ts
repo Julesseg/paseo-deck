@@ -105,7 +105,7 @@ describe("DeckTheme", () => {
         palette: "terminal",
         symbols: "unicode",
       }).styleBackground("selection", "x"),
-    ).toBe("\u001b[43mx\u001b[0m");
+    ).toBe("x");
     expect(
       new DeckTheme({
         color: "none",
@@ -115,5 +115,21 @@ describe("DeckTheme", () => {
         symbols: "unicode",
       }).styleBackground("selection", "x"),
     ).toBe("x");
+  });
+
+  it("uses close Ember surface steps and preserves them around rendered labels", () => {
+    const theme = new DeckTheme({
+      color: "truecolor",
+      unicode: true,
+      theme: "ember",
+      palette: "ember",
+      symbols: "unicode",
+    });
+
+    expect(theme.styleBackground("sidebar", "x")).toBe("\u001b[48;2;31;29;27mx\u001b[0m");
+    expect(theme.styleBackground("selection", "x")).toBe("\u001b[48;2;51;46;39mx\u001b[0m");
+    expect(theme.styleRenderedBackground("sidebar", theme.style("focus", "x"))).toBe(
+      "\u001b[48;2;31;29;27m\u001b[38;2;125;211;252mx\u001b[0m\u001b[48;2;31;29;27m\u001b[0m",
+    );
   });
 });

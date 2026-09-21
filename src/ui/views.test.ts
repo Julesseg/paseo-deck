@@ -285,6 +285,28 @@ describe("fenced code highlighter", () => {
 });
 
 describe("terminal appearance", () => {
+  it("keeps the Ember sidebar on restrained surface layers", async () => {
+    const terminal = new RecordingTerminal(100, 28);
+    const deck = new DeckTui(terminal, state(), () => undefined, {
+      appearance: {
+        color: "truecolor",
+        unicode: true,
+        theme: "ember",
+        palette: "ember",
+        symbols: "unicode",
+      },
+    });
+
+    deck.start();
+    await terminal.waitForRender();
+    await deck.stop();
+
+    const output = terminal.writes.join("");
+    expect(output).toContain("\u001b[48;2;31;29;27m");
+    expect(output).toContain("\u001b[48;2;39;36;33m");
+    expect(output).not.toContain("\u001b[43m");
+  });
+
   it("renders the connected host and dismisses the narrow sidebar overlay on main-pane focus", async () => {
     const terminal = new RecordingTerminal(52, 18);
     const deck = new DeckTui(terminal, state(), () => undefined, {
