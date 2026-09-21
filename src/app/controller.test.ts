@@ -823,6 +823,25 @@ describe("ApplicationController", () => {
     ]);
   });
 
+  it("returns to sidebar input while a session timeline is still hydrating", async () => {
+    const gateway = new DeferredFocusGateway(snapshot);
+    const app = new ApplicationController(gateway);
+    await app.start();
+
+    const opening = app.selectAgent("agent-1");
+
+    await expect(
+      Promise.race([
+        opening.then(() => true),
+        new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 0)),
+      ]),
+    ).resolves.toBe(true);
+    await app.handleIntent({ type: "select-next", direction: 1 });
+    expect(app.state.sidebarSelection).toEqual({ kind: "session", id: "agent-2" });
+
+    gateway.resolveFocus(0);
+  });
+
   it("releases an established directory observation when initial snapshot fails", async () => {
     const gateway = new SnapshotFailureGateway(snapshot);
     const app = new ApplicationController(gateway);

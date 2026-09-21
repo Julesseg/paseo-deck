@@ -3,16 +3,27 @@ const sgr = new RegExp(`^${escapeCharacter}\\[[0-?]*[ -/]*m`);
 
 /** Replaces control characters from timeline data with visible, inert glyphs. */
 export function sanitizeTerminalText(value: string): string {
-  return [...value]
-    .map((character) => {
-      const code = character.codePointAt(0) ?? 0;
-      if (character === "\n" || character === "\t") return character;
-      if (code <= 0x1f) return String.fromCodePoint(0x2400 + code);
-      if (code === 0x7f) return "␡";
-      if (code >= 0x80 && code <= 0x9f) return "�";
-      return character;
-    })
-    .join("");
+  let result = "";
+  let index = 0;
+  while (index < value.length) {
+    const style = sgr.exec(value.slice(index))?.[0];
+    // Provider-owned styling has no semantic value in Deck and is not safe to
+    // reproduce in a terminal owned by the client. Drop it rather than making
+    // an ugly visible escape marker part of the session text.
+    if (style) {
+      index += style.length;
+      continue;
+    }
+    const code = value.codePointAt(index) ?? 0;
+    const character = String.fromCodePoint(code);
+    if (character === "\n" || character === "\t") result += character;
+    else if (code <= 0x1f) result += String.fromCodePoint(0x2400 + code);
+    else if (code === 0x7f) result += "␡";
+    else if (code >= 0x80 && code <= 0x9f) result += "�";
+    else result += character;
+    index += character.length;
+  }
+  return result;
 }
 
 /** Counts terminal cells, excluding only app-produced SGR styling. */
