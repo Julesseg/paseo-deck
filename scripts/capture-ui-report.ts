@@ -104,6 +104,121 @@ const shots: Array<{
     state: { ...baseState, focus: "timeline" },
   },
   {
+    name: "active-turn",
+    columns: 100,
+    rows: 28,
+    state: withTimeline(baseState, "timeline-active", [
+      { id: "turn-active", type: "turn", status: "started", detail: "Working" },
+      {
+        id: "assistant-streaming",
+        type: "assistant-message",
+        messageId: "stream",
+        text: "I am checking the release artifacts…",
+        streaming: true,
+      },
+    ]),
+  },
+  {
+    name: "permission",
+    columns: 100,
+    rows: 28,
+    state: withTimeline(baseState, "timeline-permission", [
+      {
+        id: "permission-report",
+        type: "permission",
+        request: {
+          id: "report-permission",
+          agentId: "agent-atlas-1234",
+          title: "Run release checks",
+          description: "The session needs approval before running the command.",
+        },
+      },
+    ]),
+  },
+  {
+    name: "failure",
+    columns: 100,
+    rows: 28,
+    state: withTimeline(baseState, "timeline-failure", [
+      {
+        id: "tool-failure",
+        type: "tool",
+        callId: "failure",
+        name: "npm test",
+        status: "failed",
+        failureSummary: "exit 1",
+        output: "Assertion failed in release smoke test.",
+      },
+      {
+        id: "error-failure",
+        type: "error",
+        message: "Release verification failed",
+        detail: "The package smoke test returned exit code 1.",
+      },
+    ]),
+  },
+  {
+    name: "structured-tool",
+    columns: 100,
+    rows: 28,
+    state: withTimeline(baseState, "timeline-tool", [
+      {
+        id: "tool-command",
+        type: "tool",
+        callId: "command",
+        name: "shell",
+        status: "completed",
+        summary: "npm run check",
+        detail: { kind: "command", command: "npm run check" },
+        output: "71 tests passed",
+      },
+      {
+        id: "tool-search",
+        type: "tool",
+        callId: "search",
+        name: "search",
+        status: "completed",
+        summary: "TimelineItem",
+        detail: { kind: "search", query: "TimelineItem" },
+        output: "src/contracts/domain.ts",
+      },
+    ]),
+  },
+  {
+    name: "diff",
+    columns: 100,
+    rows: 28,
+    state: withTimeline(baseState, "timeline-diff", [
+      {
+        id: "tool-diff",
+        type: "tool",
+        callId: "diff",
+        name: "edit",
+        status: "completed",
+        summary: "src/ui/views.ts",
+        detail: {
+          kind: "file-write",
+          path: "src/ui/views.ts",
+          diff: "@@ -1,2 +1,3 @@\n-const old = true;\n+const old = false;\n+const newValue = true;",
+        },
+        output: "@@ -1,2 +1,3 @@\n-const old = true;\n+const old = false;\n+const newValue = true;",
+      },
+    ]),
+  },
+  {
+    name: "unknown-event",
+    columns: 100,
+    rows: 28,
+    state: withTimeline(baseState, "timeline-unknown", [
+      {
+        id: "unknown-report",
+        type: "unknown",
+        sourceType: "future_event",
+        summary: "Retained safely for inspection",
+      },
+    ]),
+  },
+  {
     name: "creation-picker",
     columns: 100,
     rows: 28,
@@ -399,6 +514,23 @@ function withoutSelection(
     ...rest
   } = state;
   return rest;
+}
+
+function withTimeline(
+  state: AppState,
+  epoch: string,
+  items: readonly AppState["timeline"]["items"][number]["item"][],
+): AppState {
+  return {
+    ...state,
+    focus: "timeline",
+    timeline: {
+      ...state.timeline,
+      epoch,
+      cursor: { epoch, sequence: items.length },
+      items: items.map((item, index) => ({ epoch, sequence: index + 1, item })),
+    },
+  };
 }
 
 function terminalSvg(

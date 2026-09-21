@@ -559,6 +559,7 @@ describe("ProductionPaseoGateway", () => {
         type: "tool",
         durationMs: 1200,
         failureSummary: "permission denied",
+        detail: expect.objectContaining({ kind: "fetch", url: "https://example.test" }),
       }),
     );
     expect(items).toContainEqual(
