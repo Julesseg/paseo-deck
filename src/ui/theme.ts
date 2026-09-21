@@ -1,4 +1,4 @@
-import type { PaletteId, TerminalAppearance } from "./capabilities.js";
+import type { PaletteId, TerminalAppearance, TerminalBackground } from "./capabilities.js";
 import { clipTerminalLine, sanitizeTerminalText, terminalDisplayWidth } from "./text-safety.js";
 
 export type SemanticTone =
@@ -90,6 +90,11 @@ const emberBackground16: Readonly<Record<BackgroundTone, number>> = {
   surface: 100,
   selection: 100,
 };
+const surfaceOpacity: Readonly<Record<BackgroundTone, number>> = {
+  sidebar: 0.035,
+  surface: 0.06,
+  selection: 0.1,
+};
 
 const unicodeGlyphs: Readonly<Record<DeckGlyph, string>> = {
   agent: "•",
@@ -151,7 +156,7 @@ export class DeckTheme {
     if (
       this.appearance.color === "none" ||
       this.appearance.theme === "plain" ||
-      this.paletteId() === "terminal"
+      (this.paletteId() === "terminal" && !this.appearance.background)
     )
       return safe;
     const prefix = this.backgroundPrefix(tone);
@@ -231,11 +236,30 @@ export class DeckTheme {
   private backgroundPrefix(tone: BackgroundTone): string {
     if (this.appearance.color === "ansi16") return `\u001b[${emberBackground16[tone]}m`;
     if (this.appearance.color === "ansi256") return `\u001b[48;5;${emberBackground256[tone]}m`;
-    const [red, green, blue] = emberBackground[tone];
+    const [red, green, blue] = this.appearance.background
+      ? overlayBackground(this.appearance.background, surfaceOpacity[tone])
+      : emberBackground[tone];
     return `\u001b[48;2;${red};${green};${blue}m`;
   }
 
   private paletteId(): PaletteId {
     return this.appearance.palette ?? "ember";
   }
+}
+
+/** Builds neutral opacity layers from the terminal's own default background. */
+function overlayBackground(
+  background: TerminalBackground,
+  opacity: number,
+): readonly [number, number, number] {
+  const target = relativeLuminance(background) < 0.5 ? 255 : 0;
+  return background.map((channel) => Math.round(channel * (1 - opacity) + target * opacity)) as [
+    number,
+    number,
+    number,
+  ];
+}
+
+function relativeLuminance([red, green, blue]: TerminalBackground): number {
+  return (red * 0.2126 + green * 0.7152 + blue * 0.0722) / 255;
 }

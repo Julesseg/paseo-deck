@@ -292,7 +292,8 @@ describe("terminal appearance", () => {
         color: "truecolor",
         unicode: true,
         theme: "ember",
-        palette: "ember",
+        palette: "terminal",
+        background: [240, 230, 220],
         symbols: "unicode",
       },
     });
@@ -302,8 +303,8 @@ describe("terminal appearance", () => {
     await deck.stop();
 
     const output = terminal.writes.join("");
-    expect(output).toContain("\u001b[48;2;31;29;27m");
-    expect(output).toContain("\u001b[48;2;39;36;33m");
+    expect(output).toContain("\u001b[48;2;232;222;212m");
+    expect(output).toContain("\u001b[48;2;226;216;207m");
     expect(output).not.toContain("\u001b[43m");
   });
 

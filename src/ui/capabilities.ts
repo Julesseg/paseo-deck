@@ -4,6 +4,7 @@ export type ThemeId = "ember" | "plain";
 export type SymbolSet = "unicode" | "ascii";
 /** Palette source. `terminal` deliberately delegates hue selection to ANSI. */
 export type PaletteId = "terminal" | "ember";
+export type TerminalBackground = readonly [red: number, green: number, blue: number];
 
 export interface TerminalAppearance {
   color: ColorTier;
@@ -11,6 +12,8 @@ export interface TerminalAppearance {
   theme: ThemeId;
   symbols: SymbolSet;
   palette?: PaletteId;
+  /** Terminal default background, queried at runtime when the terminal supports OSC 11. */
+  background?: TerminalBackground;
 }
 
 export type TerminalEnvironment = Readonly<

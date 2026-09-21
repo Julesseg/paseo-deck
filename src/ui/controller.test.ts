@@ -317,6 +317,23 @@ describe("DeckController keyboard seam", () => {
     expect(intents).toEqual([{ type: "quit" }]);
   });
 
+  it("quits instead of forwarding Ctrl+C to an embedded terminal", () => {
+    const intents: unknown[] = [];
+    const controller = new DeckController(
+      () => ({
+        ...makeState(),
+        focus: "timeline",
+        activeTerminalId: "terminal-1",
+        terminalMode: "insert",
+        terminalLines: { "terminal-1": ["$ "] },
+      }),
+      (intent) => intents.push(intent),
+    );
+
+    expect(controller.handleKey("\u0003")).toBe(true);
+    expect(intents).toEqual([{ type: "quit" }]);
+  });
+
   it("keeps ordinary insert text local while preserving global quit", () => {
     const intents: unknown[] = [];
     const controller = new DeckController(

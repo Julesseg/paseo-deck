@@ -1457,6 +1457,7 @@ export class DeckTui {
   private readonly onPreferencesChanged?: DeckTuiOptions["onPreferencesChanged"];
   private requestedTheme: "ember" | "plain" | undefined;
   private requestedSymbolSet: "unicode" | "ascii" | undefined;
+  private terminalBackground: TerminalAppearance["background"];
 
   constructor(
     private readonly terminal: Terminal,
@@ -1617,6 +1618,7 @@ export class DeckTui {
   start(): void {
     this.started = true;
     this.lifecycle.start();
+    void this.sampleTerminalBackground();
     this.syncReconnectTicker();
   }
   async stop(): Promise<void> {
@@ -1860,10 +1862,19 @@ export class DeckTui {
           : (this.requestedTheme ?? this.detectedAppearance.theme),
       palette:
         this.requestedTheme === "ember" ? "ember" : (this.detectedAppearance.palette ?? "ember"),
+      ...(this.terminalBackground ? { background: this.terminalBackground } : {}),
       symbols: this.detectedAppearance.unicode
         ? (this.requestedSymbolSet ?? this.detectedAppearance.symbols)
         : "ascii",
     };
+  }
+
+  private async sampleTerminalBackground(): Promise<void> {
+    const background = await this.tui.queryTerminalBackgroundColor({ timeoutMs: 120 });
+    if (!background || !this.started) return;
+    this.terminalBackground = [background.r, background.g, background.b];
+    this.theme.setAppearance(this.effectiveAppearance());
+    this.tui.requestRender();
   }
 
   private openTimelineSearch(): void {

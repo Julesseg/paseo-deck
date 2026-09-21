@@ -99,4 +99,16 @@ export class RecordingTerminal implements Terminal {
       (_, index) => buffer.getLine(buffer.viewportY + index)?.translateToString(true) ?? "",
     );
   }
+  /** Captures truecolor backgrounds from xterm cells for visual reports. */
+  viewportBackgrounds(): Array<Array<string | undefined>> {
+    const buffer = this.xterm.buffer.active;
+    return Array.from({ length: this.xterm.rows }, (_, row) => {
+      const line = buffer.getLine(buffer.viewportY + row);
+      return Array.from({ length: this.xterm.cols }, (_, column) => {
+        const cell = line?.getCell(column);
+        if (!cell?.isBgRGB()) return undefined;
+        return `#${cell.getBgColor().toString(16).padStart(6, "0")}`;
+      });
+    });
+  }
 }
