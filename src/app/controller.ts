@@ -165,13 +165,20 @@ export class ApplicationController {
     const generation = ++this.#focusGeneration;
     const previous = this.#timelineObservation;
     this.#timelineObservation = undefined;
-    if (previous) await previous.release();
+    // Releasing a remote demand and hydrating the next timeline can both take
+    // arbitrarily long. Neither operation may stall the input path: sidebar
+    // navigation must remain available while the new session loads.
+    void previous?.release();
     if (generation !== this.#focusGeneration) return;
     this.apply({
       type: "open-session-tab",
       agentId,
       ...(preserveSidebar ? { preserveSidebar: true } : {}),
     });
+    void this.startTimelineObservation(agentId, generation);
+  }
+
+  private async startTimelineObservation(agentId: string, generation: number): Promise<void> {
     try {
       const observation = await this.gateway.focusAgent(agentId, (update) => {
         if (generation !== this.#focusGeneration) return;

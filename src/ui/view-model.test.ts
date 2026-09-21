@@ -484,7 +484,7 @@ describe("timeline display", () => {
     expect(diff).toContain("+new");
   });
 
-  it("renders raw SGR from non-Markdown timeline fields as inert text", () => {
+  it("drops raw SGR from non-Markdown timeline fields", () => {
     const lines = timelineDisplay(
       [
         {
@@ -510,8 +510,8 @@ describe("timeline display", () => {
     );
 
     expect(lines.join("\n")).not.toContain("\u001b[");
-    expect(lines.join("\n")).toContain("␛[31munsafe");
-    expect(lines.join("\n")).toContain("␛[32munsafe");
+    expect(lines.join("\n")).toContain("unsafe");
+    expect(lines.join("\n")).not.toContain("␛[");
   });
 });
 

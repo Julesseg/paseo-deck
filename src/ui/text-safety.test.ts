@@ -9,6 +9,10 @@ import {
 } from "./text-safety.js";
 
 describe("terminal text safety", () => {
+  it("drops remote SGR styling instead of rendering terminal escape markers", () => {
+    expect(sanitizeTerminalText("\u001b[33m • Session title\u001b[0m")).toBe(" • Session title");
+  });
+
   it("renders terminal controls as inert text", () => {
     expect(sanitizeTerminalText("before\u001b[2J\rafter\u0007")).toBe("before␛[2J␍after␇");
   });
