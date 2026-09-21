@@ -2,6 +2,22 @@ import { describe, expect, it } from "vitest";
 import { normalizeDirectory } from "./normalize.js";
 
 describe("normalizeDirectory", () => {
+  it("uses the live projectId identity while retaining legacy project identities", () => {
+    const directory = normalizeDirectory({
+      projects: [
+        { projectId: "live-project", name: "Live project" },
+        { id: "legacy-id", name: "Legacy id" },
+        { projectKey: "legacy-key", projectName: "Legacy key" },
+      ],
+    });
+
+    expect(directory.projects).toEqual([
+      { id: "live-project", name: "Live project" },
+      { id: "legacy-id", name: "Legacy id" },
+      { id: "legacy-key", name: "Legacy key" },
+    ]);
+  });
+
   it("normalizes incomplete directory data without losing stable identities", () => {
     const directory = normalizeDirectory({
       projects: [{ id: "project-1", name: "Deck" }],

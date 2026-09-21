@@ -2,6 +2,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { AppState } from "../src/contracts/app-state.js";
 import type { TerminalAppearance } from "../src/ui/capabilities.js";
+import { NARROW_SIDEBAR_BREAKPOINT } from "../src/ui/layout.js";
 import { RecordingTerminal } from "../src/ui/terminal.js";
 import { DeckTui } from "../src/ui/views.js";
 
@@ -25,6 +26,7 @@ const shots: Array<{
   state: AppState;
   appearance?: TerminalAppearance;
 }> = [
+  { name: "project-ownership", columns: 160, rows: 42, state: baseState },
   { name: "session-tree", columns: 100, rows: 28, state: baseState },
   {
     name: "terminal-discovery",
@@ -361,6 +363,9 @@ for (const shot of shots) {
       shot.columns,
       shot.rows,
       `Paseo Deck ${shot.name.replaceAll("-", " ")}`,
+      shot.columns >= NARROW_SIDEBAR_BREAKPOINT && (shot.appearance?.theme ?? "ember") === "ember"
+        ? { columns: 34, color: "#1f1d1b" }
+        : undefined,
     ),
     "utf8",
   );
@@ -372,20 +377,27 @@ function syntheticState(): AppState {
     recovery: { attempt: 0, directoryStale: false, timelineStale: false },
     notifications: [],
     directory: {
-      projects: [{ id: "project-deck", name: "Deck Labs" }],
+      projects: [{ id: "live-project", name: "Deck Labs" }],
       workspaces: [
         {
           id: "workspace-main",
-          projectId: "project-deck",
+          projectId: "live-project",
           title: "Main",
           directory: "/demo/deck",
           archived: false,
         },
         {
           id: "workspace-theme",
-          projectId: "project-deck",
+          projectId: "live-project",
           title: "Theme polish",
           directory: "/demo/deck-theme",
+          archived: false,
+        },
+        {
+          id: "workspace-orphan",
+          projectId: "missing-project",
+          title: "Standalone",
+          directory: "/demo/standalone",
           archived: false,
         },
       ],
@@ -439,6 +451,19 @@ function syntheticState(): AppState {
           needsAttention: false,
           archived: false,
         },
+        {
+          id: "agent-orphan-3456",
+          workspaceId: "workspace-orphan",
+          title: "Orion",
+          status: "idle",
+          providerId: "codex",
+          modelId: "gpt-5.6-terra",
+          availableModeIds: [],
+          availableThinkingLevels: [],
+          pendingPermissions: [],
+          needsAttention: false,
+          archived: false,
+        },
       ],
       providers: [
         {
@@ -465,10 +490,10 @@ function syntheticState(): AppState {
         },
       ],
     },
-    selectedProjectId: "project-deck",
+    selectedProjectId: "live-project",
     selectedWorkspaceId: "workspace-main",
     selectedAgentId: "agent-atlas-1234",
-    expandedIds: new Set(["project-deck", "workspace-main", "workspace-theme"]),
+    expandedIds: new Set(["live-project", "workspace-main", "workspace-theme", "workspace-orphan"]),
     filter: "",
     treeOrder: "attention",
     showArchived: false,
@@ -574,6 +599,7 @@ function terminalSvg(
   columns: number,
   rows: number,
   title: string,
+  sidebar?: { columns: number; color: string },
 ): string {
   const cellWidth = 9;
   const lineHeight = 18;
@@ -583,19 +609,23 @@ function terminalSvg(
   const height = rows * lineHeight + padding * 2 + chromeHeight;
   const text = lines
     .slice(0, rows)
-    .map(
-      (line, index) =>
-        `<text x="${padding}" y="${chromeHeight + padding + (index + 1) * lineHeight - 4}">${escapeXml(line)}</text>`,
-    )
+    .map((line, index) => {
+      const leadingSpaces = line.length - line.trimStart().length;
+      return `<text x="${padding + leadingSpaces * cellWidth}" y="${chromeHeight + padding + (index + 1) * lineHeight - 4}">${escapeXml(line.slice(leadingSpaces))}</text>`;
+    })
     .join("\n");
   const backgroundsSvg = backgrounds
     .flatMap((row, rowIndex) => {
       const rectangles: string[] = [];
       let start = 0;
       while (start < row.length) {
-        const color = row[start];
+        const color = row[start] ?? (start < (sidebar?.columns ?? 0) ? sidebar?.color : undefined);
         let end = start + 1;
-        while (end < row.length && row[end] === color) end++;
+        while (
+          end < row.length &&
+          (row[end] ?? (end < (sidebar?.columns ?? 0) ? sidebar?.color : undefined)) === color
+        )
+          end++;
         if (color)
           rectangles.push(
             `<rect x="${padding + start * cellWidth}" y="${chromeHeight + padding + rowIndex * lineHeight}" width="${(end - start) * cellWidth}" height="${lineHeight}" fill="${color}"/>`,
