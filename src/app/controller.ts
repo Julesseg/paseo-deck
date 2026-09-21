@@ -13,6 +13,7 @@ import {
   reduceApp,
 } from "../state/store.js";
 import type { UiIntent } from "../ui/controller.js";
+import { sanitizeTerminalText } from "../ui/text-safety.js";
 import { deriveTreeRows, type TreeRow } from "../ui/view-model.js";
 
 export interface ApplicationControllerOptions {
@@ -215,7 +216,11 @@ export class ApplicationController {
         if (!terminal) return;
         try {
           const capture = await this.gateway.captureTerminal(terminal.id, { start: -2000 });
-          this.apply({ type: "terminal-lines", terminalId: terminal.id, lines: capture.lines });
+          this.apply({
+            type: "terminal-lines",
+            terminalId: terminal.id,
+            lines: capture.lines.map(sanitizeObservedTerminal),
+          });
           this.apply({ type: "open-terminal-tab", terminalId: terminal.id });
           const observation = await this.gateway.observeTerminal(terminal.id, (update) => {
             if (update.type === "exited")
@@ -231,11 +236,15 @@ export class ApplicationController {
                 terminalId: terminal.id,
                 lines: [
                   ...(this.#state.terminalLines?.[terminal.id] ?? []),
-                  new TextDecoder().decode(update.data),
+                  sanitizeObservedTerminal(new TextDecoder().decode(update.data)),
                 ],
               });
             else if (update.type === "snapshot")
-              this.apply({ type: "terminal-lines", terminalId: terminal.id, lines: update.lines });
+              this.apply({
+                type: "terminal-lines",
+                terminalId: terminal.id,
+                lines: update.lines.map(sanitizeObservedTerminal),
+              });
           });
           this.#terminalObservations.set(terminal.id, observation);
         } catch (error) {
@@ -540,6 +549,9 @@ export class ApplicationController {
         return;
       case "create-choice":
         await this.applyChoice(intent.choice);
+        return;
+      case "open-create-terminal":
+        if (intent.workspaceId) await this.createWorkspaceTerminal(intent.workspaceId, "Terminal");
         return;
     }
   }
@@ -1086,6 +1098,15 @@ function errorMessage(error: unknown): string {
   return error instanceof PaseoGatewayError
     ? error.message
     : redactTransportDetail(error instanceof Error ? error.message : String(error));
+}
+
+function sanitizeObservedTerminal(value: string): string {
+  const esc = String.fromCharCode(0x1b);
+  return sanitizeTerminalText(
+    value
+      .replaceAll(new RegExp(`${esc}\\][^\\u0007]*(?:\\u0007|${esc}\\\\)`, "g"), "")
+      .replaceAll(new RegExp(`${esc}\\[[0-?]*[ -/]*[@-~]`, "g"), ""),
+  );
 }
 
 function errorDetail(error: unknown): string {

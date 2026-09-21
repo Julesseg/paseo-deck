@@ -54,6 +54,19 @@ const requireRemoteAgent = (state: AppState): string | undefined =>
 
 export const deckCommands: readonly DeckCommand[] = [
   {
+    id: "terminal-create",
+    label: "Create named workspace terminal",
+    group: "Sessions",
+    shortcuts: ["tn"],
+    contexts: ["tree", "timeline"],
+    palette: true,
+    disabledReason: (state) => (state.selectedWorkspaceId ? undefined : "Select a workspace first"),
+    intent: (state) => ({
+      type: "open-create-terminal",
+      workspaceId: state.selectedWorkspaceId ?? "",
+    }),
+  },
+  {
     id: "terminal-kill",
     label: "Terminate active terminal (confirm)",
     group: "Sessions",

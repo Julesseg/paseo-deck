@@ -15,6 +15,7 @@ export type UiIntent =
   | { type: "switch-terminal-tab"; direction: -1 | 1 }
   | { type: "scroll-terminal"; direction: -1 | 1 }
   | { type: "reconnect-terminal" }
+  | { type: "open-create-terminal"; workspaceId: string }
   | { type: "set-terminal-mode"; mode: "normal" | "insert" }
   | { type: "terminal-input"; data: string }
   | { type: "select-next"; direction: -1 | 1 }
@@ -123,6 +124,10 @@ export class DeckController {
       if (this.#tabPrefix === "g" && data === "k") {
         this.#tabPrefix = "";
         return this.send({ type: "kill-terminal" });
+      }
+      if (this.#tabPrefix === "g" && data === "c") {
+        this.#tabPrefix = "";
+        return this.send({ type: "close-terminal" });
       }
       if (data === "\u001b[A" || data === "\u001b[B" || data === "\u0004" || data === "\u0015")
         return this.send({
