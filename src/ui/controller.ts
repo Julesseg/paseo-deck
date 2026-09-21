@@ -150,7 +150,7 @@ export class DeckController {
     // before resolving the broader command registry (where j/k/g/G/Enter/y
     // also have unrelated meanings in other regions).
     if (state.modal.type === "none" && state.focus === "timeline") {
-      if (data === "g" || data === "z") {
+      if (data === "g" || (data === "z" && state.timeline.agentId)) {
         this.#timelinePrefix = data;
         if (data === "g")
           return this.send({ type: "move-timeline-selection-boundary", boundary: "start" });
