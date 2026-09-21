@@ -828,7 +828,10 @@ class TimelineView implements Component {
       else if (item.type === "turn") group = `turn:${item.turnId ?? item.id}`;
       else if (item.type === "assistant-message" && item.turnId) group = `turn:${item.turnId}`;
       const firstInGroup = group !== priorGroup;
-      const gap = firstInGroup && priorGroup ? [""] : [];
+      // Explicit turn records are the visual boundaries between turns. Avoid
+      // inflating long streamed message histories with separator rows for
+      // every provider-assigned turn id.
+      const gap = firstInGroup && priorGroup && item.type === "turn" ? [""] : [];
       if (firstInGroup) ordinal += 1;
       priorGroup = group;
       const itemLines = this.itemViews.get(item.id)?.render(width) ?? [];
