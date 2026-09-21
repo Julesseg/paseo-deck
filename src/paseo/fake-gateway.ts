@@ -1,6 +1,11 @@
 import type { AgentCommand, CommandResult } from "../contracts/commands.js";
 import type { DirectorySnapshot, DirectoryUpdate, TimelineUpdate } from "../contracts/domain.js";
 import type { Observation, PaseoGateway } from "../contracts/gateway.js";
+import type {
+  TerminalCreateOptions,
+  TerminalRecord,
+  TerminalStreamUpdate,
+} from "../contracts/terminal.js";
 
 /** Deterministic in-memory gateway for store and terminal UI tests. */
 export class FakePaseoGateway implements PaseoGateway {
@@ -9,6 +14,12 @@ export class FakePaseoGateway implements PaseoGateway {
   private readonly timelineListeners = new Map<string, Set<(update: TimelineUpdate) => void>>();
   public readonly commands: AgentCommand[] = [];
   public releaseCount = 0;
+  public terminals: TerminalRecord[] = [];
+  public readonly terminalInput: Array<{ terminalId: string; data: string }> = [];
+  private readonly terminalListeners = new Map<
+    string,
+    Set<(update: TerminalStreamUpdate) => void>
+  >();
 
   public constructor(private snapshot: DirectorySnapshot) {}
 
@@ -55,6 +66,61 @@ export class FakePaseoGateway implements PaseoGateway {
     if (command.type === "respond-permission")
       return { type: "permission-resolved", requestId: command.requestId };
     return { type: "ok" };
+  }
+
+  public async listTerminals(workspaceId: string): Promise<readonly TerminalRecord[]> {
+    this.assertConnected();
+    return this.terminals.filter((terminal) => terminal.workspaceId === workspaceId);
+  }
+
+  public async createTerminal(
+    workspaceId: string,
+    options: TerminalCreateOptions = {},
+  ): Promise<TerminalRecord> {
+    this.assertConnected();
+    const terminal: TerminalRecord = {
+      id: `fake-terminal-${this.terminals.length + 1}`,
+      workspaceId,
+      cwd: options.cwd ?? "/",
+      name: options.name ?? "Terminal",
+    };
+    this.terminals.push(terminal);
+    return terminal;
+  }
+
+  public async captureTerminal(
+    terminalId: string,
+  ): Promise<{ terminalId: string; lines: readonly string[]; totalLines: number }> {
+    this.assertConnected();
+    return { terminalId, lines: [], totalLines: 0 };
+  }
+
+  public sendTerminalInput(terminalId: string, data: string): void {
+    this.terminalInput.push({ terminalId, data });
+  }
+
+  public async observeTerminal(
+    terminalId: string,
+    listener: (update: TerminalStreamUpdate) => void,
+  ): Promise<Observation> {
+    this.assertConnected();
+    const listeners = this.terminalListeners.get(terminalId) ?? new Set();
+    listeners.add(listener);
+    this.terminalListeners.set(terminalId, listeners);
+    return this.observation(() => {
+      listeners.delete(listener);
+    });
+  }
+
+  public async killTerminal(terminalId: string): Promise<void> {
+    this.assertConnected();
+    this.terminals = this.terminals.filter((terminal) => terminal.id !== terminalId);
+    for (const listener of this.terminalListeners.get(terminalId) ?? [])
+      listener({ type: "exited", terminalId });
+  }
+
+  public emitTerminal(update: TerminalStreamUpdate): void {
+    for (const listener of this.terminalListeners.get(update.terminalId) ?? []) listener(update);
   }
 
   public emitDirectory(update: DirectoryUpdate): void {

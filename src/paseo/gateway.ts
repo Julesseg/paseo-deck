@@ -15,6 +15,13 @@ import type {
   WorkspaceRecord,
 } from "../contracts/domain.js";
 import type { Observation, PaseoGateway } from "../contracts/gateway.js";
+import type {
+  TerminalCapture,
+  TerminalCreateOptions,
+  TerminalObservation,
+  TerminalRecord,
+  TerminalStreamUpdate,
+} from "../contracts/terminal.js";
 import { type CliRunner, createCliRunner, runJson } from "./cli.js";
 import { PaseoGatewayError, paseoFailure } from "./errors.js";
 import { type PaseoTarget, type PaseoTargetInput, targetFromDaemonStatus } from "./target.js";
@@ -107,6 +114,102 @@ export class ProductionPaseoGateway implements PaseoGateway {
       return directorySnapshot(client, projects, workspaces, agents, providers);
     } catch (error) {
       throw paseoFailure(error, "protocol");
+    }
+  }
+
+  public async listTerminals(workspaceId: string): Promise<readonly TerminalRecord[]> {
+    try {
+      const entries = await this.requireClient().workspaces.ref(workspaceId).terminals.list();
+      return entries.entries.map(toTerminalRecord);
+    } catch (error) {
+      throw paseoFailure(error, "protocol");
+    }
+  }
+
+  public async createTerminal(
+    workspaceId: string,
+    options: TerminalCreateOptions = {},
+  ): Promise<TerminalRecord> {
+    try {
+      const terminal = await this.requireClient()
+        .workspaces.ref(workspaceId)
+        .terminals.create({
+          ...(options.cwd === undefined ? {} : { cwd: options.cwd }),
+          ...(options.name === undefined ? {} : { name: options.name }),
+          ...(options.command === undefined ? {} : { command: options.command }),
+          ...(options.args === undefined ? {} : { args: [...options.args] }),
+          ...(options.size === undefined ? {} : { size: options.size }),
+        });
+      return toTerminalRecord(
+        terminal.current() ?? {
+          id: terminal.id,
+          workspaceId,
+          cwd: options.cwd ?? "",
+          name: options.name ?? "Terminal",
+        },
+      );
+    } catch (error) {
+      throw paseoFailure(error, "command");
+    }
+  }
+
+  public async captureTerminal(
+    terminalId: string,
+    options?: { start?: number; end?: number },
+  ): Promise<TerminalCapture> {
+    try {
+      const result = await this.requireClient().terminals.ref(terminalId).capture(options);
+      return { terminalId, lines: result.lines, totalLines: result.totalLines };
+    } catch (error) {
+      throw paseoFailure(error, "protocol");
+    }
+  }
+
+  public sendTerminalInput(terminalId: string, data: string): void {
+    try {
+      this.requireClient().terminals.ref(terminalId).write(data);
+    } catch (error) {
+      throw paseoFailure(error, "command");
+    }
+  }
+
+  public async observeTerminal(
+    terminalId: string,
+    listener: (update: TerminalStreamUpdate) => void,
+  ): Promise<TerminalObservation> {
+    const client = this.requireClient();
+    let active = true;
+    let previous = "";
+    const poll = async (): Promise<void> => {
+      if (!active) return;
+      try {
+        const capture = await client.terminals.ref(terminalId).capture({ start: -2000 });
+        const text = capture.lines.join("\n");
+        if (text !== previous) {
+          const delta = text.startsWith(previous) ? text.slice(previous.length) : text;
+          listener({ type: "output", terminalId, data: new TextEncoder().encode(delta) });
+          previous = text;
+        }
+      } catch {
+        listener({ type: "exited", terminalId });
+        active = false;
+        return;
+      }
+      if (active) setTimeout(() => void poll(), 250);
+    };
+    void poll();
+    return {
+      release: async () => {
+        active = false;
+      },
+    };
+  }
+
+  public async killTerminal(terminalId: string): Promise<void> {
+    try {
+      await this.requireClient().terminals.ref(terminalId).kill();
+    } catch (error) {
+      throw paseoFailure(error, "command");
     }
   }
 
@@ -1065,6 +1168,24 @@ function projectEntries(value: UnknownRecord): UnknownRecord[] {
 }
 function asRecord(value: unknown): UnknownRecord | undefined {
   return typeof value === "object" && value !== null ? (value as UnknownRecord) : undefined;
+}
+
+function toTerminalRecord(value: {
+  id: string;
+  workspaceId?: string;
+  cwd?: string;
+  name: string;
+  title?: string;
+  activity?: { state: "idle" | "working" | "attention" } | null;
+}): TerminalRecord {
+  return {
+    id: value.id,
+    workspaceId: value.workspaceId ?? "",
+    cwd: value.cwd ?? "",
+    name: value.name,
+    ...(value.title === undefined ? {} : { title: value.title }),
+    ...(value.activity?.state === undefined ? {} : { activity: value.activity.state }),
+  };
 }
 function stringValue(value: unknown): string | undefined {
   return typeof value === "string" ? value : undefined;

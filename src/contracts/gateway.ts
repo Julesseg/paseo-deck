@@ -1,11 +1,12 @@
 import type { AgentCommand, CommandResult } from "./commands.js";
 import type { DirectorySnapshot, DirectoryUpdate, TimelineUpdate } from "./domain.js";
+import type { TerminalGateway } from "./terminal.js";
 
 export interface Observation {
   release(): Promise<void>;
 }
 
-export interface PaseoGateway {
+export interface PaseoGateway extends TerminalGateway {
   connect(): Promise<void>;
   close(): Promise<void>;
   getDirectorySnapshot(): Promise<DirectorySnapshot>;
