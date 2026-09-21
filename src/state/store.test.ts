@@ -606,11 +606,45 @@ describe("application store", () => {
     send(2, { id: "assistant", type: "assistant-message", messageId: "m1", text: "partial" });
     expect(state.timeline.items[1]?.item).toMatchObject({
       streaming: true,
-      turnId: "turn:agent-a:one",
+      turnId: "one",
     });
     send(3, { id: "turn:agent-a:one", type: "turn", status: "completed" });
     expect(state.timeline.items[1]?.item).toMatchObject({ streaming: false });
   });
+
+  it.each(["completed", "failed", "canceled"] as const)(
+    "clears raw turn association when a %s turn arrives",
+    (status) => {
+      let state = reduceApp(createInitialState(), { type: "select-agent", agentId: "agent-a" });
+      const send = (sequence: number, item: TimelineEvent["item"]) => {
+        state = reduceApp(state, {
+          type: "timeline",
+          update: { type: "event", agentId: "agent-a", event: event(sequence, item) },
+        });
+      };
+      send(1, { id: "turn:agent-a:raw-id", type: "turn", turnId: "raw-id", status: "started" });
+      send(2, {
+        id: "assistant",
+        type: "assistant-message",
+        messageId: `message-${status}`,
+        turnId: "raw-id",
+        text: "partial",
+        streaming: true,
+      });
+      send(3, {
+        id: "turn:agent-a:raw-id",
+        type: "turn",
+        turnId: "raw-id",
+        status,
+      });
+      expect(
+        state.timeline.items.find((item) => item.item.type === "assistant-message")?.item,
+      ).toMatchObject({
+        streaming: false,
+        turnId: "raw-id",
+      });
+    },
+  );
 
   it("does not replay a consumed cursor after assistant and tool coalescing", () => {
     let state = reduceApp(createInitialState(), { type: "select-agent", agentId: "agent-a" });
