@@ -419,12 +419,33 @@ class TimelineItemView implements Component {
           .render(width)
           .map((line) => clipTerminalLine(line, width, this.theme.glyph("ellipsis"))),
       ];
-    return timelineItemDisplay(this.item, width, this.expanded, {
+    const lines = timelineItemDisplay(this.item, width, this.expanded, {
       bullet: this.theme.glyph("bullet"),
       ellipsis: this.theme.glyph("ellipsis"),
       divider: this.theme.glyph("divider"),
     });
+    const tone = timelineTone(this.item);
+    return lines.map((line, index) => {
+      if (this.item.type === "tool" && this.item.detail?.diff && index > 0) {
+        const diffTone = line.trimStart().startsWith("+")
+          ? "running"
+          : line.trimStart().startsWith("-")
+            ? "failure"
+            : "muted";
+        return this.theme.styleRendered(diffTone, line);
+      }
+      return index === 0 && tone ? this.theme.styleRendered(tone, line) : line;
+    });
   }
+}
+
+function timelineTone(item: TimelineItem): "running" | "permission" | "failure" | undefined {
+  if (item.type === "permission" && !item.resolved) return "permission";
+  if (item.type === "error" || (item.type === "tool" && item.status === "failed")) return "failure";
+  if (item.type === "assistant-message" && item.streaming) return "running";
+  if (item.type === "tool" && item.status === "running") return "running";
+  if (item.type === "turn" && item.status === "started") return "running";
+  return undefined;
 }
 
 class TimelineView implements Component {

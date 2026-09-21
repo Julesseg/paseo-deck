@@ -119,6 +119,27 @@ const shots: Array<{
     ]),
   },
   {
+    name: "completed-turn",
+    columns: 100,
+    rows: 28,
+    state: withTimeline(baseState, "timeline-completed", [
+      {
+        id: "turn-completed",
+        type: "turn",
+        status: "completed",
+        detail: "Release verified",
+        durationMs: 3200,
+      },
+      {
+        id: "assistant-completed",
+        type: "assistant-message",
+        messageId: "completed",
+        turnId: "turn-completed",
+        text: "The release build is ready.",
+      },
+    ]),
+  },
+  {
     name: "permission",
     columns: 100,
     rows: 28,

@@ -897,6 +897,8 @@ function timelineItem(value: UnknownRecord, agentId: string): TimelineItem | und
       type: "assistant-message",
       messageId: String(value.messageId ?? "unknown"),
       text: String(value.text ?? ""),
+      ...(stringValue(value.turnId) ? { turnId: stringValue(value.turnId) as string } : {}),
+      ...(typeof value.streaming === "boolean" ? { streaming: value.streaming } : {}),
     };
   if (type === "reasoning")
     return {

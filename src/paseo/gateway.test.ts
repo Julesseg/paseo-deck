@@ -521,6 +521,8 @@ describe("ProductionPaseoGateway", () => {
           type: "assistant_message",
           messageId: "m1",
           text: "partial",
+          turnId: "turn-1",
+          streaming: true,
         },
       },
     });
@@ -552,7 +554,12 @@ describe("ProductionPaseoGateway", () => {
       .filter((update) => update.type === "event")
       .map((update) => (update.event as { item: unknown }).item);
     expect(items).toContainEqual(
-      expect.objectContaining({ type: "assistant-message", timestamp: "2026-09-18T10:00:00Z" }),
+      expect.objectContaining({
+        type: "assistant-message",
+        timestamp: "2026-09-18T10:00:00Z",
+        turnId: "turn-1",
+        streaming: true,
+      }),
     );
     expect(items).toContainEqual(
       expect.objectContaining({
