@@ -118,6 +118,21 @@ export function selectedTimelineText(state: TimelineBufferState): string {
   return printableTimelineText(flattenLines(state.lines).slice(selection.start, selection.end));
 }
 
+export function timelineSelectionColumns(
+  state: TimelineBufferState,
+  line: number,
+): { start: number; end: number } | undefined {
+  const selection = timelineSelection(state);
+  if (!selection) return undefined;
+  const lineStart = offsetAt(state.lines, { line, column: 0 });
+  const lineEnd = lineStart + (state.lines[line] ?? "").length;
+  if (selection.end <= lineStart || selection.start >= lineEnd) return undefined;
+  return {
+    start: Math.max(0, selection.start - lineStart),
+    end: Math.min(lineEnd - lineStart, selection.end - lineStart),
+  };
+}
+
 export function toggleTimelineFold(state: TimelineBufferState): TimelineBufferState {
   const folded = new Set(state.folded);
   if (folded.has(state.line)) folded.delete(state.line);

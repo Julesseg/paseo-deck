@@ -47,10 +47,12 @@ import {
   moveTimelineBuffer,
   osc52,
   pageTimelineBuffer,
+  printableTimelineText,
   replaceTimelineBuffer,
   searchTimelineBuffer,
   selectedTimelineText,
   type TimelineBufferState,
+  timelineSelectionColumns,
   toggleTimelineFold,
 } from "./timeline-buffer.js";
 import { clipboardPlainText, copyTargets, findTimelineMatches } from "./timeline-search.js";
@@ -340,6 +342,8 @@ class TimelineView implements Component {
   private renderedWidth = 80;
   private state: AppState | undefined;
   private buffer: TimelineBufferState = createTimelineBuffer();
+  private searchQuery = "";
+  private selectionFeedback = "";
   constructor(private readonly theme: DeckTheme) {}
   updateSelection(state: AppState): void {
     this.state = state;
@@ -371,6 +375,7 @@ class TimelineView implements Component {
     this.buffer = pageTimelineBuffer(this.buffer, direction, height);
   }
   startVisual(line: boolean): void {
+    this.selectionFeedback = "";
     this.buffer = enterTimelineVisual(this.buffer, line ? "line" : "character");
     this.state = this.state ? { ...this.state, timelineMode: "visual" } : this.state;
   }
@@ -378,7 +383,12 @@ class TimelineView implements Component {
     this.buffer = leaveTimelineVisual(this.buffer);
   }
   searchText(query: string, direction: -1 | 1 = 1): void {
+    this.searchQuery = query;
     this.buffer = searchTimelineBuffer(this.buffer, query, direction);
+  }
+  repeatSearch(direction: -1 | 1): void {
+    if (this.searchQuery)
+      this.buffer = searchTimelineBuffer(this.buffer, this.searchQuery, direction);
   }
   yankText(): string {
     return selectedTimelineText(this.buffer);
@@ -505,17 +515,31 @@ class TimelineView implements Component {
     const bodyLines = this.events.flatMap(
       (event) => this.itemViews.get(event.item.id)?.render(width) ?? [],
     );
+    const wasVisual = this.buffer.mode === "visual";
     this.buffer = replaceTimelineBuffer(this.buffer, bodyLines);
+    if (wasVisual && this.buffer.mode !== "visual")
+      this.selectionFeedback = "Selection cleared: timeline changed";
     return [
-      this.theme.styleRendered("header", this.theme.clipRendered(heading, width)),
+      this.theme.styleRendered(
+        "header",
+        this.theme.clipRendered(
+          `${heading}${this.selectionFeedback ? ` · ${this.selectionFeedback}` : ""}`,
+          width,
+        ),
+      ),
       ...this.events.flatMap((event, index) => {
         const lines = this.itemViews.get(event.item.id)?.render(width) ?? [];
         const start = this.eventBodyLine(index);
         return lines.map((line, offset) => {
           const bodyLine = start + offset;
           let rendered = line;
-          if (this.focused && this.buffer.mode === "visual" && this.buffer.line === bodyLine)
-            rendered = this.theme.styleBackground("selection", rendered);
+          if (this.focused && this.buffer.mode === "visual" && this.buffer.line === bodyLine) {
+            const range = timelineSelectionColumns(this.buffer, bodyLine);
+            if (range) {
+              const plain = printableTimelineText(rendered);
+              rendered = `${plain.slice(0, range.start)}${this.theme.styleBackground("selection", plain.slice(range.start, range.end))}${plain.slice(range.end)}`;
+            }
+          }
           if (this.focused && this.buffer.mode === "normal" && this.buffer.line === bodyLine)
             rendered = `${this.theme.style("selection", "> ")}${rendered}`;
           return clipTerminalLine(rendered, width, this.theme.glyph("ellipsis"));
@@ -1432,6 +1456,11 @@ export class DeckTui {
     }
     if (intent.type === "timeline-search-text") {
       this.timeline.searchText(intent.query, intent.direction);
+      this.renderScheduler.requestImmediate();
+      return;
+    }
+    if (intent.type === "timeline-repeat-search") {
+      this.timeline.repeatSearch(intent.direction);
       this.renderScheduler.requestImmediate();
       return;
     }

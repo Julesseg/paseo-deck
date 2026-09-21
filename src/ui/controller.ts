@@ -53,6 +53,7 @@ export type UiIntent =
   | { type: "timeline-page"; direction: -1 | 1 }
   | { type: "timeline-visual"; line: boolean }
   | { type: "timeline-search-text"; query: string; direction: -1 | 1 }
+  | { type: "timeline-repeat-search"; direction: -1 | 1 }
   | { type: "timeline-yank" }
   | { type: "timeline-fold" }
   | { type: "move-timeline-landmark"; direction: -1 | 1; kind: "turn" | "error" }
@@ -158,16 +159,24 @@ export class DeckController {
       if (this.#timelinePrefix === "g") {
         this.#timelinePrefix = "";
         if (data === "g")
-          return this.send({ type: "move-timeline-selection-boundary", boundary: "start" });
+          return this.send(
+            state.timeline.agentId
+              ? { type: "move-timeline-text", key: "g" }
+              : { type: "move-timeline-selection-boundary", boundary: "start" },
+          );
         if (data === "G")
-          return this.send({ type: "move-timeline-selection-boundary", boundary: "end" });
+          return this.send(
+            state.timeline.agentId
+              ? { type: "move-timeline-text", key: "G" }
+              : { type: "move-timeline-selection-boundary", boundary: "end" },
+          );
       }
       if (this.#timelinePrefix === "z") {
         this.#timelinePrefix = "";
         if (data === "a") return this.send({ type: "timeline-fold" });
       }
       if (state.timeline.agentId && (data === "j" || data === "k"))
-        return this.send({ type: "move-timeline-selection", direction: data === "j" ? 1 : -1 });
+        return this.send({ type: "move-timeline-text", key: data });
       if (state.timeline.agentId && (timelineTextMotionKeys as readonly string[]).includes(data))
         return this.send({ type: "move-timeline-text", key: data as TimelineTextMotionKey });
       if (data === "G")
@@ -176,6 +185,8 @@ export class DeckController {
         return this.send({ type: "toggle-selected-timeline-item" });
       if (data === "y" && state.timeline.items.length)
         return this.send({ type: "open-timeline-copy" });
+      if (data === "n" || data === "N")
+        return this.send({ type: "timeline-repeat-search", direction: data === "n" ? 1 : -1 });
       if (data === "\u0015" || data === "\u0004")
         return this.send({ type: "scroll-timeline", direction: data === "\u0015" ? -1 : 1 });
       if (state.timeline.agentId && state.timeline.items.length && (data === "v" || data === "V"))
