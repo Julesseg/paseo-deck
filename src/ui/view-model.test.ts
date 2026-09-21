@@ -88,21 +88,20 @@ describe("tree view model", () => {
     ).toBe("attention");
   });
 
-  it("keeps workspace identity and places unowned workspaces in Other", () => {
+  it("keeps orphaned workspaces at the sidebar root", () => {
     const rows = deriveTreeRows(state());
 
     expect(rows.map((row) => `${row.kind}:${row.label}`)).toEqual([
       "project:Deck",
       "workspace:Main",
       "agent:Build UI [agent-12]",
-      "project:Other",
       "workspace:Loose",
     ]);
     expect(rows[1]).toMatchObject({ id: "w", depth: 1 });
     expect(rows[2]).toMatchObject({ selected: true, attention: true });
   });
 
-  it("keeps remote-backed workspaces keyboard-reachable under readable and Other groups", () => {
+  it("keeps remote-backed workspaces keyboard-reachable without a synthetic project", () => {
     const remoteState: AppState = {
       ...state(),
       directory: {
@@ -150,9 +149,8 @@ describe("tree view model", () => {
     expect(deriveTreeRows(remoteState)).toMatchObject([
       { kind: "project", id: "remote:github.com/acme/paseo-deck", label: "acme/paseo-deck" },
       { kind: "workspace", id: "workspace-remote" },
-      { kind: "project", label: "Other" },
-      { kind: "workspace", id: "workspace-orphan" },
-      { kind: "agent", id: "agent-orphan", selected: true, attention: true },
+      { kind: "workspace", id: "workspace-orphan", depth: 0 },
+      { kind: "agent", id: "agent-orphan", depth: 1, selected: true, attention: true },
     ]);
     expect(deriveTreeRows(remoteState).map((row) => row.label)).not.toContain(
       "remote:github.com/acme/paseo-deck",
@@ -166,10 +164,10 @@ describe("tree view model", () => {
 
     const orphanFilterRows = deriveTreeRows({ ...remoteState, filter: "needs" });
     expect(orphanFilterRows).toMatchObject([
-      { kind: "project", label: "Other", expanded: true },
-      { kind: "workspace", id: "workspace-orphan", expanded: true },
-      { kind: "agent", id: "agent-orphan", attention: true },
+      { kind: "workspace", id: "workspace-orphan", depth: 0, expanded: true },
+      { kind: "agent", id: "agent-orphan", depth: 1, attention: true },
     ]);
+    expect(deriveTreeRows(remoteState).map((row) => row.label)).not.toContain("Other");
   });
 
   it("orders attention work deterministically and exposes compact triage summaries", () => {

@@ -25,6 +25,7 @@ const shots: Array<{
   state: AppState;
   appearance?: TerminalAppearance;
 }> = [
+  { name: "project-ownership", columns: 100, rows: 28, state: baseState },
   { name: "session-tree", columns: 100, rows: 28, state: baseState },
   {
     name: "terminal-discovery",
@@ -372,20 +373,27 @@ function syntheticState(): AppState {
     recovery: { attempt: 0, directoryStale: false, timelineStale: false },
     notifications: [],
     directory: {
-      projects: [{ id: "project-deck", name: "Deck Labs" }],
+      projects: [{ id: "live-project", name: "Deck Labs" }],
       workspaces: [
         {
           id: "workspace-main",
-          projectId: "project-deck",
+          projectId: "live-project",
           title: "Main",
           directory: "/demo/deck",
           archived: false,
         },
         {
           id: "workspace-theme",
-          projectId: "project-deck",
+          projectId: "live-project",
           title: "Theme polish",
           directory: "/demo/deck-theme",
+          archived: false,
+        },
+        {
+          id: "workspace-orphan",
+          projectId: "missing-project",
+          title: "Standalone",
+          directory: "/demo/standalone",
           archived: false,
         },
       ],
@@ -439,6 +447,19 @@ function syntheticState(): AppState {
           needsAttention: false,
           archived: false,
         },
+        {
+          id: "agent-orphan-3456",
+          workspaceId: "workspace-orphan",
+          title: "Orion",
+          status: "idle",
+          providerId: "codex",
+          modelId: "gpt-5.6-terra",
+          availableModeIds: [],
+          availableThinkingLevels: [],
+          pendingPermissions: [],
+          needsAttention: false,
+          archived: false,
+        },
       ],
       providers: [
         {
@@ -465,10 +486,10 @@ function syntheticState(): AppState {
         },
       ],
     },
-    selectedProjectId: "project-deck",
+    selectedProjectId: "live-project",
     selectedWorkspaceId: "workspace-main",
     selectedAgentId: "agent-atlas-1234",
-    expandedIds: new Set(["project-deck", "workspace-main", "workspace-theme"]),
+    expandedIds: new Set(["live-project", "workspace-main", "workspace-theme", "workspace-orphan"]),
     filter: "",
     treeOrder: "attention",
     showArchived: false,

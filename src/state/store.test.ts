@@ -43,10 +43,15 @@ const event = (sequence: number, item: TimelineEvent["item"]): TimelineEvent => 
 });
 
 describe("deriveTree", () => {
-  it("groups unassigned workspaces under Other and filters agents", () => {
+  it("keeps orphaned workspaces at the root and filters sessions", () => {
     const tree = deriveTree(directory, "watch");
-    expect(tree.map((group) => group.name)).toEqual(["Other"]);
-    expect(tree[0]?.workspaces[0]?.agents.map((agent) => agent.id)).toEqual(["agent-b"]);
+    expect(tree).toMatchObject([
+      {
+        kind: "workspace",
+        workspace: { id: "workspace-b" },
+        agents: [{ id: "agent-b" }],
+      },
+    ]);
   });
 });
 

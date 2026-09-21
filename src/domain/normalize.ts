@@ -74,11 +74,11 @@ export function normalizePermission(value: unknown, agentId: string): Permission
 
 export function normalizeProject(value: unknown): ProjectRecord | undefined {
   const source = record(value);
-  const id = text(source.id);
+  const id = text(source.projectId, text(source.id, text(source.projectKey)));
   if (!id) return undefined;
   return {
     id,
-    name: text(source.name, id),
+    name: text(source.name, text(source.projectName, id)),
     ...(text(source.path) ? { path: text(source.path) } : {}),
   };
 }

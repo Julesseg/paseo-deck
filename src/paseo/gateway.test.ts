@@ -179,6 +179,32 @@ describe("ProductionPaseoGateway", () => {
     expect(fixture.client.providers.listModes).toHaveBeenCalledWith("codex");
   });
 
+  it("uses the live projectId field to join projects with their workspaces", async () => {
+    const fixture = testClient();
+    fixture.client.projects.list.mockResolvedValueOnce({
+      projects: [{ projectId: "live-project", name: "Live project" }],
+    } as never);
+    fixture.client.workspaces.list.mockResolvedValueOnce({
+      entries: [
+        {
+          id: "workspace-1",
+          projectId: "live-project",
+          workspaceDirectory: "/repo",
+        },
+      ],
+    } as never);
+    const gateway = new ProductionPaseoGateway({
+      host: "127.0.0.1:6767",
+      createClient: () => fixture.client as never,
+    });
+
+    await gateway.connect();
+    await expect(gateway.getDirectorySnapshot()).resolves.toMatchObject({
+      projects: [{ id: "live-project", name: "Live project" }],
+      workspaces: [{ id: "workspace-1", projectId: "live-project" }],
+    });
+  });
+
   it("projects the SDK updatedAt activity timestamp without manufacturing one", async () => {
     const fixture = testClient();
     fixture.client.agents.list.mockResolvedValueOnce({

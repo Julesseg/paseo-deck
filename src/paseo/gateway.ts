@@ -628,7 +628,7 @@ async function directorySnapshot(
 }
 
 function projectRecord(value: UnknownRecord): ProjectRecord | undefined {
-  const id = nonBlankString(value.id ?? value.projectKey);
+  const id = nonBlankString(value.projectId ?? value.id ?? value.projectKey);
   if (id === undefined) return undefined;
   const sourceName = nonBlankString(value.name ?? value.projectName);
   const remoteName = readableRemoteProjectName(id);
