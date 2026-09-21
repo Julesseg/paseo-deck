@@ -361,7 +361,8 @@ export class ApplicationController {
         await this.openSelection();
         return;
       case "set-focus":
-        this.apply({ type: "set-focus", focus: intent.focus });
+        if (intent.focus === "tree") this.beginSidebarNavigation();
+        else this.apply({ type: "set-focus", focus: intent.focus });
         return;
       case "set-composer-mode":
         this.apply({ type: "set-composer-mode", mode: intent.mode });
@@ -644,6 +645,23 @@ export class ApplicationController {
     const index = current === -1 ? (direction === 1 ? 0 : rows.length - 1) : current + direction;
     const row = rows[Math.max(0, Math.min(rows.length - 1, index))];
     if (row) await this.selectRow(row);
+  }
+
+  private beginSidebarNavigation(): void {
+    const rows = deriveTreeRows(this.#state);
+    const active = this.#state.activeSessionId;
+    const row =
+      (active ? rows.find((item) => item.kind === "agent" && item.id === active) : undefined) ??
+      rows.find((item) => item.kind === "agent") ??
+      rows[0];
+    if (row) {
+      this.apply({
+        type: "select-sidebar",
+        selection: { kind: row.kind === "agent" ? "session" : row.kind, id: row.id },
+      });
+      return;
+    }
+    this.apply({ type: "set-focus", focus: "tree" });
   }
 
   private async moveSelectionBoundary(boundary: "start" | "end"): Promise<void> {

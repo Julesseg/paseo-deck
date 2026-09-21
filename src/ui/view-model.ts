@@ -167,7 +167,13 @@ export function deriveTreeRows(state: AppState): TreeRow[] {
       )
       .sort((left, right) => compareAgents(left, right, state.treeOrder));
     for (const agent of workspaceAgents) {
-      const row = agentRow(agent, state.selectedAgentId, state.sidebarSelection, depth + 1);
+      const row = agentRow(
+        agent,
+        state.selectedAgentId,
+        state.sidebarSelection,
+        state.activeSessionId ?? state.selectedAgentId,
+        depth + 1,
+      );
       rows.push({ ...row, gapBefore: workspaceAgents.indexOf(agent) > 0 ? 1 : 0 });
     }
   };
@@ -215,6 +221,7 @@ function agentRow(
   agent: AgentRecord,
   selectedAgentId: string | undefined,
   selection?: AppState["sidebarSelection"],
+  activeSessionId?: string,
   depth = 2,
 ): TreeRow {
   const activityLabel = compactActivity(agent.lastActivityAt);
@@ -229,6 +236,7 @@ function agentRow(
     providerModel: [agent.providerId, agent.modelId].filter(Boolean).join("/"),
     attention: needsIntervention(agent),
     permissionCount: agent.pendingPermissions.length,
+    active: agent.id === activeSessionId,
     ...(activityLabel === undefined ? {} : { activityLabel }),
     activity: activityForAgent(agent),
   };

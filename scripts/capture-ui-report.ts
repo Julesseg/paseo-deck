@@ -27,6 +27,28 @@ const shots: Array<{
   appearance?: TerminalAppearance;
 }> = [
   { name: "project-ownership", columns: 160, rows: 42, state: baseState },
+  {
+    name: "sidebar-selection",
+    columns: 100,
+    rows: 28,
+    state: {
+      ...baseState,
+      activeSessionId: "agent-atlas-1234",
+      sidebarSelection: { kind: "session", id: "agent-harbor-5678" },
+    },
+  },
+  {
+    name: "sidebar-active-session",
+    columns: 100,
+    rows: 28,
+    state: {
+      ...baseState,
+      focus: "composer",
+      composerMode: "normal",
+      activeSessionId: "agent-atlas-1234",
+      sidebarSelection: { kind: "session", id: "agent-harbor-5678" },
+    },
+  },
   { name: "session-tree", columns: 100, rows: 28, state: baseState },
   {
     name: "terminal-discovery",
@@ -354,12 +376,13 @@ for (const shot of shots) {
   deck.start();
   await terminal.waitForRender();
   const viewport = terminal.viewport();
+  const backgrounds = terminal.viewportBackgrounds();
   await deck.stop();
   await writeFile(
     join(outputDirectory, `${shot.name}.svg`),
     terminalSvg(
       viewport,
-      terminal.viewportBackgrounds(),
+      backgrounds,
       shot.columns,
       shot.rows,
       `Paseo Deck ${shot.name.replaceAll("-", " ")}`,

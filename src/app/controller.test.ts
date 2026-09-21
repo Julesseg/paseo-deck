@@ -203,6 +203,36 @@ describe("ApplicationController", () => {
     expect(app.state.sidebarSelection).toEqual({ kind: "session", id: "agent-2" });
   });
 
+  it("restores the sidebar selection to the active session when sidebar navigation begins", async () => {
+    const app = new ApplicationController(new FakePaseoGateway(snapshot));
+    await app.start();
+    await app.selectAgent("agent-1");
+    await app.handleIntent({ type: "select-next", direction: 1 });
+    expect(app.state.sidebarSelection).toEqual({ kind: "session", id: "agent-2" });
+
+    await app.handleIntent({ type: "set-focus", focus: "composer" });
+    await app.handleIntent({ type: "set-focus", focus: "tree" });
+
+    expect(app.state.sidebarSelection).toEqual({ kind: "session", id: "agent-1" });
+    expect(app.state.activeSessionId).toBe("agent-1");
+  });
+
+  it("starts sidebar navigation at the first visible session before structural rows", async () => {
+    const app = new ApplicationController(new FakePaseoGateway(snapshot));
+    await app.start();
+
+    await app.handleIntent({ type: "set-focus", focus: "tree" });
+    expect(app.state.sidebarSelection).toEqual({ kind: "project", id: "project-1" });
+    await app.handleIntent({ type: "collapse-or-expand", direction: 1 });
+    await app.handleIntent({ type: "select-next", direction: 1 });
+    await app.handleIntent({ type: "collapse-or-expand", direction: 1 });
+    await app.handleIntent({ type: "set-focus", focus: "composer" });
+    await app.handleIntent({ type: "set-focus", focus: "tree" });
+
+    expect(app.state.sidebarSelection).toEqual({ kind: "session", id: "agent-1" });
+    expect(app.state.activeSessionId).toBeUndefined();
+  });
+
   it("does not activate a session while browsing from an empty active state", async () => {
     const app = new ApplicationController(new FakePaseoGateway(snapshot));
     await app.start();

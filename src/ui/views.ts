@@ -136,16 +136,37 @@ class TreeView implements Component {
     this.paseoHost = hostLabel(paseoHost);
   }
   private readonly paseoHost: string | undefined;
+  private viewportHeight = 0;
+  get renderedViewportHeight(): number {
+    return this.viewportHeight;
+  }
   update(state: AppState): void {
     this.state = state;
   }
+  setViewportHeight(height: number): void {
+    this.viewportHeight = Math.max(0, height);
+  }
   invalidate(): void {}
   render(width: number): string[] {
+    const innerWidth = Math.max(1, width - 2);
+    const borderTone = this.state.focus === "tree" ? "focus" : "border";
+    const border = this.theme.appearance.symbols === "unicode" ? "│" : "|";
+    const frame = (line: string): string => {
+      const padding = " ".repeat(Math.max(0, innerWidth - terminalDisplayWidth(line)));
+      return this.theme.styleRenderedBackground(
+        "sidebar",
+        `${this.theme.styleRendered(borderTone, border)}${line}${padding}${this.theme.styleRendered(borderTone, border)}`,
+      );
+    };
     const sidebarLine = (line: string): string => {
-      const padding = " ".repeat(Math.max(0, width - terminalDisplayWidth(line)));
-      return this.theme.styleRenderedBackground("sidebar", `${line}${padding}`);
+      return frame(line);
     };
     const rows = deriveTreeRows(this.state);
+    const header = this.theme.style(
+      this.state.focus === "tree" ? "focus" : "header",
+      `${this.state.focus === "tree" ? "" : "  "}Projects / workspaces${this.paseoHost ? ` ${this.theme.glyph("bullet")} ${sanitizeTerminalText(this.paseoHost)}` : ""}`,
+    );
+    const output: string[] = [""];
     if (rows.length === 0) {
       const message =
         this.state.connection === "connecting"
@@ -157,93 +178,109 @@ class TreeView implements Component {
               : this.state.filter.trim()
                 ? `No sessions match “${sanitizeTerminalText(this.state.filter)}”. Press Esc to clear the filter.`
                 : "No projects or workspaces are available yet. Press r to refresh.";
-      return [
-        this.theme.style("header", "Projects / workspaces"),
+      output.push(
+        header,
         ...wrapTerminalProse(this.theme.label(message), width).map((line) =>
           this.theme.styleRendered("muted", line),
         ),
-      ].map(sidebarLine);
+      );
+    } else {
+      output.push(
+        header,
+        ...rows.flatMap((row) => {
+          const selected = " ";
+          const branch =
+            row.kind === "agent"
+              ? this.theme.glyph("agent")
+              : row.expanded
+                ? this.theme.glyph("expanded")
+                : this.theme.glyph("collapsed");
+          const flags =
+            row.kind === "agent"
+              ? `${row.permissionCount ? ` ${this.theme.glyph("permission")}` : ""}${row.attention ? ` ${this.theme.glyph("attention")}` : ""}`
+              : "";
+          const secondary = width < 34 || row.kind !== "agent" ? "" : treeSecondary(row, this.theme);
+          const primary = this.theme.clipRendered(
+            `${selected}${"  ".repeat(row.depth)}${branch} ${sanitizeTerminalText(row.label)}${flags}${secondary}`,
+            innerWidth,
+          );
+          const tone = row.attention
+            ? "attention"
+            : row.status === "failed"
+              ? "failure"
+              : row.status === "running"
+                ? "running"
+                : row.kind === "project"
+                  ? "header"
+                  : "muted";
+          const fill = (line: string): string =>
+            `${line}${" ".repeat(Math.max(0, innerWidth - terminalDisplayWidth(line)))}`;
+          const background =
+            this.state.focus === "tree" && row.selected
+              ? "selection"
+              : row.kind === "agent" && row.active
+                ? "surface"
+                : undefined;
+          const styleRow = (line: string): string =>
+            background
+              ? this.theme.styleRenderedBackground(background, fill(line))
+              : `${this.theme.styleRendered(tone, line)}${" ".repeat(Math.max(0, innerWidth - terminalDisplayWidth(line)))}`;
+          const rowLines = row.gapBefore ? [""] : [];
+          rowLines.push(styleRow(primary));
+          const metadata = treeRowMetadata(row, width, this.theme);
+          if (metadata) rowLines.push(styleRow(metadata));
+          return rowLines;
+        }),
+      );
     }
-    return [
-      this.theme.style(
-        this.state.focus === "tree" ? "focus" : "header",
-        `${this.state.focus === "tree" ? "" : "  "}Projects / workspaces${this.paseoHost ? ` ${this.theme.glyph("bullet")} ${sanitizeTerminalText(this.paseoHost)}` : ""}`,
-      ),
-      ...rows.flatMap((row) => {
-        const selected = " ";
-        const branch =
-          row.kind === "agent"
-            ? this.theme.glyph("agent")
-            : row.expanded
-              ? this.theme.glyph("expanded")
-              : this.theme.glyph("collapsed");
-        const flags =
-          row.kind === "agent"
-            ? `${row.permissionCount ? ` ${this.theme.glyph("permission")}` : ""}${row.attention ? ` ${this.theme.glyph("attention")}` : ""}`
-            : "";
-        const secondary = width < 34 || row.kind !== "agent" ? "" : treeSecondary(row, this.theme);
-        const primary = this.theme.clipRendered(
-          `${selected}${"  ".repeat(row.depth)}${branch} ${sanitizeTerminalText(row.label)}${flags}${secondary}`,
-          width,
-        );
-        const tone = row.attention
-          ? "attention"
-          : row.status === "failed"
-            ? "failure"
-            : row.status === "running"
-              ? "running"
-              : row.kind === "project"
-                ? "header"
-                : "muted";
-        const filledPrimary = `${primary}${" ".repeat(Math.max(0, width - terminalDisplayWidth(primary)))}`;
-        const styled = row.selected
-          ? this.theme.styleBackground("selection", filledPrimary)
-          : row.active
-            ? this.theme.styleBackground("surface", filledPrimary)
-            : row.kind === "project"
-              ? this.theme.styleBackground("surface", filledPrimary)
-              : row.kind === "workspace"
-                ? this.theme.styleBackground("surface", filledPrimary)
-                : this.theme.styleRendered(tone, primary);
-        const output = row.gapBefore ? [" ".repeat(width), styled] : [styled];
-        const rowMetadata =
-          row.kind !== "agent" && row.activity
-            ? this.theme.styleRendered(
-                "muted",
-                this.theme.clipRendered(
-                  `${"  ".repeat(row.depth + 1)}${row.activity}${treeSecondary(row, this.theme)}`,
-                  width,
-                ),
-              )
-            : undefined;
-        if (rowMetadata && width >= 34) output.push(rowMetadata);
-        if (row.kind !== "agent" || width < 34) return output;
-        const metadata = [row.providerModel, row.activityLabel]
-          .filter((value): value is string => value !== undefined && value !== "")
-          .map((value) => sanitizeTerminalText(value))
-          .join(` ${this.theme.glyph("bullet")} `);
-        const agentMetadata = metadata;
-        return agentMetadata
-          ? [
-              ...output,
-              this.theme.styleRendered(
-                "muted",
-                this.theme.clipRendered(`${"  ".repeat(row.depth + 1)}${agentMetadata}`, width),
-              ),
-            ]
-          : output;
-      }),
-    ].map(sidebarLine);
+    while (output.length < Math.max(0, this.viewportHeight - 1)) output.push("");
+    output.push("");
+    return output.map(sidebarLine);
   }
 
   selectedLineRange(width: number): { start: number; end: number } | undefined {
-    let line = 1;
+    let line = 2;
     for (const row of deriveTreeRows(this.state)) {
-      const height = (row.gapBefore ?? 0) + (width >= 34 && row.activity ? 2 : 1);
+      const height = (row.gapBefore ?? 0) + (treeRowMetadata(row, width, this.theme) ? 2 : 1);
       if (row.selected) return { start: line, end: line + height - 1 };
       line += height;
     }
     return undefined;
+  }
+}
+
+function treeRowMetadata(row: TreeRow, width: number, theme: DeckTheme): string | undefined {
+  if (width < 34) return undefined;
+  const innerWidth = Math.max(1, width - 2);
+  if (row.kind !== "agent")
+    return row.activity
+      ? theme.clipRendered(
+          `${"  ".repeat(row.depth + 1)}${row.activity}${treeSecondary(row, theme)}`,
+          innerWidth,
+        )
+      : undefined;
+  const details = [row.providerModel, row.activityLabel]
+    .filter((value): value is string => value !== undefined && value !== "")
+    .map((value) => sanitizeTerminalText(value))
+    .join(` ${theme.glyph("bullet")} `);
+  return details
+    ? theme.clipRendered(`${"  ".repeat(row.depth + 1)}${details}`, innerWidth)
+    : undefined;
+}
+
+class SidebarScrollView extends ScrollView {
+  constructor(
+    private readonly treeView: TreeView,
+    options: ConstructorParameters<typeof ScrollView>[1],
+  ) {
+    super(treeView, options);
+  }
+
+  override updateLayout(contentHeight: number, viewportHeight: number, requestRender: () => void): void {
+    const previousHeight = this.treeView.renderedViewportHeight;
+    this.treeView.setViewportHeight(viewportHeight);
+    super.updateLayout(contentHeight, viewportHeight, requestRender);
+    if (previousHeight !== this.treeView.renderedViewportHeight) requestRender();
   }
 }
 
@@ -1495,7 +1532,7 @@ export class DeckTui {
     this.composer = new ComposerView(this.tui, initialState, emit, this.theme);
     this.status = new StatusView(initialState, this.theme, () => this.reconnectClock.now());
     this.minimumSize = new MinimumSizeView(this.theme);
-    this.treeTranscript = new ScrollView(this.tree, { follow: "none", scrollbar: "auto" });
+    this.treeTranscript = new SidebarScrollView(this.tree, { follow: "none", scrollbar: "auto" });
     this.transcript = new TimelineScrollView(this.contentPane, (following) => {
       if (following) this.setTimelineFollowing(true);
       else this.pauseTimeline();
