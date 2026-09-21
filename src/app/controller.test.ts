@@ -121,6 +121,19 @@ function event(sequence: number, text: string): TimelineEvent {
 }
 
 describe("ApplicationController", () => {
+  it("forwards timeline-local intents to the production view bridge", async () => {
+    const forwarded: unknown[] = [];
+    const app = new ApplicationController(new FakePaseoGateway(snapshot), {
+      onTimelineIntent: (intent) => {
+        forwarded.push(intent);
+      },
+    });
+
+    await app.handleIntent({ type: "timeline-fold" });
+    await app.handleIntent({ type: "open-timeline-search" });
+
+    expect(forwarded).toEqual([{ type: "timeline-fold" }, { type: "open-timeline-search" }]);
+  });
   it("applies the explicit tree triage intents", async () => {
     const app = new ApplicationController(new FakePaseoGateway(snapshot));
     await app.start();

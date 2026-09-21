@@ -119,6 +119,32 @@ export interface TimelineCursor {
   sequence: number;
 }
 
+/** Provider detail retained at the display boundary for intentional tool previews. */
+export type ToolDetailKind =
+  | "command"
+  | "output"
+  | "file-read"
+  | "file-write"
+  | "search"
+  | "fetch"
+  | "subagent"
+  | "worktree"
+  | "plan"
+  | "unknown";
+
+export interface ToolDetail {
+  kind: ToolDetailKind;
+  command?: string;
+  path?: string;
+  query?: string;
+  url?: string;
+  label?: string;
+  description?: string;
+  content?: string;
+  diff?: string;
+  durationMs?: number;
+}
+
 interface TimelineBase {
   id: string;
   timestamp?: string;
@@ -142,6 +168,7 @@ export type TimelineItem =
       status: "running" | "completed" | "failed" | "canceled";
       summary?: string;
       output?: string;
+      detail?: ToolDetail;
       durationMs?: number;
       failureSummary?: string;
     })
@@ -149,6 +176,7 @@ export type TimelineItem =
   | (TimelineBase & { type: "permission"; request: PermissionRequest; resolved?: boolean })
   | (TimelineBase & {
       type: "turn";
+      turnId?: string;
       status: "started" | "completed" | "failed" | "canceled";
       detail?: string;
       startedAt?: string;

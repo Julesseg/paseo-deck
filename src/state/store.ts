@@ -378,9 +378,12 @@ function appendTimeline(
   consumed: ReadonlySet<string>,
 ): readonly TimelineEvent[] {
   if (consumed.has(eventKey(event))) return items;
-  const cleared = terminalTurn(event.item)
+  const terminal = terminalTurn(event.item) ? event.item : undefined;
+  const cleared = terminal
     ? items.map((current) =>
-        current.item.type === "assistant-message" && current.item.turnId === event.item.id
+        current.item.type === "assistant-message" &&
+        current.item.turnId !== undefined &&
+        current.item.turnId === turnReference(terminal)
           ? { ...current, item: { ...current.item, streaming: false } }
           : current,
       )
@@ -413,7 +416,18 @@ function associateAssistant(items: readonly TimelineEvent[], event: TimelineEven
     .reverse()
     .find((candidate) => candidate.item.type === "turn" && candidate.item.status === "started");
   if (open?.item.type !== "turn") return event;
-  return { ...event, item: { ...event.item, turnId: open.item.id, streaming: true } };
+  return {
+    ...event,
+    item: {
+      ...event.item,
+      turnId: open.item.turnId ?? turnReference(open.item),
+      streaming: true,
+    },
+  };
+}
+
+function turnReference(item: Extract<TimelineItem, { type: "turn" }>): string {
+  return item.turnId ?? item.id.split(":").at(-1) ?? item.id;
 }
 
 function consumedOf(timeline: AppState["timeline"]): ReadonlySet<string> {

@@ -450,6 +450,40 @@ describe("timeline display", () => {
     expect(lines.every((line) => terminalDisplayWidth(line) <= 12)).toBe(true);
   });
 
+  it("renders structured tool kinds and diff previews", () => {
+    const command = timelineItemDisplay(
+      {
+        id: "command",
+        type: "tool",
+        callId: "command",
+        name: "shell",
+        status: "completed",
+        output: "ok",
+        detail: { kind: "command", command: "npm run check" },
+      },
+      60,
+      false,
+    ).join("\n");
+    const diff = timelineItemDisplay(
+      {
+        id: "diff",
+        type: "tool",
+        callId: "diff",
+        name: "edit",
+        status: "completed",
+        output: "@@ -1 +1 @@\n-old\n+new",
+        detail: { kind: "file-write", path: "src/file.ts", diff: "@@ -1 +1 @@\n-old\n+new" },
+      },
+      60,
+      true,
+    ).join("\n");
+
+    expect(command).toContain("command");
+    expect(command).toContain("npm run check");
+    expect(diff).toContain("write");
+    expect(diff).toContain("+new");
+  });
+
   it("renders raw SGR from non-Markdown timeline fields as inert text", () => {
     const lines = timelineDisplay(
       [

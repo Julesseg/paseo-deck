@@ -18,6 +18,8 @@ import { deriveTreeRows, type TreeRow } from "../ui/view-model.js";
 
 export interface ApplicationControllerOptions {
   onQuit?: () => void | Promise<void>;
+  /** Receives timeline-local actions that the terminal view owns (fold/search/copy). */
+  onTimelineIntent?: (intent: UiIntent) => void | Promise<void>;
   initialState?: AppState;
 }
 
@@ -503,13 +505,20 @@ export class ApplicationController {
         this.apply({ type: "close-modal" });
         return;
       case "toggle-timeline-item":
-        return;
       case "move-timeline-selection":
       case "move-timeline-selection-boundary":
       case "move-timeline-text":
       case "move-timeline-landmark":
       case "open-timeline-search":
       case "open-timeline-copy":
+      case "timeline-page":
+      case "timeline-visual":
+      case "timeline-search-text":
+      case "timeline-repeat-search":
+      case "timeline-yank":
+      case "timeline-fold":
+      case "toggle-selected-timeline-item":
+        await this.options.onTimelineIntent?.(intent);
         return;
       case "notify":
         this.apply({

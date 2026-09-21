@@ -302,18 +302,27 @@ export function timelineItemDisplay(
     case "tool": {
       const output = item.output ?? item.summary ?? "";
       const summary = item.summary ?? output.split("\n")[0] ?? "";
+      const detail = item.detail;
+      const kindLabel = detail ? toolDetailLabel(detail.kind) : undefined;
+      const structuredSummary = detail ? toolDetailSummary(detail) : undefined;
+      const preview =
+        detail?.diff ??
+        (detail?.kind === "command" || detail?.kind === "file-read" || detail?.kind === "file-write"
+          ? (structuredSummary ?? output)
+          : (detail?.content ?? output));
+      const displaySummary = structuredSummary ?? summary;
       if (!expanded && output.length > 180)
         return [
           heading(
-            `Tool ${item.status}: ${item.name}${duration(item.durationMs)}${item.failureSummary ? ` ${chrome.bullet} ${item.failureSummary}` : ""}  [Enter to expand]`,
+            `Tool ${item.status}: ${item.name}${kindLabel ? ` ${chrome.bullet} ${kindLabel}` : ""}${duration(item.durationMs)}${item.failureSummary ? ` ${chrome.bullet} ${item.failureSummary}` : ""}  [Enter to expand]`,
           ),
-          ...body(summary || "No output").slice(0, 1),
+          ...body(displaySummary || "No output").slice(0, 1),
         ];
       return [
         heading(
-          `Tool ${item.status}: ${item.name}${duration(item.durationMs)}${item.failureSummary ? ` ${chrome.bullet} ${item.failureSummary}` : ""}`,
+          `Tool ${item.status}: ${item.name}${kindLabel ? ` ${chrome.bullet} ${kindLabel}` : ""}${duration(item.durationMs)}${item.failureSummary ? ` ${chrome.bullet} ${item.failureSummary}` : ""}`,
         ),
-        ...body(output || "No output"),
+        ...body(preview || displaySummary || "No output"),
       ];
     }
     case "error":
@@ -337,6 +346,38 @@ export function timelineItemDisplay(
     case "unknown":
       return [heading(`Unknown ${item.sourceType}: ${item.summary}`)];
   }
+}
+
+function toolDetailLabel(
+  kind: NonNullable<Extract<TimelineItem, { type: "tool" }>["detail"]>["kind"],
+): string {
+  switch (kind) {
+    case "command":
+      return "command";
+    case "file-read":
+      return "read";
+    case "file-write":
+      return "write";
+    case "subagent":
+      return "subagent";
+    case "worktree":
+      return "worktree";
+    default:
+      return kind;
+  }
+}
+
+function toolDetailSummary(
+  detail: NonNullable<Extract<TimelineItem, { type: "tool" }>["detail"]>,
+): string | undefined {
+  return (
+    detail.command ??
+    detail.path ??
+    detail.query ??
+    detail.url ??
+    detail.description ??
+    detail.label
+  );
 }
 
 export function renderDashboard(

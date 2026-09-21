@@ -11,6 +11,8 @@ import type {
   TimelineEvent,
   TimelineItem,
   TimelineUpdate,
+  ToolDetail,
+  ToolDetailKind,
   UsageSummary,
   WorkspaceRecord,
 } from "../contracts/domain.js";
@@ -837,6 +839,7 @@ function streamItem(
       return {
         id: `turn:${agentId}:${stringValue(stream.turnId) ?? "current"}`,
         type: "turn",
+        ...(stringValue(stream.turnId) ? { turnId: stringValue(stream.turnId) as string } : {}),
         status: "started",
         ...(timestamp === undefined ? {} : { startedAt: timestamp }),
       };
@@ -844,6 +847,7 @@ function streamItem(
       return {
         id: `turn:${agentId}:${stringValue(stream.turnId) ?? "current"}`,
         type: "turn",
+        ...(stringValue(stream.turnId) ? { turnId: stringValue(stream.turnId) as string } : {}),
         status: "completed",
         ...(timestamp === undefined ? {} : { completedAt: timestamp }),
       };
@@ -851,6 +855,7 @@ function streamItem(
       return {
         id: `turn:${agentId}:${stringValue(stream.turnId) ?? "current"}`,
         type: "turn",
+        ...(stringValue(stream.turnId) ? { turnId: stringValue(stream.turnId) as string } : {}),
         status: "failed",
         detail: String(stream.error ?? ""),
         ...(timestamp === undefined ? {} : { completedAt: timestamp }),
@@ -859,6 +864,7 @@ function streamItem(
       return {
         id: `turn:${agentId}:${stringValue(stream.turnId) ?? "current"}`,
         type: "turn",
+        ...(stringValue(stream.turnId) ? { turnId: stringValue(stream.turnId) as string } : {}),
         status: "canceled",
         detail: String(stream.reason ?? ""),
         ...(timestamp === undefined ? {} : { completedAt: timestamp }),
@@ -895,6 +901,8 @@ function timelineItem(value: UnknownRecord, agentId: string): TimelineItem | und
       type: "assistant-message",
       messageId: String(value.messageId ?? "unknown"),
       text: String(value.text ?? ""),
+      ...(stringValue(value.turnId) ? { turnId: stringValue(value.turnId) as string } : {}),
+      ...(typeof value.streaming === "boolean" ? { streaming: value.streaming } : {}),
     };
   if (type === "reasoning")
     return {
@@ -931,6 +939,53 @@ function timelineItem(value: UnknownRecord, agentId: string): TimelineItem | und
 function toolTimelineItem(value: UnknownRecord): TimelineItem {
   const detail = asRecord(value.detail) ?? {};
   const type = stringValue(detail.type);
+  const kind = toolDetailKind(type);
+  const content =
+    type === "shell"
+      ? stringValue(detail.output)
+      : type === "read" || type === "edit" || type === "write"
+        ? stringValue(detail.content)
+        : type === "search"
+          ? stringValue(detail.content)
+          : type === "fetch"
+            ? stringValue(detail.result)
+            : type === "worktree_setup" || type === "sub_agent"
+              ? stringValue(detail.log)
+              : type === "plain_text" || type === "plan"
+                ? stringValue(detail.text)
+                : stringValue(detail.output);
+  const structuredDetail: ToolDetail = {
+    kind,
+    ...(type === "shell" && stringValue(detail.command)
+      ? { command: stringValue(detail.command) as string }
+      : {}),
+    ...(type === "read" || type === "edit" || type === "write"
+      ? stringValue(detail.filePath)
+        ? { path: stringValue(detail.filePath) as string }
+        : {}
+      : {}),
+    ...(type === "search" && stringValue(detail.query)
+      ? { query: stringValue(detail.query) as string }
+      : {}),
+    ...(type === "fetch" && stringValue(detail.url)
+      ? { url: stringValue(detail.url) as string }
+      : {}),
+    ...(type === "sub_agent" && stringValue(detail.description)
+      ? { description: stringValue(detail.description) as string }
+      : {}),
+    ...(type === "plain_text" && stringValue(detail.label)
+      ? { label: stringValue(detail.label) as string }
+      : {}),
+    ...(content === undefined ? {} : { content }),
+    ...(type === "edit" || type === "write"
+      ? stringValue(detail.unifiedDiff)
+        ? { diff: stringValue(detail.unifiedDiff) as string }
+        : {}
+      : {}),
+    ...(numberValue(detail.durationMs) === undefined
+      ? {}
+      : { durationMs: numberValue(detail.durationMs) as number }),
+  };
   const output =
     type === "shell"
       ? stringValue(detail.output)
@@ -972,9 +1027,36 @@ function toolTimelineItem(value: UnknownRecord): TimelineItem {
     status: toolStatus(value.status),
     ...(summary === undefined ? {} : { summary }),
     ...(output === undefined ? {} : { output }),
+    detail: structuredDetail,
     ...(durationMs === undefined ? {} : { durationMs }),
     ...(failureSummary === undefined ? {} : { failureSummary }),
   };
+}
+
+function toolDetailKind(type: string | undefined): ToolDetailKind {
+  switch (type) {
+    case "shell":
+      return "command";
+    case "read":
+      return "file-read";
+    case "edit":
+    case "write":
+      return "file-write";
+    case "search":
+      return "search";
+    case "fetch":
+      return "fetch";
+    case "sub_agent":
+      return "subagent";
+    case "worktree_setup":
+      return "worktree";
+    case "plan":
+      return "plan";
+    case "plain_text":
+      return "output";
+    default:
+      return "unknown";
+  }
 }
 
 function sourceTimestamp(value: UnknownRecord): string | undefined {

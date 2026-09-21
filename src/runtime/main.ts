@@ -120,13 +120,15 @@ export async function runInteractive(
     symbols: detected.unicode ? (requested.symbolSet ?? detected.symbols) : "ascii",
   } as const;
   let requestShutdown: (code?: number, error?: unknown) => Promise<void> = async () => undefined;
+  let deck: DeckTui;
   const app = new ApplicationController(gateway, {
     onQuit: () => requestShutdown(0),
+    onTimelineIntent: (intent) => deck.handleTimelineIntent(intent),
     initialState: preferenceSession.initialState(),
   });
   // Capability detection is deliberately a runtime concern: views are pure of
   // environment reads and receive a stable appearance for their whole run.
-  const deck = new DeckTui(
+  deck = new DeckTui(
     terminal,
     app.state,
     (intent) => {
