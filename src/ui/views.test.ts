@@ -547,6 +547,57 @@ describe("terminal appearance", () => {
     expect(loadingRendered).toContain("Loading timeline history");
   });
 
+  it("renders a hydrated session timeline without blocking the terminal", async () => {
+    const terminal = new RecordingTerminal(100, 30);
+    const items: TimelineEvent[] = Array.from({ length: 1_000 }, (_, sequence) => ({
+      epoch: "history",
+      sequence,
+      item: {
+        id: `message-${sequence}`,
+        type: "assistant-message",
+        messageId: `message-${sequence}`,
+        text: "A completed response with enough predictable content to wrap across several terminal lines.",
+        turnId: `turn-${Math.floor(sequence / 5)}`,
+      },
+    }));
+    const uiState = {
+      ...state(),
+      focus: "timeline" as const,
+      selectedAgentId: "agent",
+      activeSessionId: "agent",
+      directory: {
+        ...state().directory,
+        agents: [
+          {
+            id: "agent",
+            workspaceId: "w",
+            title: "Agent",
+            status: "idle" as const,
+            availableModeIds: [],
+            availableThinkingLevels: [],
+            pendingPermissions: [],
+            needsAttention: false,
+            archived: false,
+          },
+        ],
+      },
+      timeline: { recoveryRevision: 0, agentId: "agent", items, loading: false },
+    };
+    const deck = new DeckTui(terminal, uiState, () => undefined, {
+      appearance: { color: "none", unicode: false, theme: "plain", symbols: "ascii" },
+    });
+
+    const started = performance.now();
+    deck.start();
+    deck.update(uiState);
+    await terminal.waitForRender();
+    const elapsed = performance.now() - started;
+    await deck.stop();
+
+    expect(elapsed).toBeLessThan(2_000);
+    expect(terminal.viewport().join("\n")).toContain("Assistant");
+  });
+
   it("keeps empty-state actions visible instead of clipping them from their panes", async () => {
     const terminal = new RecordingTerminal(100, 18);
     const empty = {

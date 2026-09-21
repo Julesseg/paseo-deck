@@ -386,6 +386,8 @@ function treeSecondary(row: TreeRow, theme: DeckTheme): string {
 class TimelineItemView implements Component {
   private item: TimelineItem;
   private readonly markdown?: Markdown;
+  private renderedWidth: number | undefined;
+  private renderedLines: readonly string[] | undefined;
   constructor(
     item: TimelineItem,
     private expanded: boolean,
@@ -401,15 +403,27 @@ class TimelineItemView implements Component {
       );
   }
   update(item: TimelineItem, expanded: boolean): void {
+    if (this.item === item && this.expanded === expanded) return;
     this.item = item;
     this.expanded = expanded;
+    this.renderedWidth = undefined;
+    this.renderedLines = undefined;
     if (this.markdown && (item.type === "user-message" || item.type === "assistant-message"))
       this.markdown.setText(sanitizeTerminalText(item.text));
   }
   invalidate(): void {
+    this.renderedWidth = undefined;
+    this.renderedLines = undefined;
     this.markdown?.invalidate();
   }
   render(width: number): string[] {
+    if (this.renderedWidth === width && this.renderedLines) return [...this.renderedLines];
+    const lines = this.renderUncached(width);
+    this.renderedWidth = width;
+    this.renderedLines = lines;
+    return [...lines];
+  }
+  private renderUncached(width: number): string[] {
     if (
       this.markdown &&
       (this.item.type === "user-message" || this.item.type === "assistant-message")
@@ -466,6 +480,7 @@ class TimelineView implements Component {
   private buffer: TimelineBufferState = createTimelineBuffer();
   private searchQuery = "";
   private selectionFeedback = "";
+  private layout: TimelineLayout | undefined;
   constructor(private readonly theme: DeckTheme) {}
   updateSelection(state: AppState): void {
     this.state = state;
@@ -476,7 +491,9 @@ class TimelineView implements Component {
     this.focused = state.focus === "timeline";
   }
   update(events: readonly TimelineEvent[]): void {
+    if (events === this.events) return;
     this.events = events;
+    this.layout = undefined;
     const ids = new Set(events.map((event) => event.item.id));
     for (const id of this.itemViews.keys()) if (!ids.has(id)) this.itemViews.delete(id);
     for (const event of events) {
@@ -594,10 +611,14 @@ class TimelineView implements Component {
     if (this.expanded.has(id)) this.expanded.delete(id);
     else this.expanded.add(id);
     const event = this.events.find((candidate) => candidate.item.id === id);
-    if (event) this.itemViews.get(id)?.update(event.item, this.expanded.has(id));
+    if (event) {
+      this.itemViews.get(id)?.update(event.item, this.expanded.has(id));
+      this.layout = undefined;
+    }
   }
   invalidate(): void {
     for (const item of this.itemViews.values()) item.invalidate();
+    this.layout = undefined;
   }
   render(width: number): string[] {
     this.renderedWidth = width;
@@ -634,7 +655,8 @@ class TimelineView implements Component {
         ),
       ];
     }
-    const bodyLines = this.events.flatMap((_, index) => this.eventLines(index, width));
+    const layout = this.timelineLayout(width);
+    const bodyLines = layout.lines;
     const wasVisual = this.buffer.mode === "visual";
     this.buffer = replaceTimelineBuffer(this.buffer, bodyLines);
     if (wasVisual && this.buffer.mode !== "visual")
@@ -647,9 +669,7 @@ class TimelineView implements Component {
           width,
         ),
       ),
-      ...this.events.flatMap((_event, index) => {
-        const lines = this.eventLines(index, width);
-        const start = this.eventBodyLine(index);
+      ...layout.events.flatMap(({ lines, start }) => {
         return lines.map((line, offset) => {
           const bodyLine = start + offset;
           let rendered = line;
@@ -669,43 +689,26 @@ class TimelineView implements Component {
   }
 
   private eventBodyLine(index: number): number {
-    const start = this.events
-      .slice(0, index)
-      .reduce(
-        (total, _, priorIndex) => total + this.eventLines(priorIndex, this.renderedWidth).length,
-        0,
-      );
-    return start + (this.hasGroupHeader(index) ? 1 : 0);
+    return this.timelineLayout(this.renderedWidth).events[index]?.bodyStart ?? 0;
   }
   private eventIndexAtBodyLine(line: number): number {
-    let start = 0;
-    for (const [index, _event] of this.events.entries()) {
-      const height = this.eventLines(index, this.renderedWidth).length;
-      if (line >= start && line < start + height) return index;
-      start += height;
-    }
+    for (const [index, event] of this.timelineLayout(this.renderedWidth).events.entries())
+      if (line >= event.start && line < event.start + event.lines.length) return index;
     return -1;
   }
 
   selectedLineRange(): { start: number; end: number } | undefined {
     if (this.events.length === 0) return undefined;
-    let line = 1;
-    for (const [index, _event] of this.events.entries()) {
-      const height = this.eventLines(index, this.renderedWidth).length;
-      if (index === this.selectedIndex) return { start: line, end: line + height - 1 };
-      line += height;
-    }
-    return undefined;
+    const event = this.timelineLayout(this.renderedWidth).events[this.selectedIndex];
+    return event ? { start: event.start + 1, end: event.start + event.lines.length } : undefined;
   }
 
   cursorAtLine(line: number): { epoch: string; sequence: number } | undefined {
-    let start = 1;
-    for (const [index, event] of this.events.entries()) {
-      const height = this.eventLines(index, this.renderedWidth).length;
-      if (line >= start && line < start + height)
-        return { epoch: event.epoch, sequence: event.sequence };
-      start += height;
-    }
+    for (const [index, event] of this.timelineLayout(this.renderedWidth).events.entries())
+      if (line >= event.start + 1 && line < event.start + event.lines.length + 1)
+        return this.events[index]
+          ? { epoch: this.events[index].epoch, sequence: this.events[index].sequence }
+          : undefined;
     return undefined;
   }
 
@@ -713,71 +716,67 @@ class TimelineView implements Component {
     epoch: string;
     sequence: number;
   }): { start: number; end: number } | undefined {
-    let start = 1;
-    for (const [index, event] of this.events.entries()) {
-      const height = this.eventLines(index, this.renderedWidth).length;
-      if (event.epoch === cursor.epoch && event.sequence === cursor.sequence)
-        return { start, end: start + height - 1 };
-      start += height;
-    }
+    for (const [index, event] of this.events.entries())
+      if (event.epoch === cursor.epoch && event.sequence === cursor.sequence) {
+        const layout = this.timelineLayout(this.renderedWidth).events[index];
+        return layout
+          ? { start: layout.start + 1, end: layout.start + layout.lines.length }
+          : undefined;
+      }
     return undefined;
   }
 
-  /** Render one event with its stable turn header and child indentation. */
-  private eventLines(index: number, width: number): string[] {
-    const event = this.events[index];
-    if (!event) return [];
-    const lines = this.itemViews.get(event.item.id)?.render(width) ?? [];
-    const primary = event.item.type === "user-message" || event.item.type === "assistant-message";
-    const prominent =
-      event.item.type === "error" || (event.item.type === "tool" && event.item.status === "failed");
-    const children =
-      primary || prominent
-        ? lines
-        : lines.map((line) => clipTerminalLine(`  ${line}`, width, this.theme.glyph("ellipsis")));
-    if (!this.hasGroupHeader(index)) return children;
-    const ordinal = this.events.slice(0, index + 1).filter((_, prior) => {
-      return (
-        prior === 0 ||
-        timelineGroupKey(this.events, prior - 1) !== timelineGroupKey(this.events, prior)
-      );
-    }).length;
-    const header = this.theme.styleRendered(
-      "border",
-      this.theme.clipRendered(
-        `${this.theme.glyph("divider")} Turn ${ordinal} ${this.theme.glyph("divider")}`,
-        width,
-      ),
-    );
-    return [header, ...children];
-  }
-
-  private hasGroupHeader(index: number): boolean {
-    const event = this.events[index];
-    if (!event) return false;
-    const firstInGroup =
-      index === 0 ||
-      timelineGroupKey(this.events, index - 1) !== timelineGroupKey(this.events, index);
-    return (
-      firstInGroup &&
-      event.item.type !== "user-message" &&
-      event.item.type !== "assistant-message" &&
-      event.item.type !== "turn"
-    );
+  /** Build event lines and turn headers once per width instead of repeatedly walking history. */
+  private timelineLayout(width: number): TimelineLayout {
+    if (this.layout?.width === width) return this.layout;
+    let group = "implicit:0";
+    let priorGroup: string | undefined;
+    let ordinal = 0;
+    let start = 0;
+    const events = this.events.map((event) => {
+      const item = event.item;
+      if (item.type === "user-message") group = `user:${item.id}`;
+      else if (item.type === "turn") group = `turn:${item.turnId ?? item.id}`;
+      else if (item.type === "assistant-message" && item.turnId) group = `turn:${item.turnId}`;
+      const firstInGroup = group !== priorGroup;
+      if (firstInGroup) ordinal += 1;
+      priorGroup = group;
+      const itemLines = this.itemViews.get(item.id)?.render(width) ?? [];
+      const primary = item.type === "user-message" || item.type === "assistant-message";
+      const prominent = item.type === "error" || (item.type === "tool" && item.status === "failed");
+      const children =
+        primary || prominent
+          ? itemLines
+          : itemLines.map((line) =>
+              clipTerminalLine(`  ${line}`, width, this.theme.glyph("ellipsis")),
+            );
+      const header =
+        firstInGroup && !primary && item.type !== "turn"
+          ? [
+              this.theme.styleRendered(
+                "border",
+                this.theme.clipRendered(
+                  `${this.theme.glyph("divider")} Turn ${ordinal} ${this.theme.glyph("divider")}`,
+                  width,
+                ),
+              ),
+            ]
+          : [];
+      const lines = [...header, ...children];
+      const layout = { start, bodyStart: start + header.length, lines };
+      start += lines.length;
+      return layout;
+    });
+    this.layout = { width, lines: events.flatMap((event) => event.lines), events };
+    return this.layout;
   }
 }
 
-function timelineGroupKey(events: readonly TimelineEvent[], index: number): string {
-  let current = "implicit:0";
-  for (let cursor = 0; cursor <= index; cursor += 1) {
-    const item = events[cursor]?.item;
-    if (!item) continue;
-    if (item.type === "user-message") current = `user:${item.id}`;
-    else if (item.type === "turn") current = `turn:${item.turnId ?? item.id}`;
-    else if (item.type === "assistant-message" && item.turnId) current = `turn:${item.turnId}`;
-  }
-  return current;
-}
+type TimelineLayout = {
+  width: number;
+  lines: readonly string[];
+  events: readonly { start: number; bodyStart: number; lines: readonly string[] }[];
+};
 
 function landmark(item: TimelineItem, kind: "turn" | "error"): boolean {
   return kind === "turn"
