@@ -2,6 +2,9 @@ import type { AppState, FocusArea, ModalState } from "../contracts/app-state.js"
 import type { AgentCommand } from "../contracts/commands.js";
 import { commandById, commandForKey } from "./commands.js";
 
+const timelineTextMotionKeys = ["h", "l", "w", "b", "e", "0", "^", "$"] as const;
+type TimelineTextMotionKey = (typeof timelineTextMotionKeys)[number];
+
 export type UiIntent =
   | { type: "switch-tab"; direction: -1 | 1; count?: number }
   | { type: "close-tab" }
@@ -43,6 +46,16 @@ export type UiIntent =
   | { type: "toggle-timeline-item"; itemId: string }
   | { type: "move-timeline-selection"; direction: -1 | 1 }
   | { type: "move-timeline-selection-boundary"; boundary: "start" | "end" }
+  | {
+      type: "move-timeline-text";
+      key: "g" | "h" | "j" | "k" | "l" | "w" | "b" | "e" | "0" | "^" | "$" | "G";
+    }
+  | { type: "timeline-page"; direction: -1 | 1 }
+  | { type: "timeline-visual"; line: boolean }
+  | { type: "timeline-search-text"; query: string; direction: -1 | 1 }
+  | { type: "timeline-repeat-search"; direction: -1 | 1 }
+  | { type: "timeline-yank" }
+  | { type: "timeline-fold" }
   | { type: "move-timeline-landmark"; direction: -1 | 1; kind: "turn" | "error" }
   | {
       type: "set-timeline-navigation";
@@ -63,6 +76,7 @@ export type UiIntent =
 
 export class DeckController {
   #tabPrefix = "";
+  #timelinePrefix = "";
   constructor(
     private readonly getState: () => AppState,
     private readonly emit: (intent: UiIntent) => void,
@@ -132,6 +146,58 @@ export class DeckController {
       return false;
     }
     if (isTextEditing(state.modal)) return false;
+    // Timeline navigation is a rendered-text buffer. Keep its keys local
+    // before resolving the broader command registry (where j/k/g/G/Enter/y
+    // also have unrelated meanings in other regions).
+    if (state.modal.type === "none" && state.focus === "timeline") {
+      if (data === "g" || (data === "z" && state.timeline.agentId)) {
+        this.#timelinePrefix = data;
+        if (data === "g")
+          return this.send({ type: "move-timeline-selection-boundary", boundary: "start" });
+        return true;
+      }
+      if (this.#timelinePrefix === "g") {
+        this.#timelinePrefix = "";
+        if (data === "g")
+          return this.send(
+            state.timeline.agentId
+              ? { type: "move-timeline-text", key: "g" }
+              : { type: "move-timeline-selection-boundary", boundary: "start" },
+          );
+        if (data === "G")
+          return this.send(
+            state.timeline.agentId
+              ? { type: "move-timeline-text", key: "G" }
+              : { type: "move-timeline-selection-boundary", boundary: "end" },
+          );
+      }
+      if (this.#timelinePrefix === "z") {
+        this.#timelinePrefix = "";
+        if (data === "a") return this.send({ type: "timeline-fold" });
+      }
+      if (state.timeline.agentId && (data === "j" || data === "k"))
+        return this.send({ type: "move-timeline-text", key: data });
+      if (state.timeline.agentId && (timelineTextMotionKeys as readonly string[]).includes(data))
+        return this.send({ type: "move-timeline-text", key: data as TimelineTextMotionKey });
+      if (data === "G")
+        return this.send({ type: "move-timeline-selection-boundary", boundary: "end" });
+      if (data === "\r" && state.timeline.items.length)
+        return this.send(
+          state.timeline.agentId
+            ? { type: "timeline-fold" }
+            : { type: "toggle-selected-timeline-item" },
+        );
+      if (data === "y" && state.timeline.items.length)
+        return this.send({ type: "open-timeline-copy" });
+      if (data === "n" || data === "N")
+        return this.send({ type: "timeline-repeat-search", direction: data === "n" ? 1 : -1 });
+      if (data === "\u0015" || data === "\u0004")
+        return this.send({ type: "scroll-timeline", direction: data === "\u0015" ? -1 : 1 });
+      if (state.timeline.agentId && state.timeline.items.length && data === "V")
+        return this.send({ type: "timeline-visual", line: true });
+      if (state.timeline.agentId && state.timeline.items.length && data === "v")
+        return this.send({ type: "timeline-visual", line: false });
+    }
     if (state.modal.type === "none" && state.focus === "timeline" && data === "\u001b") {
       if ((state.timelineMode ?? "normal") === "visual")
         return this.send({ type: "set-timeline-mode", mode: "normal" });
@@ -146,6 +212,20 @@ export class DeckController {
     // Every non-text modal owns its own navigation (SelectList, confirmation,
     // and help), rather than letting tree bindings leak through the overlay.
     if (state.modal.type !== "none") return false;
+    if (state.focus === "timeline" && !global && data === "/")
+      return this.send({ type: "open-timeline-search" });
+    if (state.focus === "timeline" && data === "V")
+      return this.send({ type: "timeline-visual", line: true });
+    if (state.focus === "timeline" && data === "za") return this.send({ type: "timeline-fold" });
+    if (
+      state.focus === "timeline" &&
+      !global &&
+      ["h", "l", "w", "b", "e", "0", "^", "$"].includes(data)
+    )
+      return this.send({
+        type: "move-timeline-text",
+        key: data as "h" | "l" | "w" | "b" | "e" | "0" | "^" | "$",
+      });
     if (this.#tabPrefix.startsWith("g") && (data === "t" || data === "T" || data === "c")) {
       const countText = this.#tabPrefix.slice(1);
       this.#tabPrefix = "";
@@ -168,7 +248,7 @@ export class DeckController {
     if (data === "\u001b[1;5A" || data === "\u001b[1;5B")
       return this.send({ type: "scroll-timeline", direction: data === "\u001b[1;5A" ? -1 : 1 });
     if (state.focus === "timeline" && state.timelineMode !== undefined && data === "v")
-      return this.send({ type: "set-timeline-mode", mode: "visual" });
+      return this.send({ type: "timeline-visual", line: false });
     if (global) {
       if (data === "g") this.#tabPrefix = "g";
       return this.sendResolved(global, state);
