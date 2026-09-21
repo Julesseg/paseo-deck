@@ -19,6 +19,46 @@ const shots: Array<{
 }> = [
   { name: "session-tree", columns: 100, rows: 28, state: baseState },
   {
+    name: "composer-normal",
+    columns: 100,
+    rows: 28,
+    state: { ...baseState, focus: "composer", composerMode: "normal" },
+  },
+  {
+    name: "composer-insert",
+    columns: 100,
+    rows: 28,
+    state: { ...baseState, focus: "composer", composerMode: "insert" },
+  },
+  {
+    name: "composer-visual",
+    columns: 100,
+    rows: 28,
+    state: { ...baseState, focus: "composer", composerMode: "visual" },
+  },
+  {
+    name: "composer-sending",
+    columns: 100,
+    rows: 28,
+    state: {
+      ...baseState,
+      focus: "composer",
+      composerMode: "normal",
+      composer: { ...baseState.composer, sendingAgentIds: new Set(["agent-atlas-1234"]) },
+    },
+  },
+  {
+    name: "composer-unavailable",
+    columns: 100,
+    rows: 28,
+    state: {
+      ...baseState,
+      focus: "composer",
+      composerMode: "normal",
+      connection: "disconnected",
+    },
+  },
+  {
     name: "active-timeline",
     columns: 100,
     rows: 28,

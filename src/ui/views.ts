@@ -23,6 +23,7 @@ import { activeNotification } from "../state/store.js";
 import { defaultTerminalAppearance, type TerminalAppearance } from "./capabilities.js";
 import {
   type CommandContext,
+  commandById,
   commandForKey,
   contextualHelp,
   type ResolvedCommand,
@@ -39,7 +40,12 @@ import {
 } from "./layout.js";
 import { type RenderClock, RenderScheduler } from "./render-scheduler.js";
 import { TerminalLifecycle } from "./terminal.js";
-import { clipTerminalLine, sanitizeTerminalText, wrapTerminalProse } from "./text-safety.js";
+import {
+  clipTerminalLine,
+  sanitizeTerminalText,
+  terminalDisplayWidth,
+  wrapTerminalProse,
+} from "./text-safety.js";
 import { DeckTheme } from "./theme.js";
 import { clipboardPlainText, copyTargets, findTimelineMatches } from "./timeline-search.js";
 import { deriveTreeRows, shortAgentId, type TreeRow, timelineItemDisplay } from "./view-model.js";
@@ -569,7 +575,7 @@ class ComposerView implements Component, Focusable {
     this.editor = new Editor(
       tui,
       {
-        borderColor: (value) => this.theme.style("border", value),
+        borderColor: (value) => this.theme.style(this.focused ? "focus" : "muted", value),
         selectList: selectTheme(this.theme),
       },
       { paddingX: 1 },
@@ -617,17 +623,32 @@ class ComposerView implements Component, Focusable {
       ? ` ${this.theme.glyph("bullet")} selected ${selection.text.length} chars`
       : "";
     const heading = `${this.state.focus === "composer" ? mode.toUpperCase() : ""} ${destination}${status}${selectionCue}`;
+    const controls = composerControlRow(this.state, this.theme, width);
     return [
       this.theme.styleRendered(
-        this.focused ? "focus" : "header",
+        this.focused ? "focus" : "muted",
         this.theme.clipRendered(heading, width),
       ),
+      controls,
       ...this.editor.render(width),
     ];
   }
   handleInput(data: string): void {
     if (this.state.composerMode === "visual") {
       this.handleVisualInput(data);
+      return;
+    }
+    // pi-tui's editor treats Enter as submit. In Insert mode the composer is
+    // a multiline buffer, so normalize the terminal's Enter byte to the
+    // editor's explicit newline path. Normal mode owns submission instead.
+    if (data === "\r" || data === "\n") {
+      if (this.state.composerMode === "normal") {
+        const prompt = this.editor.getText();
+        if (this.selectedAgentId && prompt.trim())
+          this.emit({ type: "submit-composer", agentId: this.selectedAgentId, prompt });
+        return;
+      }
+      this.editor.handleInput("\n");
       return;
     }
     this.editor.handleInput(data);
@@ -686,6 +707,42 @@ class ComposerView implements Component, Focusable {
       end,
     };
   }
+}
+
+/** The compact session-control row is intentionally derived from commands so
+ * its cues and availability cannot drift from help or the command palette. */
+export function composerControlRow(state: AppState, theme: DeckTheme, width: number): string {
+  const agent = state.directory.agents.find((item) => item.id === state.selectedAgentId);
+  const modelCommand = commandById(state, "model");
+  const model = modelCommand?.disabledReason ? "unavailable" : (agent?.modelId ?? "-");
+  const thinking = agent?.thinkingLevel ?? "-";
+  const mode = agent?.modeId ?? "-";
+  const controls = [
+    [commandById(state, "model")?.shortcuts[0] ?? "m", model],
+    [commandById(state, "thinking")?.shortcuts[0] ?? "z", thinking],
+    [commandById(state, "operational-mode")?.shortcuts[0] ?? "o", mode],
+  ] as const;
+  const left = controls
+    .map(([key, current]) => `${theme.style("muted", `[${key}]`)} ${theme.style("focus", current)}`)
+    .join("  ");
+  const cues = controls.map(([key]) => theme.style("muted", `[${key}]`)).join(" ");
+  const sending = agent && state.composer.sendingAgentIds.has(agent.id);
+  const right = sending
+    ? `${theme.glyph("running")} sending`
+    : agent?.status === "running"
+      ? `${theme.glyph("running")} active`
+      : "";
+  const plainLength = terminalDisplayWidth;
+  if (plainLength(left) > width) {
+    if (!right || plainLength(cues) + plainLength(right) + 1 >= width)
+      return theme.clipRendered(cues, width);
+    const gap = " ".repeat(Math.max(1, width - plainLength(cues) - plainLength(right)));
+    return theme.clipRendered(`${cues}${gap}${right}`, width);
+  }
+  if (!right || plainLength(left) + plainLength(right) + 1 >= width)
+    return theme.clipRendered(left, width);
+  const gap = " ".repeat(Math.max(1, width - plainLength(left) - plainLength(right)));
+  return theme.clipRendered(`${left}${gap}${right}`, width);
 }
 
 class StatusView implements Component {

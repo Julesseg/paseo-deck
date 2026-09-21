@@ -9,7 +9,13 @@ import type { RenderClock } from "./render-scheduler.js";
 import { RecordingTerminal } from "./terminal.js";
 import { terminalDisplayWidth } from "./text-safety.js";
 import { DeckTheme } from "./theme.js";
-import { agentChoices, creationChoices, DeckTui, highlightFencedCode } from "./views.js";
+import {
+  agentChoices,
+  composerControlRow,
+  creationChoices,
+  DeckTui,
+  highlightFencedCode,
+} from "./views.js";
 
 function state(): AppState {
   return {
@@ -173,6 +179,88 @@ describe("creation picker choices", () => {
 
     expect(agentChoices(withAgent, "mode")).toEqual([{ value: "plan", label: "plan" }]);
     expect(agentChoices(withAgent, "thinking")).toEqual([{ value: "low", label: "low" }]);
+  });
+});
+
+describe("composer controls", () => {
+  it("keeps all essential key cues visible in a narrow row", () => {
+    const row = composerControlRow(
+      {
+        ...state(),
+        focus: "composer",
+        composerMode: "normal",
+      },
+      new DeckTheme({ color: "none", unicode: false, theme: "plain", symbols: "ascii" }),
+      18,
+    );
+    expect(row).toContain("[m]");
+    expect(row).toContain("[z]");
+    expect(row).toContain("[o]");
+    expect(terminalDisplayWidth(row)).toBeLessThanOrEqual(18);
+  });
+
+  it("submits in Normal mode and preserves a multiline draft in Insert mode", async () => {
+    const base = state();
+    const current: AppState = {
+      ...base,
+      focus: "composer",
+      composerMode: "normal",
+      selectedAgentId: "agent",
+      directory: {
+        ...base.directory,
+        agents: [
+          {
+            id: "agent",
+            workspaceId: "w",
+            title: "Agent",
+            status: "idle",
+            availableModeIds: ["plan"],
+            availableThinkingLevels: ["low"],
+            pendingPermissions: [],
+            needsAttention: false,
+            archived: false,
+          },
+        ],
+      },
+    };
+    const intents: unknown[] = [];
+    const terminal = new RecordingTerminal();
+    const deck = new DeckTui(terminal, current, (intent) => intents.push(intent));
+    deck.start();
+    deck.update(current);
+    await terminal.waitForRender();
+    terminal.sendInput("hello");
+    terminal.sendInput("\r");
+    await terminal.waitForRender();
+    expect(intents).toContainEqual({ type: "submit-composer", agentId: "agent", prompt: "hello" });
+    deck.update({ ...current, composerMode: "insert" });
+    terminal.sendInput("line one");
+    terminal.sendInput("\r");
+    terminal.sendInput("line two");
+    await terminal.waitForRender();
+    expect(intents).toContainEqual({ type: "set-composer-text", text: "line one\nline two" });
+    await deck.stop();
+  });
+
+  it("labels the active composer chrome and mutes it without a mode label when inactive", async () => {
+    const terminal = new RecordingTerminal(80, 18);
+    const active = { ...state(), focus: "composer" as const, composerMode: "normal" as const };
+    const deck = new DeckTui(terminal, active, () => undefined, {
+      appearance: { color: "none", unicode: false, theme: "plain", symbols: "ascii" },
+    });
+    deck.update(active);
+    deck.start();
+    await terminal.waitForRender();
+    const activeRender = terminal.viewport().join("\n");
+    const inactive = { ...active, focus: "tree" as const };
+    deck.update(inactive);
+    await terminal.waitForRender();
+    const inactiveRender = terminal.viewport().join("\n");
+    await deck.stop();
+
+    expect(activeRender).toContain("NORMAL Prompt");
+    expect(inactiveRender).not.toContain("NORMAL Prompt");
+    expect(inactiveRender).toContain("Prompt");
   });
 });
 

@@ -7,10 +7,10 @@
   <circle cx="36" cy="16" r="5" fill="#f59e0b"/>
   <circle cx="54" cy="16" r="5" fill="#22c55e"/>
   <g fill="#f5f5f4" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="14" xml:space="preserve">
-<text x="16" y="62">Projects / workspaces                Timeline   Selected agent timeline                             </text>
-<text x="16" y="80">No projects or workspaces are       No timeline selected. Choose an agent in the tree to read its   </text>
-<text x="16" y="98">available yet. Press r to refresh.  timeline.                                                       </text>
-<text x="16" y="116"></text>
+<text x="16" y="62">Tabs  (open a session with Enter)</text>
+<text x="16" y="80">Projects / workspaces                        Active session timeline                                </text>
+<text x="16" y="98">No projects or workspaces are       No timeline selected. Choose an agent in the tree to read its   </text>
+<text x="16" y="116">available yet. Press r to refresh.  timeline.                                                       </text>
 <text x="16" y="134"></text>
 <text x="16" y="152"></text>
 <text x="16" y="170"></text>
@@ -29,11 +29,11 @@
 <text x="16" y="404"></text>
 <text x="16" y="422"></text>
 <text x="16" y="440"></text>
-<text x="16" y="458"></text>
-<text x="16" y="476"> Composer   Prompt → no agent selected · missing</text>
+<text x="16" y="458"> Prompt → no agent selected · missing</text>
+<text x="16" y="476">[m] -  [z] -  [o] -</text>
 <text x="16" y="494">────────────────────────────────────────────────────────────────────────────────────────────────────</text>
 <text x="16" y="512">                                                                                                    </text>
 <text x="16" y="530">────────────────────────────────────────────────────────────────────────────────────────────────────</text>
-<text x="16" y="548">Tree: ↑↓ ←→ g/G Tab · connected · no agent selected · permissions 0</text>
+<text x="16" y="548">Sidebar: ↑↓ ←→ g/G Enter Esc · connected · no agent selected · permissions 0</text>
   </g>
 </svg>

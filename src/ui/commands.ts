@@ -594,6 +594,7 @@ export const deckCommands: readonly DeckCommand[] = [
     label: "Toggle tree ordering",
     group: "Sessions",
     shortcuts: ["o"],
+    contexts: ["tree"],
     intent: () => ({ type: "toggle-tree-order" }),
   },
   {
@@ -655,10 +656,35 @@ export const deckCommands: readonly DeckCommand[] = [
     intent: (state) => ({ type: "open-rename", agentId: selectedAgent(state) ?? "" }),
   },
   {
-    id: "mode",
-    label: "Change agent mode",
+    id: "model",
+    label: "Change model",
     group: "Agent",
     shortcuts: ["m"],
+    contexts: ["composer"],
+    disabledReason: () => "Live model switching is unavailable for this session",
+    intent: () => ({ type: "close-modal" }),
+  },
+  {
+    id: "mode",
+    label: "Change operational mode",
+    group: "Agent",
+    shortcuts: ["m"],
+    contexts: ["tree"],
+    disabledReason: (state) => {
+      const agent = state.directory.agents.find((item) => item.id === selectedAgent(state));
+      return (
+        requireRemoteAgent(state) ??
+        (agent?.availableModeIds.length ? undefined : "No modes available")
+      );
+    },
+    intent: (state) => ({ type: "open-mode", agentId: selectedAgent(state) ?? "" }),
+  },
+  {
+    id: "operational-mode",
+    label: "Change operational mode",
+    group: "Agent",
+    shortcuts: ["o"],
+    contexts: ["composer"],
     disabledReason: (state) => {
       const agent = state.directory.agents.find((item) => item.id === selectedAgent(state));
       return (
@@ -672,7 +698,7 @@ export const deckCommands: readonly DeckCommand[] = [
     id: "thinking",
     label: "Change thinking level",
     group: "Agent",
-    shortcuts: ["t"],
+    shortcuts: ["z", "t"],
     disabledReason: (state) => {
       const agent = state.directory.agents.find((item) => item.id === selectedAgent(state));
       return (
