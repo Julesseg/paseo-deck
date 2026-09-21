@@ -47,6 +47,11 @@ export type UiIntent =
       type: "move-timeline-text";
       key: "h" | "j" | "k" | "l" | "w" | "b" | "e" | "0" | "^" | "$" | "G";
     }
+  | { type: "timeline-page"; direction: -1 | 1 }
+  | { type: "timeline-visual"; line: boolean }
+  | { type: "timeline-search-text"; query: string; direction: -1 | 1 }
+  | { type: "timeline-yank" }
+  | { type: "timeline-fold" }
   | { type: "move-timeline-landmark"; direction: -1 | 1; kind: "turn" | "error" }
   | {
       type: "set-timeline-navigation";
@@ -150,6 +155,11 @@ export class DeckController {
     // Every non-text modal owns its own navigation (SelectList, confirmation,
     // and help), rather than letting tree bindings leak through the overlay.
     if (state.modal.type !== "none") return false;
+    if (state.focus === "timeline" && !global && data === "/")
+      return this.send({ type: "open-timeline-search" });
+    if (state.focus === "timeline" && data === "V")
+      return this.send({ type: "timeline-visual", line: true });
+    if (state.focus === "timeline" && data === "za") return this.send({ type: "timeline-fold" });
     if (
       state.focus === "timeline" &&
       !global &&
@@ -181,7 +191,7 @@ export class DeckController {
     if (data === "\u001b[1;5A" || data === "\u001b[1;5B")
       return this.send({ type: "scroll-timeline", direction: data === "\u001b[1;5A" ? -1 : 1 });
     if (state.focus === "timeline" && state.timelineMode !== undefined && data === "v")
-      return this.send({ type: "set-timeline-mode", mode: "visual" });
+      return this.send({ type: "timeline-visual", line: false });
     if (global) {
       if (data === "g") this.#tabPrefix = "g";
       return this.sendResolved(global, state);
