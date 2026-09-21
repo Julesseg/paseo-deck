@@ -717,11 +717,15 @@ export function composerControlRow(state: AppState, theme: DeckTheme, width: num
   const model = modelCommand?.disabledReason ? "unavailable" : (agent?.modelId ?? "-");
   const thinking = agent?.thinkingLevel ?? "-";
   const mode = agent?.modeId ?? "-";
-  const left = [
-    `${theme.style("muted", `[${commandById(state, "model")?.shortcuts[0] ?? "m"}]`)} ${theme.style("focus", model)}`,
-    `${theme.style("muted", `[${commandById(state, "thinking")?.shortcuts[0] ?? "z"}]`)} ${theme.style("focus", thinking)}`,
-    `${theme.style("muted", `[${commandById(state, "operational-mode")?.shortcuts[0] ?? "o"}]`)} ${theme.style("focus", mode)}`,
-  ].join("  ");
+  const controls = [
+    [commandById(state, "model")?.shortcuts[0] ?? "m", model],
+    [commandById(state, "thinking")?.shortcuts[0] ?? "z", thinking],
+    [commandById(state, "operational-mode")?.shortcuts[0] ?? "o", mode],
+  ] as const;
+  const left = controls
+    .map(([key, current]) => `${theme.style("muted", `[${key}]`)} ${theme.style("focus", current)}`)
+    .join("  ");
+  const cues = controls.map(([key]) => theme.style("muted", `[${key}]`)).join(" ");
   const sending = agent && state.composer.sendingAgentIds.has(agent.id);
   const right = sending
     ? `${theme.glyph("running")} sending`
@@ -729,6 +733,12 @@ export function composerControlRow(state: AppState, theme: DeckTheme, width: num
       ? `${theme.glyph("running")} active`
       : "";
   const plainLength = terminalDisplayWidth;
+  if (plainLength(left) > width) {
+    if (!right || plainLength(cues) + plainLength(right) + 1 >= width)
+      return theme.clipRendered(cues, width);
+    const gap = " ".repeat(Math.max(1, width - plainLength(cues) - plainLength(right)));
+    return theme.clipRendered(`${cues}${gap}${right}`, width);
+  }
   if (!right || plainLength(left) + plainLength(right) + 1 >= width)
     return theme.clipRendered(left, width);
   const gap = " ".repeat(Math.max(1, width - plainLength(left) - plainLength(right)));

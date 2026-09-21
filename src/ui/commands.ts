@@ -669,6 +669,7 @@ export const deckCommands: readonly DeckCommand[] = [
     label: "Change operational mode",
     group: "Agent",
     shortcuts: ["m"],
+    contexts: ["tree"],
     disabledReason: (state) => {
       const agent = state.directory.agents.find((item) => item.id === selectedAgent(state));
       return (

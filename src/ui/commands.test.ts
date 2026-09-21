@@ -119,6 +119,13 @@ describe("command registry", () => {
     expect(commandForKey(current, "z")?.id).toBe("thinking");
     expect(commandForKey(current, "o")?.id).toBe("operational-mode");
     expect(commandForKey({ ...current, focus: "tree" }, "o")?.id).toBe("toggle-order");
+    expect(contextualHelp(current).map((command) => command.id)).toContain("operational-mode");
+    expect(contextualHelp(current).map((command) => command.id)).not.toContain("mode");
+    expect(
+      resolvedCommands(current)
+        .filter((command) => command.palette !== false)
+        .map((command) => command.id),
+    ).not.toContain("mode");
   });
 
   it("makes a direct key and palette invocation emit the identical confirmation intent", () => {
