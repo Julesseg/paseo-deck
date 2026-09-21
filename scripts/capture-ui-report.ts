@@ -2,6 +2,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { AppState } from "../src/contracts/app-state.js";
 import type { TerminalAppearance } from "../src/ui/capabilities.js";
+import { NARROW_SIDEBAR_BREAKPOINT } from "../src/ui/layout.js";
 import { RecordingTerminal } from "../src/ui/terminal.js";
 import { DeckTui } from "../src/ui/views.js";
 
@@ -362,6 +363,9 @@ for (const shot of shots) {
       shot.columns,
       shot.rows,
       `Paseo Deck ${shot.name.replaceAll("-", " ")}`,
+      shot.columns >= NARROW_SIDEBAR_BREAKPOINT && (shot.appearance?.theme ?? "ember") === "ember"
+        ? { columns: 34, color: "#1f1d1b" }
+        : undefined,
     ),
     "utf8",
   );
@@ -595,6 +599,7 @@ function terminalSvg(
   columns: number,
   rows: number,
   title: string,
+  sidebar?: { columns: number; color: string },
 ): string {
   const cellWidth = 9;
   const lineHeight = 18;
@@ -614,9 +619,13 @@ function terminalSvg(
       const rectangles: string[] = [];
       let start = 0;
       while (start < row.length) {
-        const color = row[start];
+        const color = row[start] ?? (start < (sidebar?.columns ?? 0) ? sidebar?.color : undefined);
         let end = start + 1;
-        while (end < row.length && row[end] === color) end++;
+        while (
+          end < row.length &&
+          (row[end] ?? (end < (sidebar?.columns ?? 0) ? sidebar?.color : undefined)) === color
+        )
+          end++;
         if (color)
           rectangles.push(
             `<rect x="${padding + start * cellWidth}" y="${chromeHeight + padding + rowIndex * lineHeight}" width="${(end - start) * cellWidth}" height="${lineHeight}" fill="${color}"/>`,
