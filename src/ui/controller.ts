@@ -2,6 +2,9 @@ import type { AppState, FocusArea, ModalState } from "../contracts/app-state.js"
 import type { AgentCommand } from "../contracts/commands.js";
 import { commandById, commandForKey } from "./commands.js";
 
+const timelineTextMotionKeys = ["h", "l", "w", "b", "e", "0", "^", "$"] as const;
+type TimelineTextMotionKey = (typeof timelineTextMotionKeys)[number];
+
 export type UiIntent =
   | { type: "switch-tab"; direction: -1 | 1; count?: number }
   | { type: "close-tab" }
@@ -165,8 +168,8 @@ export class DeckController {
       }
       if (state.timeline.agentId && (data === "j" || data === "k"))
         return this.send({ type: "move-timeline-selection", direction: data === "j" ? 1 : -1 });
-      if (state.timeline.agentId && ["h", "l", "w", "b", "e", "0", "^", "$"].includes(data))
-        return this.send({ type: "move-timeline-text", key: data });
+      if (state.timeline.agentId && (timelineTextMotionKeys as readonly string[]).includes(data))
+        return this.send({ type: "move-timeline-text", key: data as TimelineTextMotionKey });
       if (data === "G")
         return this.send({ type: "move-timeline-selection-boundary", boundary: "end" });
       if (data === "\r" && state.timeline.items.length)
