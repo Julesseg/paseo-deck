@@ -10,6 +10,14 @@ if (!outputDirectory) throw new Error("Usage: tsx scripts/capture-ui-report.ts <
 
 const baseState = syntheticState();
 const emptyState = withoutSelection(baseState);
+const sampledTerminalAppearance: TerminalAppearance = {
+  color: "truecolor",
+  unicode: true,
+  theme: "ember",
+  palette: "terminal",
+  background: [240, 230, 220],
+  symbols: "unicode",
+};
 const shots: Array<{
   name: string;
   columns: number;
@@ -333,7 +341,7 @@ await mkdir(outputDirectory, { recursive: true });
 for (const shot of shots) {
   const terminal = new RecordingTerminal(shot.columns, shot.rows);
   const deck = new DeckTui(terminal, shot.state, () => undefined, {
-    ...(shot.appearance === undefined ? {} : { appearance: shot.appearance }),
+    appearance: shot.appearance ?? sampledTerminalAppearance,
     renderClock: {
       now: () => 12_000,
       setTimeout: () => 0,
@@ -347,7 +355,13 @@ for (const shot of shots) {
   await deck.stop();
   await writeFile(
     join(outputDirectory, `${shot.name}.svg`),
-    terminalSvg(viewport, shot.columns, shot.rows, `Paseo Deck ${shot.name.replaceAll("-", " ")}`),
+    terminalSvg(
+      viewport,
+      terminal.viewportBackgrounds(),
+      shot.columns,
+      shot.rows,
+      `Paseo Deck ${shot.name.replaceAll("-", " ")}`,
+    ),
     "utf8",
   );
 }
@@ -556,6 +570,7 @@ function withTimeline(
 
 function terminalSvg(
   lines: readonly string[],
+  backgrounds: ReadonlyArray<ReadonlyArray<string | undefined>>,
   columns: number,
   rows: number,
   title: string,
@@ -573,6 +588,23 @@ function terminalSvg(
         `<text x="${padding}" y="${chromeHeight + padding + (index + 1) * lineHeight - 4}">${escapeXml(line)}</text>`,
     )
     .join("\n");
+  const backgroundsSvg = backgrounds
+    .flatMap((row, rowIndex) => {
+      const rectangles: string[] = [];
+      let start = 0;
+      while (start < row.length) {
+        const color = row[start];
+        let end = start + 1;
+        while (end < row.length && row[end] === color) end++;
+        if (color)
+          rectangles.push(
+            `<rect x="${padding + start * cellWidth}" y="${chromeHeight + padding + rowIndex * lineHeight}" width="${(end - start) * cellWidth}" height="${lineHeight}" fill="${color}"/>`,
+          );
+        start = end;
+      }
+      return rectangles;
+    })
+    .join("\n");
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">
   <title>${escapeXml(title)}</title>
   <rect width="${width}" height="${height}" rx="12" fill="#1c1917"/>
@@ -581,6 +613,7 @@ function terminalSvg(
   <circle cx="18" cy="16" r="5" fill="#ef4444"/>
   <circle cx="36" cy="16" r="5" fill="#f59e0b"/>
   <circle cx="54" cy="16" r="5" fill="#22c55e"/>
+  <g>${backgroundsSvg}</g>
   <g fill="#f5f5f4" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="14" xml:space="preserve">
 ${text}
   </g>

@@ -132,4 +132,18 @@ describe("DeckTheme", () => {
       "\u001b[48;2;31;29;27m\u001b[38;2;125;211;252mx\u001b[0m\u001b[48;2;31;29;27m\u001b[0m",
     );
   });
+
+  it("derives terminal-palette surfaces from the sampled terminal background", () => {
+    const theme = new DeckTheme({
+      color: "truecolor",
+      unicode: true,
+      theme: "ember",
+      palette: "terminal",
+      background: [240, 230, 220],
+      symbols: "unicode",
+    });
+
+    expect(theme.styleBackground("sidebar", "x")).toBe("\u001b[48;2;232;222;212mx\u001b[0m");
+    expect(theme.styleBackground("selection", "x")).toBe("\u001b[48;2;216;207;198mx\u001b[0m");
+  });
 });
