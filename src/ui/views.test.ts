@@ -725,9 +725,9 @@ describe("terminal appearance", () => {
     // The framed main pane adds layout work on slower hosted Windows/macOS
     // runners; retain a bounded responsiveness check without treating those
     // platforms as a rendering failure.
-    expect(elapsed).toBeLessThan(5_000);
+    expect(elapsed).toBeLessThan(8_000);
     expect(terminal.viewport().join("\n")).toContain("Assistant");
-  });
+  }, 10_000);
 
   it("keeps empty-state actions visible instead of clipping them from their panes", async () => {
     const terminal = new RecordingTerminal(100, 18);
