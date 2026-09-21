@@ -15,7 +15,7 @@ const sampledTerminalAppearance: TerminalAppearance = {
   unicode: true,
   theme: "ember",
   palette: "terminal",
-  background: [240, 230, 220],
+  background: [28, 25, 23],
   symbols: "unicode",
 };
 const shots: Array<{

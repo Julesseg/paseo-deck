@@ -145,5 +145,9 @@ describe("DeckTheme", () => {
 
     expect(theme.styleBackground("sidebar", "x")).toBe("\u001b[48;2;232;222;212mx\u001b[0m");
     expect(theme.styleBackground("selection", "x")).toBe("\u001b[48;2;216;207;198mx\u001b[0m");
+
+    const darkTheme = new DeckTheme({ ...theme.appearance, background: [28, 25, 23] });
+    expect(darkTheme.styleBackground("sidebar", "x")).toBe("\u001b[48;2;36;33;31mx\u001b[0m");
+    expect(darkTheme.styleBackground("selection", "x")).toBe("\u001b[48;2;51;48;46mx\u001b[0m");
   });
 });
