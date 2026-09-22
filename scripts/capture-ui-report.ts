@@ -50,6 +50,16 @@ const shots: Array<{
       sidebarSelection: { kind: "session", id: "agent-harbor-5678" },
     },
   },
+  {
+    name: "active-session-tab",
+    columns: 100,
+    rows: 28,
+    state: {
+      ...baseState,
+      activeSessionId: "agent-atlas-1234",
+      openSessionIds: { "workspace-main": ["agent-atlas-1234", "agent-harbor-5678"] },
+    },
+  },
   { name: "session-tree", columns: 100, rows: 28, state: baseState },
   {
     name: "terminal-discovery",

@@ -128,6 +128,9 @@ describe("DeckTheme", () => {
 
     expect(theme.styleBackground("sidebar", "x")).toBe("\u001b[48;2;31;29;27mx\u001b[0m");
     expect(theme.styleBackground("selection", "x")).toBe("\u001b[48;2;51;46;39mx\u001b[0m");
+    expect(theme.styleBackground("tab-strip", "x")).toBe("\u001b[48;2;39;36;33mx\u001b[0m");
+    expect(theme.styleBackground("active-session", "x")).toBe("\u001b[48;2;45;42;37mx\u001b[0m");
+    expect(theme.styleBackground("composer", "x")).toBe("\u001b[48;2;39;36;33mx\u001b[0m");
     expect(theme.styleRenderedBackground("sidebar", theme.style("focus", "x"))).toBe(
       "\u001b[48;2;31;29;27m\u001b[38;2;125;211;252mx\u001b[0m\u001b[48;2;31;29;27m\u001b[0m",
     );

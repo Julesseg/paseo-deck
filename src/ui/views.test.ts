@@ -239,6 +239,57 @@ describe("composer controls", () => {
     expect(terminalDisplayWidth(row)).toBeLessThanOrEqual(18);
   });
 
+  it("keeps Paseo-specific control cues while the status edge omits ordinary Vim instructions", async () => {
+    const terminal = new RecordingTerminal(100, 16);
+    const deck = new DeckTui(
+      terminal,
+      { ...state(), focus: "composer", composerMode: "normal" },
+      () => undefined,
+      {
+        appearance: { color: "none", unicode: false, theme: "plain", symbols: "ascii" },
+      },
+    );
+
+    deck.start();
+    await terminal.waitForRender();
+    const rendered = terminal.viewport().join("\n");
+    await deck.stop();
+
+    expect(rendered).toContain("[m]");
+    expect(rendered).toContain("[z]");
+    expect(rendered).toContain("[o]");
+    expect(rendered).not.toContain("Composer NORMAL:");
+    expect(rendered).not.toContain("Sidebar:");
+    expect(rendered).not.toContain("Timeline NORMAL:");
+  });
+
+  it("keeps no-color pickers and notifications free of ordinary key instructions", async () => {
+    const terminal = new RecordingTerminal(100, 18);
+    const base = state();
+    const deck = new DeckTui(
+      terminal,
+      { ...base, modal: { type: "create-agent", workspaceId: "w", step: "provider" } },
+      () => undefined,
+      { appearance: { color: "none", unicode: false, theme: "plain", symbols: "ascii" } },
+    );
+
+    deck.start();
+    await terminal.waitForRender();
+    expect(terminal.viewport().join("\n")).not.toMatch(/Up\/Down|Enter choose|Esc back/);
+
+    deck.update({
+      ...base,
+      notifications: [{ id: 1, kind: "error", message: "Offline", detail: "Details" }],
+      activeNotificationId: 1,
+      modal: { type: "notifications", index: 0 },
+    });
+    await terminal.waitForRender();
+    await deck.stop();
+
+    expect(terminal.viewport().join("\n")).toContain("E details");
+    expect(terminal.viewport().join("\n")).not.toMatch(/j\/k browse|Enter select|Esc close/);
+  });
+
   it("submits in Normal mode and preserves a multiline draft in Insert mode", async () => {
     const base = state();
     const current: AppState = {
@@ -351,6 +402,7 @@ describe("terminal appearance", () => {
       ...base,
       focus: "tree",
       activeSessionId: "agent-active",
+      openSessionIds: { workspace: ["agent-active"] },
       sidebarSelection: { kind: "session", id: "agent-active" },
       expandedIds: new Set(["project", "workspace"]),
       directory: {
@@ -407,13 +459,15 @@ describe("terminal appearance", () => {
     await terminal.waitForRender();
     const inactiveRow = terminal.viewport().findIndex((line) => line.includes("Active session ["));
     const workspaceRow = terminal.viewport().findIndex((line) => line.includes("Workspace"));
+    const activeTab = terminal.viewport().findIndex((line) => line.includes("Active session"));
     await deck.stop();
 
-    expect(terminal.viewportBackgrounds()[inactiveRow]?.[4]).toBe("#272421");
+    expect(terminal.viewportBackgrounds()[inactiveRow]?.[4]).toBe("#2d2a25");
+    expect(terminal.viewportBackgrounds()[activeTab]?.slice(36)).toContain("#2d2a25");
     expect(terminal.viewportBackgrounds()[workspaceRow]?.[4]).toBe("#1f1d1b");
   });
 
-  it("keeps the Ember sidebar on one restrained base layer", async () => {
+  it("uses adaptive sidebar and composer surfaces without painting the main-pane base", async () => {
     const terminal = new RecordingTerminal(100, 28);
     const deck = new DeckTui(terminal, state(), () => undefined, {
       appearance: {
@@ -432,7 +486,7 @@ describe("terminal appearance", () => {
 
     const output = terminal.writes.join("");
     expect(output).toContain("\u001b[48;2;232;222;212m");
-    expect(output).not.toContain("\u001b[48;2;226;216;207m");
+    expect(output).toContain("\u001b[48;2;226;216;207m");
     expect(output).not.toContain("\u001b[43m");
   });
 
@@ -1916,24 +1970,24 @@ describe("DeckTui viewport and focus", () => {
     expect(terminal.viewport().join("\n")).toContain("Event 0");
   });
 
-  it("makes focused panes and their contextual footer ASCII-visible", async () => {
+  it("keeps focused-pane labels visible without persistent Vim instructions", async () => {
     const terminal = new RecordingTerminal(100, 16);
     const deck = new DeckTui(terminal, state(), () => undefined);
 
     deck.start();
     await terminal.waitForRender();
     expect(terminal.viewport().join("\n")).toContain("Projects / workspaces");
-    expect(terminal.viewport().join("\n")).toContain("Sidebar: ↑↓ ←→ g/G Enter Esc");
+    expect(terminal.viewport().join("\n")).not.toContain("Sidebar:");
     deck.update({ ...state(), focus: "timeline" });
     await terminal.waitForRender();
     expect(terminal.viewport().join("\n")).toContain("NORMAL Active session timeline");
-    expect(terminal.viewport().join("\n")).toContain("Timeline NORMAL: ↑↓ g/G");
+    expect(terminal.viewport().join("\n")).not.toContain("Timeline NORMAL:");
     deck.update({ ...state(), focus: "composer" });
     await terminal.waitForRender();
     await deck.stop();
 
     expect(terminal.viewport().join("\n")).toContain("NORMAL Prompt");
-    expect(terminal.viewport().join("\n")).toContain("Composer NORMAL: i insert · n sidebar");
+    expect(terminal.viewport().join("\n")).not.toContain("Composer NORMAL:");
   });
 
   it("keeps a named shortcut hint in the narrow supported footer", async () => {
@@ -2315,7 +2369,7 @@ describe("DeckTui viewport and focus", () => {
     expect(terminal.viewport().join("\n")).toContain(
       "ready/one · plan · low · context 15/100 · in 12 · out 3",
     );
-    expect(terminal.viewport().join("\n")).toContain("Sidebar:");
+    expect(terminal.viewport().join("\n")).not.toContain("Sidebar:");
   });
 
   it("expands the selected collapsed timeline block with Enter", async () => {
