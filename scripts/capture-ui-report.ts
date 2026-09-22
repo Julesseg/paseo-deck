@@ -283,9 +283,84 @@ const shots: Array<{
     ]),
   },
   {
-    name: "creation-picker",
+    name: "creation-picker-dark",
     columns: 100,
     rows: 28,
+    state: {
+      ...baseState,
+      modal: { type: "create-agent", workspaceId: "workspace-main", step: "provider" },
+    },
+  },
+  {
+    name: "creation-picker-light",
+    columns: 100,
+    rows: 28,
+    state: {
+      ...baseState,
+      modal: { type: "create-agent", workspaceId: "workspace-main", step: "provider" },
+    },
+    appearance: { ...sampledTerminalAppearance, background: [240, 230, 220] },
+  },
+  {
+    name: "creation-model-picker",
+    columns: 100,
+    rows: 28,
+    state: {
+      ...baseState,
+      modal: {
+        type: "create-agent",
+        workspaceId: "workspace-main",
+        step: "model",
+        providerId: "codex",
+      },
+    },
+  },
+  {
+    name: "creation-mode-picker",
+    columns: 100,
+    rows: 28,
+    state: {
+      ...baseState,
+      modal: {
+        type: "create-agent",
+        workspaceId: "workspace-main",
+        step: "mode",
+        providerId: "codex",
+        modelId: "gpt-5.6-terra",
+      },
+    },
+  },
+  {
+    name: "creation-thinking-picker",
+    columns: 100,
+    rows: 28,
+    state: {
+      ...baseState,
+      modal: {
+        type: "create-agent",
+        workspaceId: "workspace-main",
+        step: "thinking",
+        providerId: "codex",
+        modelId: "gpt-5.6-terra",
+      },
+    },
+  },
+  {
+    name: "session-mode-picker",
+    columns: 100,
+    rows: 28,
+    state: { ...baseState, modal: { type: "mode", agentId: "agent-atlas-1234" } },
+  },
+  {
+    name: "session-thinking-picker",
+    columns: 100,
+    rows: 28,
+    state: { ...baseState, modal: { type: "thinking", agentId: "agent-atlas-1234" } },
+  },
+  {
+    name: "creation-picker-narrow",
+    columns: 52,
+    rows: 12,
     state: {
       ...baseState,
       modal: { type: "create-agent", workspaceId: "workspace-main", step: "provider" },

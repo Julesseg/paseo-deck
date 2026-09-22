@@ -1395,6 +1395,58 @@ class SearchDialog implements Component, Focusable {
   }
 }
 
+function framedChoicePickerLines(
+  title: string,
+  content: readonly string[],
+  width: number,
+  theme: DeckTheme,
+): string[] {
+  const innerWidth = Math.max(1, width - 2);
+  const unicode = theme.appearance.symbols === "unicode";
+  const [topLeft, topRight, bottomLeft, bottomRight, horizontal, vertical] = unicode
+    ? ["┌", "┐", "└", "┘", "─", "│"]
+    : ["+", "+", "+", "+", "-", "|"];
+  const label = ` ${theme.label(title)} `;
+  const top = `${topLeft}${theme.clipRendered(
+    `${label}${horizontal.repeat(Math.max(0, innerWidth - terminalDisplayWidth(label)))}`,
+    innerWidth,
+  )}${topRight}`;
+  const frame = (line: string): string => {
+    const body = theme.clipRendered(line, innerWidth);
+    const padded = `${body}${" ".repeat(Math.max(0, innerWidth - terminalDisplayWidth(body)))}`;
+    return theme.styleRenderedBackground(
+      "composer",
+      `${theme.styleRendered("border", vertical)}${padded}${theme.styleRendered("border", vertical)}`,
+    );
+  };
+  return [
+    theme.styleRenderedBackground("composer", theme.styleRendered("border", top)),
+    ...content.map(frame),
+    theme.styleRenderedBackground(
+      "composer",
+      theme.styleRendered("border", `${bottomLeft}${horizontal.repeat(innerWidth)}${bottomRight}`),
+    ),
+  ];
+}
+
+function centeredChoicePickerWidth(
+  terminalColumns: number,
+  title: string,
+  items: readonly SelectItem[],
+): number {
+  const widestItem = items.reduce(
+    (width, item) =>
+      Math.max(
+        width,
+        terminalDisplayWidth(`${item.label}${item.description ? ` - ${item.description}` : ""}`),
+      ),
+    0,
+  );
+  // The window follows its content but stops before it dominates a wide pane.
+  const desired = Math.max(28, terminalDisplayWidth(title) + 4, widestItem + 6);
+  return Math.min(Math.max(1, terminalColumns - 2), Math.min(64, desired));
+}
+
 class ChoiceDialog implements Component {
   private readonly list: SelectList;
   constructor(
@@ -1402,9 +1454,15 @@ class ChoiceDialog implements Component {
     items: SelectItem[],
     choose: (value: string) => void,
     cancel: () => void,
+    maxVisible: number,
+    preferredValue: string | undefined,
     private readonly theme: DeckTheme,
   ) {
-    this.list = new SelectList(items, 8, selectTheme(theme));
+    this.list = new SelectList(items, maxVisible, selectTheme(theme));
+    if (preferredValue !== undefined) {
+      const index = items.findIndex((item) => item.value === preferredValue);
+      if (index >= 0) this.list.setSelectedIndex(index);
+    }
     this.list.onSelect = (item) => choose(item.value);
     this.list.onCancel = cancel;
     this.title = title;
@@ -1414,7 +1472,12 @@ class ChoiceDialog implements Component {
     this.list.invalidate();
   }
   render(width: number): string[] {
-    return [this.theme.clipOwnedLabel(this.title, width), ...this.list.render(width)];
+    return framedChoicePickerLines(
+      this.title,
+      this.list.render(Math.max(1, width - 2)),
+      width,
+      this.theme,
+    );
   }
   handleInput(data: string): void {
     this.list.handleInput(data);
@@ -1423,7 +1486,7 @@ class ChoiceDialog implements Component {
 
 class SearchableChoiceDialog implements Component, Focusable {
   focused = false;
-  private readonly query = new Input();
+  private readonly query = new Input({ prompt: "Filter: " });
   private selected = 0;
   constructor(
     private readonly title: string,
@@ -1431,6 +1494,7 @@ class SearchableChoiceDialog implements Component, Focusable {
     private readonly choose: (value: string) => void,
     private readonly back: () => void,
     preferredValue?: string,
+    private readonly maxVisible = 8,
     private readonly theme: DeckTheme = new DeckTheme(defaultTerminalAppearance),
   ) {
     const index =
@@ -1443,18 +1507,33 @@ class SearchableChoiceDialog implements Component, Focusable {
   render(width: number): string[] {
     this.query.focused = this.focused;
     const matches = this.matches();
-    return [
-      this.theme.clipOwnedLabel(this.title, width),
-      ...this.query.render(width),
-      ...matches
-        .slice(0, 8)
-        .map((item, index) =>
+    const start = Math.max(
+      0,
+      Math.min(this.selected - Math.floor(this.maxVisible / 2), matches.length - this.maxVisible),
+    );
+    const visible = matches.slice(start, start + this.maxVisible);
+    return framedChoicePickerLines(
+      this.title,
+      [
+        ...this.query.render(Math.max(1, width - 2)),
+        ...visible.map((item, index) =>
           this.theme.clipOwnedLabel(
-            `${index === this.selected ? "> " : "  "}${item.label}${item.description ? ` - ${item.description}` : ""}`,
-            width,
+            `${start + index === this.selected ? "> " : "  "}${item.label}${item.description ? ` - ${item.description}` : ""}`,
+            Math.max(1, width - 2),
           ),
         ),
-    ];
+        ...(visible.length < matches.length
+          ? [
+              this.theme.clipOwnedLabel(
+                `  ${this.selected + 1}/${matches.length}`,
+                Math.max(1, width - 2),
+              ),
+            ]
+          : []),
+      ],
+      width,
+      this.theme,
+    );
   }
   handleInput(data: string): void {
     if (matchesKey(data, "escape")) {
@@ -2204,6 +2283,8 @@ export class DeckTui {
         targets.map((target, index) => ({ value: String(index), label: target.label })),
         (choice) => void this.copyTimelineTarget(targets[Number(choice)]?.text),
         () => this.restoreLocalOverlay(),
+        8,
+        undefined,
         this.theme,
       ),
       { width: "70%", minWidth: 28, maxHeight: "70%", margin: 1 },
@@ -2406,6 +2487,13 @@ export class DeckTui {
     if (modal.type === "none") return;
     const close = (): void => this.emit({ type: "close-modal" });
     let component: Component;
+    let overlayOptions: Parameters<TUI["showOverlay"]>[1] = {
+      width: "70%",
+      minWidth: 28,
+      maxHeight: "70%",
+      margin: 1,
+      visible: (columns, rows) => shellLayout(columns, rows, this.treeWidth).supported,
+    };
     if (modal.type === "help")
       component = new Dialog(
         [
@@ -2532,6 +2620,7 @@ export class DeckTui {
                   ? (modal.thinkingLevel ??
                     selectedCreationModel(this.state, modal)?.defaultThinkingLevel)
                   : undefined,
+          this.choicePickerMaxVisible(true),
           this.theme,
         );
       } else {
@@ -2543,17 +2632,37 @@ export class DeckTui {
           ),
           (choice) => this.emit({ type: "create-choice", choice }),
           close,
+          this.choicePickerMaxVisible(false),
+          this.state.directory.agents.find((agent) => agent.id === modal.agentId)?.[
+            modal.type === "mode" ? "modeId" : "thinkingLevel"
+          ],
           this.theme,
         );
       }
+      const choiceItems =
+        modal.type === "create-agent"
+          ? creationChoices(this.state, modal)
+          : agentChoices(
+              this.state,
+              modal.type === "mode" || modal.type === "thinking" ? modal.type : "mode",
+            );
+      overlayOptions = {
+        width: centeredChoicePickerWidth(
+          this.terminal.columns,
+          titleForModal(modal.type === "create-agent" ? modal.step : modal.type),
+          choiceItems,
+        ),
+        maxHeight: Math.max(1, this.terminal.rows - 2),
+        margin: 1,
+        visible: (columns, rows) => shellLayout(columns, rows, this.treeWidth).supported,
+      };
     }
-    this.appOverlay = this.tui.showOverlay(component, {
-      width: "70%",
-      minWidth: 28,
-      maxHeight: "70%",
-      margin: 1,
-      visible: (columns, rows) => shellLayout(columns, rows, this.treeWidth).supported,
-    });
+    this.appOverlay = this.tui.showOverlay(component, overlayOptions);
+  }
+
+  private choicePickerMaxVisible(searchable: boolean): number {
+    // Leave room for the single border, title, optional filter, and scroll marker.
+    return Math.max(1, this.terminal.rows - (searchable ? 6 : 5));
   }
 }
 

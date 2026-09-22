@@ -93,6 +93,126 @@ class FakeRenderClock implements RenderClock {
 }
 
 describe("creation picker choices", () => {
+  it.each([
+    { step: "provider" as const },
+    { step: "model" as const, providerId: "ready" },
+    { step: "mode" as const, providerId: "ready", modelId: "one" },
+    { step: "thinking" as const, providerId: "ready", modelId: "one" },
+  ])("renders the $step creation choice picker as a compact surfaced window", async (form) => {
+    const terminal = new RecordingTerminal(100, 28);
+    const uiState: AppState = {
+      ...state(),
+      modal: { type: "create-agent", workspaceId: "w", ...form },
+    };
+    const deck = new DeckTui(terminal, uiState, () => undefined, {
+      appearance: {
+        color: "truecolor",
+        unicode: true,
+        theme: "ember",
+        palette: "terminal",
+        background: [28, 25, 23],
+        symbols: "unicode",
+      },
+    });
+    deck.update(uiState);
+    deck.start();
+    await terminal.waitForRender();
+    const lines = terminal.viewport();
+    const top = lines.findIndex((line) =>
+      line.includes(`Choose ${form.step === "thinking" ? "thinking level" : form.step}`),
+    );
+    const left = lines[top]?.indexOf("┌") ?? -1;
+    const right = lines[top]?.lastIndexOf("┐") ?? -1;
+    const backgrounds = terminal.viewportBackgrounds();
+    await deck.stop();
+
+    expect(top).toBeGreaterThan(0);
+    expect(left).toBeGreaterThanOrEqual(0);
+    expect(right - left + 1).toBeLessThan(65);
+    expect(lines[top + 1]?.[left]).toBe("│");
+    expect(backgrounds[top]?.[left + 1]).toBeDefined();
+    expect(lines.join("\n")).not.toContain("Up/Down select");
+    expect(lines.join("\n")).not.toContain("Enter choose");
+  });
+
+  it.each([
+    { type: "mode" as const, title: "Choose mode" },
+    { type: "thinking" as const, title: "Choose thinking level" },
+  ])(
+    "uses the same bordered window and current value for in-session $type controls",
+    async ({ type, title }) => {
+      const terminal = new RecordingTerminal(100, 28);
+      const base = state();
+      const uiState: AppState = {
+        ...base,
+        selectedAgentId: "agent",
+        directory: {
+          ...base.directory,
+          agents: [
+            {
+              id: "agent",
+              workspaceId: "w",
+              title: "Agent",
+              status: "idle",
+              providerId: "ready",
+              modelId: "one",
+              modeId: "full-access",
+              thinkingLevel: "high",
+              availableModeIds: ["plan", "full-access"],
+              availableThinkingLevels: ["low", "high"],
+              pendingPermissions: [],
+              needsAttention: false,
+              archived: false,
+            },
+          ],
+        },
+        modal: { type, agentId: "agent" },
+      };
+      const deck = new DeckTui(terminal, uiState, () => undefined);
+      deck.update(uiState);
+      deck.start();
+      await terminal.waitForRender();
+      const lines = terminal.viewport();
+      await deck.stop();
+
+      const top = lines.find((line) => line.includes(title));
+      expect(top).toContain("┌");
+      expect(top).toContain("┐");
+      expect(lines.join("\n")).toContain("│");
+      expect(lines.join("\n")).toContain(type === "mode" ? "→ full-access" : "→ high");
+    },
+  );
+
+  it("keeps a long filtered picker selectable and framed at the smallest supported viewport", async () => {
+    const terminal = new RecordingTerminal(52, 12);
+    const uiState: AppState = {
+      ...state(),
+      directory: {
+        ...state().directory,
+        providers: Array.from({ length: 20 }, (_, index) => ({
+          id: `provider-${index}`,
+          name: `Provider ${index}`,
+          ready: true,
+          modeIds: [],
+          models: [],
+        })),
+      },
+      modal: { type: "create-agent", workspaceId: "w", step: "provider" },
+    };
+    const deck = new DeckTui(terminal, uiState, () => undefined);
+    deck.update(uiState);
+    deck.start();
+    for (let index = 0; index < 19; index += 1) terminal.sendInput("\u001b[B");
+    await terminal.waitForRender();
+    const lines = terminal.viewport();
+    await deck.stop();
+
+    expect(lines.join("\n")).toContain("> Provider 19");
+    expect(lines.some((line) => line.includes("┌ Choose provider"))).toBe(true);
+    expect(lines.some((line) => line.includes("└"))).toBe(true);
+    expect(lines.every((line) => terminalDisplayWidth(line) <= 52)).toBe(true);
+  });
+
   it("limits every creation step to the selected provider and model", () => {
     expect(
       creationChoices(state(), { type: "create-agent", workspaceId: "w", step: "provider" }),
