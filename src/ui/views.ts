@@ -188,7 +188,7 @@ class TreeView implements Component {
       output.push(
         header,
         ...rows.flatMap((row) => {
-          const selected = " ";
+          const selected = row.selected ? ">" : " ";
           const branch =
             row.kind === "agent"
               ? this.theme.glyph("agent")
@@ -220,7 +220,7 @@ class TreeView implements Component {
             this.state.focus === "tree" && row.selected
               ? "selection"
               : row.kind === "agent" && row.active
-                ? "surface"
+                ? "active-session"
                 : undefined;
           const styleRow = (line: string): string =>
             background
@@ -317,13 +317,18 @@ class SessionTabsView implements Component {
           .find((terminal) => terminal.id === id),
       )
       .filter((item): item is NonNullable<typeof item> => item !== undefined);
-    if (!tabs.length && !terminals.length)
+    if (!tabs.length && !terminals.length) {
+      const message = this.theme.style(
+        "muted",
+        `Tabs ${this.theme.glyph("bullet")} Active session ${this.paseoHost ? `${this.paseoHost} ${this.theme.glyph("bullet")} ` : ""}Open a session or terminal from the sidebar`,
+      );
       return [
-        this.theme.style(
-          "muted",
-          `Tabs ${this.theme.glyph("bullet")} Active session ${this.paseoHost ? `${this.paseoHost} ${this.theme.glyph("bullet")} ` : ""}(open a session or terminal with Enter)`,
+        this.theme.styleRenderedBackground(
+          "tab-strip",
+          `${this.theme.clipRendered(message, width)}${" ".repeat(Math.max(0, width - terminalDisplayWidth(message)))}`,
         ),
       ];
+    }
     const activeIndex = Math.max(
       0,
       tabs.findIndex((agent) => agent.id === active),
@@ -339,28 +344,32 @@ class SessionTabsView implements Component {
           ? this.theme.glyph("running")
           : this.theme.glyph("bullet");
       const label = ` ${marker} ${sanitizeTerminalText(agent.title)} `;
-      if (used + label.length > width) break;
+      if (used + terminalDisplayWidth(label) > width) break;
       labels.push(
-        this.theme.styleRendered(
-          agent.id === active ? "selection" : attention ? "attention" : "muted",
-          label,
+        this.theme.styleRenderedBackground(
+          agent.id === active ? "active-session" : "tab-strip",
+          this.theme.styleRendered(attention ? "attention" : "muted", label),
         ),
       );
-      used += label.length;
+      used += terminalDisplayWidth(label);
     }
     const prefix = activeIndex > 0 ? `${this.theme.glyph("ellipsis")} ` : "";
     const terminalLabels = terminals.map((terminal) =>
-      this.theme.styleRendered(
-        terminal.id === this.state.activeTerminalId ? "selection" : "muted",
-        ` ⌁ ${terminal.name} `,
+      this.theme.styleRenderedBackground(
+        terminal.id === this.state.activeTerminalId ? "active-session" : "tab-strip",
+        this.theme.styleRendered("muted", ` ⌁ ${sanitizeTerminalText(terminal.name)} `),
       ),
     );
+    const content = this.theme.clipRendered(
+      prefix +
+        labels.join(this.theme.glyph("divider")) +
+        terminalLabels.join(this.theme.glyph("divider")),
+      width,
+    );
     return [
-      this.theme.clipOwnedLabel(
-        prefix +
-          labels.join(this.theme.glyph("divider")) +
-          terminalLabels.join(this.theme.glyph("divider")),
-        width,
+      this.theme.styleRenderedBackground(
+        "tab-strip",
+        `${content}${" ".repeat(Math.max(0, width - terminalDisplayWidth(content)))}`,
       ),
     ];
   }
@@ -989,7 +998,7 @@ class ComposerView implements Component, Focusable {
         (line) =>
           `${vertical}${this.theme.clipRendered(`${line}${" ".repeat(Math.max(0, innerWidth - terminalDisplayWidth(line)))}`, innerWidth)}${vertical}`,
       );
-    return [
+    const lines = [
       this.theme.styleRendered(this.focused ? "focus" : "muted", top),
       ...body,
       this.theme.styleRendered(
@@ -1001,6 +1010,12 @@ class ComposerView implements Component, Focusable {
         `${bottomLeft}${horizontal.repeat(innerWidth)}${bottomRight}`,
       ),
     ];
+    return lines.map((line) =>
+      this.theme.styleRenderedBackground(
+        "composer",
+        `${line}${" ".repeat(Math.max(0, width - terminalDisplayWidth(line)))}`,
+      ),
+    );
   }
   handleInput(data: string): void {
     if (this.state.composerMode === "visual") {
@@ -1193,9 +1208,8 @@ class StatusView implements Component {
     const notification = active
       ? ` ${this.theme.glyph("bullet")} ${active.kind}${active.failureKind ? `/${active.failureKind}` : ""}: ${sanitizeTerminalText(active.message)}${active.detail ? ` ${this.theme.glyph("bullet")} E details` : ""}${active.retry ? ` ${this.theme.glyph("bullet")} R retry` : ""}${this.state.notifications.length > 1 ? ` ${this.theme.glyph("bullet")} ${this.state.notifications.length} notices ${this.theme.glyph("bullet")} N review` : ""}`
       : "";
-    const context = footerContext(this.state, width);
     const line = this.theme.clipRendered(
-      `${selected ? `${details}${separator}` : `${this.theme.label(context)}${separator}`}${connection}${compact ? "" : `${separator}${selected ? this.theme.label(context) + separator : ""}${selected ? details + separator : ""}permissions ${permissions}`}${notification}`,
+      `${selected ? details : "no active session"}${separator}${connection}${compact ? "" : `${separator}permissions ${permissions}`}${notification}`,
       width,
     );
     const tone =
@@ -1212,28 +1226,6 @@ function elapsed(since: number, now: number): string {
   return `${Math.max(0, Math.floor((now - since) / 1_000))}s`;
 }
 
-function footerContext(state: AppState, width: number): string {
-  if (state.modal.type !== "none") return "Dialog: Esc";
-  if (width < 50) {
-    switch (state.focus) {
-      case "tree":
-        return "Sidebar j/k Enter Esc";
-      case "timeline":
-        return "Timeline NORMAL j/k G [] {} Esc";
-      case "composer":
-        return "Composer NORMAL i n t";
-    }
-  }
-  switch (state.focus) {
-    case "tree":
-      return "Sidebar: ↑↓ ←→ g/G Enter Esc";
-    case "timeline":
-      return `Timeline ${(state.timelineMode ?? "normal").toUpperCase()}: ↑↓ g/G [] turns {} errors Ctrl-F search · y copy · Enter Esc`;
-    case "composer":
-      return `Composer ${(state.composerMode ?? "normal").toUpperCase()}: i insert · n sidebar · t timeline · Ctrl-U/D scroll`;
-  }
-}
-
 type DialogLine = string | { value: string; owned: boolean };
 
 function permissionDialogLines(
@@ -1243,7 +1235,7 @@ function permissionDialogLines(
   const request = state.directory.agents
     .find((agent) => agent.id === modal.agentId)
     ?.pendingPermissions.find((item) => item.id === modal.requestId);
-  if (!request) return ["Permission request is no longer pending.", "Esc close"];
+  if (!request) return ["Permission request is no longer pending."];
   const queue = pendingPermissionCount(state);
   const ordinal = `${(modal.queueIndex ?? 0) + 1}/${queue}`;
   return [
@@ -1258,8 +1250,8 @@ function permissionDialogLines(
     modal.submitting
       ? `Submitting ${modal.lastDecision ?? "decision"}; awaiting confirmation…`
       : modal.error && modal.lastDecision
-        ? "a allow · d deny · r retry last decision · h/l previous/next · Esc cancel"
-        : "a allow · d deny · h/l previous/next · Esc cancel",
+        ? "a allow · d deny · r retry last decision · h/l previous/next"
+        : "a allow · d deny · h/l previous/next",
   ];
 }
 
@@ -1308,11 +1300,7 @@ class InputDialog implements Component, Focusable {
   }
   render(width: number): string[] {
     this.input.focused = this.focused;
-    return [
-      this.theme.clipOwnedLabel(this.title, width),
-      ...this.input.render(width),
-      this.theme.clipOwnedLabel(`Enter confirm ${this.theme.glyph("bullet")} Esc cancel`, width),
-    ];
+    return [this.theme.clipOwnedLabel(this.title, width), ...this.input.render(width)];
   }
   handleInput(data: string): void {
     if (matchesKey(data, "escape")) this.cancel();
@@ -1353,7 +1341,6 @@ class CreationPromptDialog implements Component, Focusable {
         width,
       ),
       ...this.editor.render(width),
-      this.theme.clipOwnedLabel(`Enter submits ${this.theme.glyph("bullet")} Esc back`, width),
     ];
   }
   handleInput(data: string): void {
@@ -1383,10 +1370,7 @@ class SearchDialog implements Component, Focusable {
       this.theme.clipOwnedLabel("Search timeline", width),
       ...this.input.render(width),
       this.theme.clipOwnedLabel(this.result(), width),
-      this.theme.clipOwnedLabel(
-        `Enter next ${this.theme.glyph("bullet")} Ctrl-P previous ${this.theme.glyph("bullet")} Esc cancel`,
-        width,
-      ),
+      this.theme.clipOwnedLabel(`Ctrl-P previous ${this.theme.glyph("bullet")} Ctrl-N next`, width),
     ];
   }
   handleInput(data: string): void {
@@ -1470,10 +1454,6 @@ class SearchableChoiceDialog implements Component, Focusable {
             width,
           ),
         ),
-      this.theme.clipOwnedLabel(
-        `Type to filter ${this.theme.glyph("bullet")} Up/Down select ${this.theme.glyph("bullet")} Enter choose ${this.theme.glyph("bullet")} Esc back`,
-        width,
-      ),
     ];
   }
   handleInput(data: string): void {
@@ -1526,10 +1506,6 @@ class CommandPaletteDialog implements Component, Focusable {
           width,
         );
       }),
-      this.theme.clipOwnedLabel(
-        `Type to filter ${this.theme.glyph("bullet")} Up/Down select ${this.theme.glyph("bullet")} Enter run ${this.theme.glyph("bullet")} Esc close`,
-        width,
-      ),
     ];
   }
   handleInput(data: string): void {
@@ -2478,7 +2454,6 @@ export class DeckTui {
         [
           `${modal.action} this agent?`,
           ...(modal.draftWarning ? ["This agent has an unsent draft; it will be preserved."] : []),
-          "Enter confirms · Esc cancels",
         ],
         (data) => {
           if (matchesKey(data, "enter")) this.controller.confirm(modal);
@@ -2501,7 +2476,7 @@ export class DeckTui {
       );
     else if (modal.type === "error-details")
       component = new Dialog(
-        [`Error: ${modal.message}`, modal.detail, "Esc close"],
+        [`Error: ${modal.message}`, modal.detail],
         (data) => {
           if (matchesKey(data, "escape")) close();
           return true;
@@ -2524,7 +2499,7 @@ export class DeckTui {
           `Create in ${this.state.directory.workspaces.find((workspace) => workspace.id === modal.workspaceId)?.title ?? modal.workspaceId}`,
           `${modal.providerId ?? ""}/${modal.modelId ?? ""}${modal.modeId ? ` · ${modal.modeId}` : ""}${modal.thinkingLevel ? ` · ${modal.thinkingLevel}` : ""}`,
           ...(modal.error ? [`Retryable error: ${modal.error}`] : []),
-          modal.submitting ? "Creating…" : "Enter confirms · Esc cancels",
+          modal.submitting ? "Creating…" : "Ready to create.",
         ],
         (data) => {
           if (matchesKey(data, "enter") && !modal.submitting)
@@ -2583,9 +2558,9 @@ export class DeckTui {
 }
 
 function notificationDialogLines(state: AppState, index: number): readonly string[] {
-  if (state.notifications.length === 0) return ["No notifications.", "Esc close"];
+  if (state.notifications.length === 0) return ["No notifications."];
   const active = state.notifications[index] ?? state.notifications.at(-1);
-  if (!active) return ["No notifications.", "Esc close"];
+  if (!active) return ["No notifications."];
   return [
     `Notifications ${index + 1}/${state.notifications.length}`,
     ...state.notifications.map(
@@ -2594,7 +2569,6 @@ function notificationDialogLines(state: AppState, index: number): readonly strin
     ),
     ...(active.detail ? ["E details"] : []),
     ...(active.retry ? ["R retry"] : []),
-    "j/k browse · Enter select · Esc close",
   ];
 }
 

@@ -15,7 +15,7 @@ export type SemanticTone =
   | "code";
 
 /** Background layers are intentionally separate from semantic foreground hues. */
-export type BackgroundTone = "sidebar" | "surface" | "selection";
+export type BackgroundTone = "sidebar" | "tab-strip" | "active-session" | "composer" | "selection";
 
 export type DeckGlyph =
   | "agent"
@@ -77,22 +77,30 @@ const truecolor: Readonly<Record<SemanticTone, readonly [number, number, number]
 // the interface feel like a collection of coloured cards.
 const emberBackground: Readonly<Record<BackgroundTone, readonly [number, number, number]>> = {
   sidebar: [31, 29, 27],
-  surface: [39, 36, 33],
+  "tab-strip": [39, 36, 33],
+  "active-session": [45, 42, 37],
+  composer: [39, 36, 33],
   selection: [51, 46, 39],
 };
 const emberBackground256: Readonly<Record<BackgroundTone, number>> = {
   sidebar: 235,
-  surface: 237,
+  "tab-strip": 237,
+  "active-session": 238,
+  composer: 237,
   selection: 239,
 };
 const emberBackground16: Readonly<Record<BackgroundTone, number>> = {
   sidebar: 40,
-  surface: 100,
+  "tab-strip": 100,
+  "active-session": 40,
+  composer: 100,
   selection: 100,
 };
 const surfaceOpacity: Readonly<Record<BackgroundTone, number>> = {
   sidebar: 0.035,
-  surface: 0.06,
+  "tab-strip": 0.06,
+  "active-session": 0.075,
+  composer: 0.06,
   selection: 0.1,
 };
 
