@@ -496,6 +496,65 @@ describe("fenced code highlighter", () => {
 });
 
 describe("terminal appearance", () => {
+  it("renders workspace activity as monochrome letters without sidebar metadata", async () => {
+    const terminal = new RecordingTerminal(100, 22);
+    const base = state();
+    const agent = {
+      id: "session",
+      workspaceId: "attention",
+      title: "Hidden session",
+      status: "idle" as const,
+      availableModeIds: [],
+      availableThinkingLevels: [],
+      pendingPermissions: [],
+      needsAttention: true,
+      archived: false,
+    };
+    const uiState: AppState = {
+      ...base,
+      directory: {
+        ...base.directory,
+        workspaces: ["attention", "working", "idle", "done"].map((id) => ({
+          id,
+          title: id.slice(0, 1).toUpperCase() + id.slice(1),
+          directory: `/${id}`,
+          archived: false,
+        })),
+        agents: [
+          agent,
+          { ...agent, id: "ended", workspaceId: "done", status: "stopped", needsAttention: false },
+        ],
+      },
+      workspaceTerminals: {
+        working: [
+          {
+            id: "term",
+            workspaceId: "working",
+            name: "build",
+            cwd: "/working",
+            activity: "working",
+          },
+        ],
+      },
+    };
+    const deck = new DeckTui(terminal, uiState, () => undefined, {
+      appearance: { color: "none", unicode: false, theme: "plain", symbols: "ascii" },
+    });
+    deck.start();
+    await terminal.waitForRender();
+    const sidebar = terminal
+      .viewport()
+      .map((line) => line.slice(0, 34))
+      .join("\n");
+    await deck.stop();
+    expect(sidebar).toMatch(/A Attention/);
+    expect(sidebar).toMatch(/W Working/);
+    expect(sidebar).toMatch(/I Idle/);
+    expect(sidebar).toMatch(/D Done/);
+    expect(sidebar).not.toContain("Hidden session");
+    expect(sidebar).not.toContain("/working");
+  });
+
   it("paints an unlabeled sidebar frame through unused viewport rows", async () => {
     const terminal = new RecordingTerminal(100, 22);
     const deck = new DeckTui(terminal, state(), () => undefined, {
@@ -515,16 +574,13 @@ describe("terminal appearance", () => {
     ).toBe(true);
   });
 
-  it("keeps the active session visible after sidebar navigation moves away", async () => {
+  it("shows an active workspace without exposing session rows in the sidebar", async () => {
     const terminal = new RecordingTerminal(100, 22);
     const base = state();
-    const sidebarState: AppState = {
+    const activeState: AppState = {
       ...base,
-      focus: "tree",
-      activeSessionId: "agent-active",
-      openSessionIds: { workspace: ["agent-active"] },
-      sidebarSelection: { kind: "session", id: "agent-active" },
-      expandedIds: new Set(["project", "workspace"]),
+      selectedWorkspaceId: "workspace",
+      sidebarSelection: { kind: "workspace", id: "workspace" },
       directory: {
         ...base.directory,
         projects: [{ id: "project", name: "Project" }],
@@ -549,42 +605,21 @@ describe("terminal appearance", () => {
             needsAttention: false,
             archived: false,
           },
-          {
-            id: "agent-other",
-            workspaceId: "workspace",
-            title: "Other session",
-            status: "idle",
-            availableModeIds: [],
-            availableThinkingLevels: [],
-            pendingPermissions: [],
-            needsAttention: false,
-            archived: false,
-          },
         ],
       },
+      expandedIds: new Set(["project"]),
     };
-    const deck = new DeckTui(terminal, sidebarState, () => undefined, {
+    const deck = new DeckTui(terminal, activeState, () => undefined, {
       appearance: { color: "truecolor", unicode: true, theme: "ember", symbols: "unicode" },
     });
     deck.start();
     await terminal.waitForRender();
-    const activeRow = terminal.viewport().findIndex((line) => line.includes("Active session ["));
-    expect(terminal.viewportBackgrounds()[activeRow]?.[4]).toBe("#332e27");
-
-    deck.update({
-      ...sidebarState,
-      focus: "composer",
-      sidebarSelection: { kind: "session", id: "agent-other" },
-    });
-    await terminal.waitForRender();
-    const inactiveRow = terminal.viewport().findIndex((line) => line.includes("Active session ["));
-    const workspaceRow = terminal.viewport().findIndex((line) => line.includes("Workspace"));
-    const activeTab = terminal.viewport().findIndex((line) => line.includes("Active session"));
+    const rendered = terminal.viewport().join("\n");
+    const workspaceRow = terminal.viewport().findIndex((line) => line.includes("● Workspace"));
+    expect(rendered).toContain("Active session");
+    expect(terminal.viewportBackgrounds()[workspaceRow]?.[4]).toBe("#332e27");
+    expect(terminal.viewport().slice(0, 5).join("\n")).not.toContain("agent-active");
     await deck.stop();
-
-    expect(terminal.viewportBackgrounds()[inactiveRow]?.[4]).toBe("#2d2a25");
-    expect(terminal.viewportBackgrounds()[activeTab]?.slice(36)).toContain("#2d2a25");
-    expect(terminal.viewportBackgrounds()[workspaceRow]?.[4]).toBe("#1f1d1b");
   });
 
   it("uses adaptive sidebar and composer surfaces without painting the main-pane base", async () => {
@@ -630,7 +665,7 @@ describe("terminal appearance", () => {
     });
     wideDeck.start();
     await wideTerminal.waitForRender();
-    expect(wideTerminal.viewport().join("\n")).toContain("paseo.example:6767");
+    expect(wideTerminal.viewport().join("\n")).toContain("paseo.exa");
     await wideDeck.stop();
   });
 
@@ -646,7 +681,7 @@ describe("terminal appearance", () => {
     const rendered = terminal.viewport().join("\n");
     await deck.stop();
 
-    expect(rendered).toContain("No sessions match");
+    expect(rendered).toContain("No projects or workspaces match");
     expect(rendered).toContain("No timeline selected");
     expect(rendered).not.toMatch(/[▾▸•✓]/u);
     // pi-tui emits its own reset/reverse-video housekeeping for cursor focus.
@@ -919,7 +954,7 @@ describe("terminal appearance", () => {
     await deck.stop();
 
     expect(rendered).toContain("Press r to refresh");
-    expect(rendered).toContain("Choose an agent in the tree");
+    expect(rendered).toContain("Choose a session tab");
     expect(rendered).not.toContain("avai\nlable");
     expect(rendered).not.toContain("ti\nmeline");
   });
@@ -2059,8 +2094,13 @@ describe("DeckTui viewport and focus", () => {
     deck.update(treeState);
     await terminal.waitForRender();
     const treeViewport = terminal.viewport().slice(0, 8).join("\n");
-    expect(treeViewport).toContain("Agent 11");
-    expect(treeViewport).toContain("openai/gpt · 09/18 10:30");
+    expect(treeViewport).toContain("Main");
+    expect(
+      treeViewport
+        .split("\n")
+        .map((line) => line.slice(0, 34))
+        .join("\n"),
+    ).not.toContain("Agent 11");
 
     const timelineState: AppState = {
       ...treeState,
@@ -2282,10 +2322,9 @@ describe("DeckTui viewport and focus", () => {
     deck.start();
     await terminal.waitForRender();
     const wideViewport = terminal.viewport().join("\n");
-    expect(wideViewport).toContain("1 agent");
-    expect(wideViewport).toContain("!1");
-    expect(wideViewport).toContain("openai/gpt");
-    expect(wideViewport).toContain("09/18 10:30");
+    expect(wideViewport).toContain("Main");
+    expect(wideViewport).not.toContain("1 agent");
+    expect(wideViewport).not.toContain("openai/gpt");
     terminal.setSize(42, 16);
     await terminal.waitForRender();
     const narrowViewport = terminal.viewport().join("\n");
@@ -2536,7 +2575,7 @@ describe("DeckTui viewport and focus", () => {
 
     const lines = terminal.viewport();
     expect(lines.join("\n")).toContain("Projects");
-    expect(lines.join("\n")).toContain("Active session");
+    expect(lines.join("\n")).toContain("Tabs");
     expect(lines.join("\n")).toContain("Prompt");
     expect(lines.every((line) => line.length <= 30)).toBe(true);
   });
@@ -2722,7 +2761,7 @@ describe("DeckTui viewport and focus", () => {
 
     deck.start();
     await terminal.waitForRender();
-    expect(terminal.viewport().join("\n")).toContain("openai/gpt");
+    expect(terminal.viewport().join("\n")).toContain("Main");
     for (let index = 0; index < 50; index += 1) terminal.sendInput("[");
     await terminal.waitForRender();
     const narrowTree = terminal.viewport().slice(0, 8).join("\n");
@@ -2731,7 +2770,7 @@ describe("DeckTui viewport and focus", () => {
     for (let index = 0; index < 50; index += 1) terminal.sendInput("]");
     await terminal.waitForRender();
     const wideTree = terminal.viewport().slice(0, 8).join("\n");
-    expect(wideTree).toContain("openai/gpt");
+    expect(wideTree).toContain("Main");
     expect(wideTree).toContain("No timeline selected");
     deck.update({ ...resizedState, focus: "composer" });
     terminal.sendInput("x");

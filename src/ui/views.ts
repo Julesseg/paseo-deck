@@ -64,7 +64,7 @@ import {
   toggleTimelineFold,
 } from "./timeline-buffer.js";
 import { clipboardPlainText, copyTargets, findTimelineMatches } from "./timeline-search.js";
-import { deriveTreeRows, shortAgentId, type TreeRow, timelineItemDisplay } from "./view-model.js";
+import { deriveTreeRows, shortAgentId, timelineItemDisplay, workspaceTabs } from "./view-model.js";
 
 function markdownTheme(theme: DeckTheme) {
   // TimelineItemView sanitizes the Markdown source before pi-tui tokenises it.
@@ -176,7 +176,7 @@ class TreeView implements Component {
             : this.state.connection === "disconnected"
               ? "Paseo is disconnected. Press r to retry."
               : this.state.filter.trim()
-                ? `No sessions match “${sanitizeTerminalText(this.state.filter)}”. Press Esc to clear the filter.`
+                ? `No projects or workspaces match “${sanitizeTerminalText(this.state.filter)}”. Press Esc to clear the filter.`
                 : "No projects or workspaces are available yet. Press r to refresh.";
       output.push(
         header,
@@ -188,38 +188,37 @@ class TreeView implements Component {
       output.push(
         header,
         ...rows.flatMap((row) => {
-          const selected = row.selected ? ">" : " ";
+          const selected = " ";
           const branch =
-            row.kind === "agent"
-              ? this.theme.glyph("agent")
-              : row.expanded
-                ? this.theme.glyph("expanded")
-                : this.theme.glyph("collapsed");
-          const flags =
-            row.kind === "agent"
-              ? `${row.permissionCount ? ` ${this.theme.glyph("permission")}` : ""}${row.attention ? ` ${this.theme.glyph("attention")}` : ""}`
-              : "";
-          const secondary =
-            width < 34 || row.kind !== "agent" ? "" : treeSecondary(row, this.theme);
+            row.kind === "project"
+              ? this.theme.glyph(row.expanded ? "expanded" : "collapsed")
+              : this.theme.appearance.color === "none" ||
+                  this.theme.appearance.theme === "plain" ||
+                  this.theme.appearance.symbols === "ascii"
+                ? ({ attention: "A", working: "W", idle: "I", done: "D" } as const)[
+                    row.activity ?? "idle"
+                  ]
+                : this.theme.styleRendered(
+                    row.activity === "attention"
+                      ? "attention"
+                      : row.activity === "working"
+                        ? "running"
+                        : row.activity === "done"
+                          ? "muted"
+                          : "header",
+                    "●",
+                  );
           const primary = this.theme.clipRendered(
-            `${selected}${"  ".repeat(row.depth)}${branch} ${sanitizeTerminalText(row.label)}${flags}${secondary}`,
+            `${selected}${"  ".repeat(row.depth)}${branch} ${sanitizeTerminalText(row.label)}`,
             innerWidth,
           );
-          const tone = row.attention
-            ? "attention"
-            : row.status === "failed"
-              ? "failure"
-              : row.status === "running"
-                ? "running"
-                : row.kind === "project"
-                  ? "header"
-                  : "muted";
+          const tone = row.attention ? "attention" : row.kind === "project" ? "header" : "muted";
           const fill = (line: string): string =>
             `${line}${" ".repeat(Math.max(0, innerWidth - terminalDisplayWidth(line)))}`;
           const background =
             this.state.focus === "tree" && row.selected
               ? "selection"
-              : row.kind === "agent" && row.active
+              : row.kind === "workspace" && row.active
                 ? "active-session"
                 : undefined;
           const styleRow = (line: string): string =>
@@ -228,8 +227,6 @@ class TreeView implements Component {
               : `${this.theme.styleRendered(tone, line)}${" ".repeat(Math.max(0, innerWidth - terminalDisplayWidth(line)))}`;
           const rowLines = row.gapBefore ? [""] : [];
           rowLines.push(styleRow(primary));
-          const metadata = treeRowMetadata(row, width, this.theme);
-          if (metadata) rowLines.push(styleRow(metadata));
           return rowLines;
         }),
       );
@@ -239,34 +236,15 @@ class TreeView implements Component {
     return output.map(sidebarLine);
   }
 
-  selectedLineRange(width: number): { start: number; end: number } | undefined {
+  selectedLineRange(_width: number): { start: number; end: number } | undefined {
     let line = 2;
     for (const row of deriveTreeRows(this.state)) {
-      const height = (row.gapBefore ?? 0) + (treeRowMetadata(row, width, this.theme) ? 2 : 1);
+      const height = (row.gapBefore ?? 0) + 1;
       if (row.selected) return { start: line, end: line + height - 1 };
       line += height;
     }
     return undefined;
   }
-}
-
-function treeRowMetadata(row: TreeRow, width: number, theme: DeckTheme): string | undefined {
-  if (width < 34) return undefined;
-  const innerWidth = Math.max(1, width - 2);
-  if (row.kind !== "agent")
-    return row.activity
-      ? theme.clipRendered(
-          `${"  ".repeat(row.depth + 1)}${row.activity}${treeSecondary(row, theme)}`,
-          innerWidth,
-        )
-      : undefined;
-  const details = [row.providerModel, row.activityLabel]
-    .filter((value): value is string => value !== undefined && value !== "")
-    .map((value) => sanitizeTerminalText(value))
-    .join(` ${theme.glyph("bullet")} `);
-  return details
-    ? theme.clipRendered(`${"  ".repeat(row.depth + 1)}${details}`, innerWidth)
-    : undefined;
 }
 
 class SidebarScrollView extends ScrollView {
@@ -291,14 +269,11 @@ class SidebarScrollView extends ScrollView {
 
 class SessionTabsView implements Component {
   private state: AppState;
-  private readonly paseoHost: string | undefined;
   constructor(
     state: AppState,
     private readonly theme: DeckTheme,
-    paseoHost?: string,
   ) {
     this.state = state;
-    this.paseoHost = hostLabel(paseoHost);
   }
   update(state: AppState): void {
     this.state = state;
@@ -306,21 +281,18 @@ class SessionTabsView implements Component {
   invalidate(): void {}
   render(width: number): string[] {
     const active = this.state.activeSessionId;
-    const tabs = Object.values(this.state.openSessionIds ?? {})
-      .flat()
-      .map((id) => this.state.directory.agents.find((agent) => agent.id === id))
-      .filter((agent): agent is NonNullable<typeof agent> => agent !== undefined);
-    const terminals = (this.state.openTerminalIds ?? [])
-      .map((id) =>
-        Object.values(this.state.workspaceTerminals ?? {})
-          .flat()
-          .find((terminal) => terminal.id === id),
-      )
-      .filter((item): item is NonNullable<typeof item> => item !== undefined);
+    const workspaceId = this.state.selectedWorkspaceId;
+    const resources = workspaceTabs(this.state);
+    const tabs = resources.flatMap((resource) =>
+      resource.kind === "session" ? [resource.agent] : [],
+    );
+    const terminals = resources.flatMap((resource) =>
+      resource.kind === "terminal" ? [resource.terminal] : [],
+    );
     if (!tabs.length && !terminals.length) {
       const message = this.theme.style(
         "muted",
-        `Tabs ${this.theme.glyph("bullet")} Active session ${this.paseoHost ? `${this.paseoHost} ${this.theme.glyph("bullet")} ` : ""}Open a session or terminal from the sidebar`,
+        `Tabs ${this.theme.glyph("bullet")} ${workspaceId ? "No sessions or terminals in this workspace" : "Open a workspace from the sidebar"}`,
       );
       return [
         this.theme.styleRenderedBackground(
@@ -472,13 +444,6 @@ class MinimumSizeView implements Component {
       ),
     ];
   }
-}
-
-function treeSecondary(row: TreeRow, theme: DeckTheme): string {
-  if (row.kind === "agent") return "";
-  if (row.agentCount === undefined) return "";
-  const agents = `${row.agentCount} agent${row.agentCount === 1 ? "" : "s"}`;
-  return ` ${theme.glyph("bullet")} ${agents}${row.attentionCount ? ` ${theme.glyph("bullet")} !${row.attentionCount}` : ""}`;
 }
 
 class TimelineItemView implements Component {
@@ -736,7 +701,7 @@ class TimelineView implements Component {
                 ? "Reconnecting…"
                 : this.state?.selectedAgentId
                   ? "No activity yet."
-                  : "No timeline. Select agent."
+                  : "No timeline. Choose a session tab."
           : this.state?.connection === "connecting"
             ? "Connecting to Paseo. Timeline will load after an agent is selected."
             : this.state?.timeline.loading
@@ -745,7 +710,9 @@ class TimelineView implements Component {
                 ? "Timeline is stale while Paseo reconnects; waiting for recovery."
                 : this.state?.selectedAgentId
                   ? "No timeline selected. New activity will appear here."
-                  : "No timeline selected. Choose an agent in the tree to read its timeline.";
+                  : this.state?.selectedWorkspaceId && workspaceTabs(this.state).length === 0
+                    ? "No timeline selected. Create a session or terminal in this workspace."
+                    : "No timeline selected. Choose a session tab to read its timeline.";
       return [
         this.theme.styleRendered("header", this.theme.clipRendered(heading, width)),
         ...wrapTerminalProse(this.theme.label(message), width).map((line) =>
@@ -1693,7 +1660,7 @@ export class DeckTui {
       (intent) => this.handleControllerIntent(intent),
     );
     this.tree = new TreeView(initialState, this.theme, options.paseoHost);
-    this.tabs = new SessionTabsView(initialState, this.theme, options.paseoHost);
+    this.tabs = new SessionTabsView(initialState, this.theme);
     this.timeline = new TimelineView(this.theme);
     this.timeline.update(initialState.timeline.items);
     this.timeline.updateSelection(initialState);

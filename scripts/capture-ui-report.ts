@@ -4,7 +4,6 @@ import type { AppState } from "../src/contracts/app-state.js";
 import type { TerminalAppearance } from "../src/ui/capabilities.js";
 import { NARROW_SIDEBAR_BREAKPOINT } from "../src/ui/layout.js";
 import { RecordingTerminal } from "../src/ui/terminal.js";
-import { terminalDisplayWidth } from "../src/ui/text-safety.js";
 import { DeckTui } from "../src/ui/views.js";
 
 const outputDirectory = process.argv[2];
@@ -29,13 +28,102 @@ const shots: Array<{
 }> = [
   { name: "project-ownership", columns: 160, rows: 42, state: baseState },
   {
+    name: "project-collapsed",
+    columns: 100,
+    rows: 28,
+    state: {
+      ...baseState,
+      expandedIds: new Set(),
+      sidebarSelection: { kind: "project", id: "live-project" },
+    },
+  },
+  {
     name: "sidebar-selection",
     columns: 100,
     rows: 28,
     state: {
       ...baseState,
       activeSessionId: "agent-atlas-1234",
-      sidebarSelection: { kind: "session", id: "agent-harbor-5678" },
+      sidebarSelection: { kind: "workspace", id: "workspace-theme" },
+    },
+  },
+  {
+    name: "workspace-empty",
+    columns: 100,
+    rows: 28,
+    state: {
+      ...emptyState,
+      directory: {
+        ...baseState.directory,
+        workspaces: [
+          ...baseState.directory.workspaces,
+          {
+            id: "workspace-empty",
+            projectId: "live-project",
+            title: "Empty",
+            directory: "/demo/empty",
+            archived: false,
+          },
+        ],
+      },
+      selectedWorkspaceId: "workspace-empty",
+      sidebarSelection: { kind: "workspace", id: "workspace-empty" },
+      timeline: { recoveryRevision: 0, items: [], loading: false },
+    },
+  },
+  {
+    name: "workspace-filter",
+    columns: 100,
+    rows: 28,
+    state: { ...baseState, filter: "Theme" },
+  },
+  {
+    name: "workspace-monochrome",
+    columns: 100,
+    rows: 28,
+    state: baseState,
+    appearance: { color: "none", unicode: false, theme: "plain", symbols: "ascii" },
+  },
+  {
+    name: "workspace-activity",
+    columns: 100,
+    rows: 28,
+    state: {
+      ...emptyState,
+      directory: {
+        ...baseState.directory,
+        projects: [{ id: "activity", name: "Activity" }],
+        workspaces: ["attention", "working", "idle", "done"].map((id) => ({
+          id,
+          projectId: "activity",
+          title: id.slice(0, 1).toUpperCase() + id.slice(1),
+          directory: `/demo/${id}`,
+          archived: false,
+        })),
+        agents: baseState.directory.agents
+          .filter((agent) => agent.id === "agent-harbor-5678")
+          .map((agent) => ({ ...agent, workspaceId: "attention" }))
+          .concat(
+            baseState.directory.agents
+              .filter((agent) => agent.id === "agent-atlas-1234")
+              .map((agent) => ({ ...agent, workspaceId: "done", status: "stopped" as const })),
+          ),
+      },
+      selectedWorkspaceId: "working",
+      sidebarSelection: { kind: "workspace", id: "working" },
+      workspaceTerminals: {
+        working: [
+          {
+            id: "terminal-build",
+            workspaceId: "working",
+            name: "build",
+            cwd: "/demo/working",
+            activity: "working",
+          },
+        ],
+      },
+      expandedIds: new Set(["activity"]),
+      timeline: { recoveryRevision: 0, items: [], loading: false },
     },
   },
   {
@@ -47,7 +135,7 @@ const shots: Array<{
       focus: "composer",
       composerMode: "normal",
       activeSessionId: "agent-atlas-1234",
-      sidebarSelection: { kind: "session", id: "agent-harbor-5678" },
+      sidebarSelection: { kind: "workspace", id: "workspace-main" },
     },
   },
   {
@@ -726,11 +814,9 @@ function terminalSvg(
   const height = rows * lineHeight + padding * 2 + chromeHeight;
   const text = lines
     .slice(0, rows)
-    .flatMap((line, row) =>
-      [...line.matchAll(/\S+/gu)].map((match) => {
-        const column = terminalDisplayWidth(line.slice(0, match.index ?? 0));
-        return `<text x="${padding + column * cellWidth}" y="${chromeHeight + padding + (row + 1) * lineHeight - 4}">${escapeXml(match[0])}</text>`;
-      }),
+    .map(
+      (line, row) =>
+        `<text x="${padding}" y="${chromeHeight + padding + (row + 1) * lineHeight - 4}" xml:space="preserve">${escapeXml(line)}</text>`,
     )
     .join("\n");
   const backgroundsSvg = backgrounds
@@ -763,7 +849,7 @@ function terminalSvg(
   <circle cx="36" cy="16" r="5" fill="#f59e0b"/>
   <circle cx="54" cy="16" r="5" fill="#22c55e"/>
   <g>${backgroundsSvg}</g>
-  <g fill="#f5f5f4" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="14">
+  <g fill="#f5f5f4" font-family="Menlo, Consolas, monospace" font-size="15">
 ${text}
   </g>
 </svg>`;

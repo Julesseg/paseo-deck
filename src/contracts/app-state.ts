@@ -13,7 +13,7 @@ export type ComposerMode = "normal" | "insert" | "visual";
 export type TimelineMode = "normal" | "visual";
 export type TerminalMode = "normal" | "insert";
 export type TreeOrder = "attention" | "alphabetical";
-export type SidebarSelection = { kind: "project" | "workspace" | "session"; id: string };
+export type SidebarSelection = { kind: "project" | "workspace"; id: string };
 
 export type ModalState =
   | { type: "none" }
@@ -125,6 +125,8 @@ export interface AppState {
   selectedAgentId?: string;
   /** The row highlighted in the sidebar. This is independent from the active session. */
   sidebarSelection?: SidebarSelection;
+  /** Visible row order captured on entry to sidebar navigation. */
+  sidebarOrder?: readonly string[];
   /** The session whose timeline/composer are active. */
   activeSessionId?: string;
   /** Session tabs are a local working set, grouped by workspace. */
@@ -147,6 +149,8 @@ export interface AppState {
   creationDefaults: Readonly<Record<string, CreationDefaults>>;
   /** Workspace terminals are presentation tabs, never session tabs. */
   workspaceTerminals?: Readonly<Record<string, readonly TerminalRecord[]>>;
+  /** Workspaces observed with a resource during this run, including resources since removed. */
+  workspaceHadResources?: ReadonlySet<string>;
   openTerminalIds?: readonly string[];
   activeTerminalId?: string;
   terminalMode?: TerminalMode;
