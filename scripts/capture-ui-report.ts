@@ -1,6 +1,6 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import type { AppState } from "../src/contracts/app-state.js";
+import type { AppState, SessionDraft } from "../src/contracts/app-state.js";
 import type { TerminalAppearance } from "../src/ui/capabilities.js";
 import { NARROW_SIDEBAR_BREAKPOINT } from "../src/ui/layout.js";
 import { RecordingTerminal } from "../src/ui/terminal.js";
@@ -12,6 +12,26 @@ if (!outputDirectory) throw new Error("Usage: tsx scripts/capture-ui-report.ts <
 
 const baseState = syntheticState();
 const { selectedAgentId: _selectedAgentId, ...terminalBaseState } = baseState;
+const { activeSessionId: _activeSessionId, ...draftBaseState } = terminalBaseState;
+const draftFixture: SessionDraft = {
+  providerId: "codex",
+  modelId: "gpt-5.6-terra",
+  modeId: "auto",
+  thinkingLevel: "medium",
+  prompt: "",
+};
+const draftState: AppState = {
+  ...draftBaseState,
+  focus: "composer",
+  composerMode: "normal",
+  tabOrder: {
+    ...baseState.tabOrder,
+    "workspace-main": [...(baseState.tabOrder["workspace-main"] ?? []), "draft:workspace-main"],
+  },
+  activeTabIds: { ...baseState.activeTabIds, "workspace-main": "draft:workspace-main" },
+  sessionDrafts: { "workspace-main": draftFixture },
+  timeline: { recoveryRevision: 0, items: [], loading: false },
+};
 const emptyState = withoutSelection(baseState);
 const overflowTemplate = baseState.directory.agents[0];
 if (!overflowTemplate) throw new Error("UI report needs a session fixture");
@@ -36,6 +56,114 @@ const shots: Array<{
   state: AppState;
   appearance?: TerminalAppearance;
 }> = [
+  {
+    name: "new-tab-picker",
+    columns: 100,
+    rows: 28,
+    state: {
+      ...baseState,
+      focus: "composer",
+      composerMode: "normal",
+      modal: { type: "new-tab", workspaceId: "workspace-main" },
+    },
+  },
+  { name: "session-draft-empty", columns: 100, rows: 28, state: draftState },
+  {
+    name: "session-draft-populated",
+    columns: 100,
+    rows: 28,
+    state: {
+      ...draftState,
+      sessionDrafts: {
+        "workspace-main": {
+          ...draftFixture,
+          prompt: "Build a session draft and keep this message intact.",
+          dirty: true,
+        },
+      },
+    },
+  },
+  {
+    name: "session-draft-setting",
+    columns: 100,
+    rows: 28,
+    state: {
+      ...draftState,
+      modal: { type: "draft-setting", workspaceId: "workspace-main", setting: "model" },
+    },
+  },
+  {
+    name: "session-draft-submitting",
+    columns: 100,
+    rows: 28,
+    state: {
+      ...draftState,
+      sessionDrafts: {
+        "workspace-main": {
+          ...draftFixture,
+          prompt: "Build the feature",
+          dirty: true,
+          submitting: true,
+        },
+      },
+    },
+  },
+  {
+    name: "session-draft-error",
+    columns: 100,
+    rows: 28,
+    state: {
+      ...draftState,
+      sessionDrafts: {
+        "workspace-main": {
+          ...draftFixture,
+          prompt: "Build the feature",
+          dirty: true,
+          error: "Could not create session: daemon busy. Press Enter to retry.",
+        },
+      },
+    },
+  },
+  {
+    name: "session-draft-discard",
+    columns: 100,
+    rows: 28,
+    state: {
+      ...draftState,
+      sessionDrafts: {
+        "workspace-main": {
+          ...draftFixture,
+          prompt: "Unsent work",
+          dirty: true,
+        },
+      },
+      modal: { type: "confirm", action: "discard-draft", workspaceId: "workspace-main" },
+    },
+  },
+  {
+    name: "session-draft-quit",
+    columns: 100,
+    rows: 28,
+    state: {
+      ...draftState,
+      sessionDrafts: {
+        "workspace-main": {
+          ...draftFixture,
+          prompt: "Unsent work",
+          dirty: true,
+        },
+        "workspace-theme": { prompt: "Another unsent message", dirty: true },
+      },
+      modal: { type: "confirm", action: "quit" },
+    },
+  },
+  {
+    name: "session-draft-ascii",
+    columns: 100,
+    rows: 28,
+    state: draftState,
+    appearance: { color: "none", unicode: false, theme: "plain", symbols: "ascii" },
+  },
   { name: "project-ownership", columns: 160, rows: 42, state: baseState },
   {
     name: "project-collapsed",
@@ -699,6 +827,7 @@ function syntheticState(): AppState {
       "workspace-theme": "session:agent-lumen-9012",
       "workspace-orphan": "session:agent-orphan-3456",
     },
+    sessionDrafts: {},
     recovery: { attempt: 0, directoryStale: false, timelineStale: false },
     notifications: [],
     directory: {

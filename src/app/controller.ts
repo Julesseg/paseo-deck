@@ -1,10 +1,10 @@
 import type { AppState, ModalState, PaseoFailureKind } from "../contracts/app-state.js";
 import type { AgentCommand } from "../contracts/commands.js";
-import type { DirectoryUpdate } from "../contracts/domain.js";
+import type { DirectoryUpdate, ProviderOption } from "../contracts/domain.js";
 import type { Observation, PaseoGateway } from "../contracts/gateway.js";
 import type { TerminalObservation } from "../contracts/terminal.js";
 import { PaseoGatewayError, paseoFailure, redactTransportDetail } from "../paseo/errors.js";
-import { composerAvailability } from "../state/composer.js";
+import { activeSessionDraftWorkspaceId, composerAvailability } from "../state/composer.js";
 import {
   type AppAction,
   activeNotification,
@@ -353,7 +353,7 @@ export class ApplicationController {
           const tabs = workspaceTabs(this.#state);
           if (!tabs.length) return;
           const current = tabs.findIndex(
-            (tab) => tab.id === (this.#state.activeTerminalId ?? this.#state.activeSessionId),
+            (tab) => `${tab.kind}:${tab.id}` === this.#state.activeTabIds[workspaceId],
           );
           const index =
             intent.count === undefined
@@ -365,6 +365,7 @@ export class ApplicationController {
               : Math.min(tabs.length - 1, Math.max(0, intent.count - 1));
           const next = tabs[index];
           if (next?.kind === "session") await this.selectAgent(next.id, true);
+          else if (next?.kind === "draft") this.focusSessionDraft(next.id);
           else if (next?.kind === "terminal")
             await this.handleIntent({ type: "open-terminal", terminalId: next.id });
         }
@@ -421,6 +422,138 @@ export class ApplicationController {
             },
           });
         }
+        return;
+      case "open-new-tab":
+        if (
+          intent.workspaceId === this.#state.selectedWorkspaceId &&
+          this.activeWorkspace(intent.workspaceId) &&
+          this.#state.modal.type === "none"
+        )
+          this.apply({
+            type: "open-modal",
+            modal: { type: "new-tab", workspaceId: intent.workspaceId },
+          });
+        return;
+      case "new-tab-choice": {
+        const modal = this.#state.modal;
+        if (modal.type !== "new-tab" || intent.choice !== "session") return;
+        const provider = this.#state.directory.providers.find((item) => item.ready);
+        const model = provider ? defaultSelectableModel(provider) : undefined;
+        if (!this.#state.sessionDrafts[modal.workspaceId])
+          this.apply({ type: "open-session-draft", workspaceId: modal.workspaceId });
+        const draft = this.#state.sessionDrafts[modal.workspaceId];
+        if (draft && !draft.providerId && provider && model)
+          this.apply({
+            type: "set-session-draft",
+            workspaceId: modal.workspaceId,
+            changes: {
+              providerId: provider.id,
+              modelId: model.id,
+              ...(provider.defaultModeId ? { modeId: provider.defaultModeId } : {}),
+              ...(model.defaultThinkingLevel ? { thinkingLevel: model.defaultThinkingLevel } : {}),
+            },
+          });
+        this.focusSessionDraft(modal.workspaceId);
+        this.apply({ type: "close-modal" });
+        return;
+      }
+      case "open-draft-setting": {
+        const id = this.#state.selectedWorkspaceId;
+        if (
+          id &&
+          activeSessionDraftWorkspaceId(this.#state) === id &&
+          this.#state.modal.type === "none"
+        )
+          this.apply({
+            type: "open-modal",
+            modal: { type: "draft-setting", workspaceId: id, setting: intent.setting },
+          });
+        return;
+      }
+      case "draft-setting-choice": {
+        const modal = this.#state.modal;
+        if (modal.type !== "draft-setting") return;
+        const draft = this.#state.sessionDrafts[modal.workspaceId];
+        if (!draft) return;
+        const provider = this.#state.directory.providers.find(
+          (item) => item.id === (modal.setting === "provider" ? intent.choice : draft.providerId),
+        );
+        const model = provider?.models.find(
+          (item) => item.id === (modal.setting === "model" ? intent.choice : draft.modelId),
+        );
+        if (modal.setting === "provider" && provider?.ready) {
+          const defaultModel = defaultSelectableModel(provider);
+          this.apply({
+            type: "set-session-draft",
+            workspaceId: modal.workspaceId,
+            changes: {
+              providerId: provider.id,
+              modelId: defaultModel?.id,
+              modeId: provider.defaultModeId,
+              thinkingLevel: defaultModel?.defaultThinkingLevel,
+              dirty: true,
+              settingsDirty: true,
+              error: undefined,
+            },
+          });
+        } else if (modal.setting === "model" && model?.selectable)
+          this.apply({
+            type: "set-session-draft",
+            workspaceId: modal.workspaceId,
+            changes: {
+              modelId: model.id,
+              thinkingLevel: model.defaultThinkingLevel,
+              dirty: true,
+              settingsDirty: true,
+              error: undefined,
+            },
+          });
+        else if (modal.setting === "mode" && provider?.modeIds.includes(intent.choice))
+          this.apply({
+            type: "set-session-draft",
+            workspaceId: modal.workspaceId,
+            changes: { modeId: intent.choice, dirty: true, settingsDirty: true, error: undefined },
+          });
+        else if (modal.setting === "thinking" && model?.thinkingLevels.includes(intent.choice))
+          this.apply({
+            type: "set-session-draft",
+            workspaceId: modal.workspaceId,
+            changes: {
+              thinkingLevel: intent.choice,
+              dirty: true,
+              settingsDirty: true,
+              error: undefined,
+            },
+          });
+        this.apply({ type: "close-modal" });
+        return;
+      }
+      case "discard-session-draft": {
+        const draft = this.#state.sessionDrafts[intent.workspaceId];
+        if (!draft) return;
+        if (draft.dirty)
+          this.apply({
+            type: "open-modal",
+            modal: { type: "confirm", action: "discard-draft", workspaceId: intent.workspaceId },
+          });
+        else {
+          const wasActive =
+            this.#state.activeTabIds[intent.workspaceId] === `draft:${intent.workspaceId}`;
+          this.apply({ type: "discard-session-draft", workspaceId: intent.workspaceId });
+          if (wasActive) await this.showActiveResource();
+        }
+        return;
+      }
+      case "discard-session-draft-confirmed": {
+        const wasActive =
+          this.#state.activeTabIds[intent.workspaceId] === `draft:${intent.workspaceId}`;
+        this.apply({ type: "discard-session-draft", workspaceId: intent.workspaceId });
+        this.apply({ type: "close-modal" });
+        if (wasActive) await this.showActiveResource();
+        return;
+      }
+      case "submit-session-draft":
+        await this.submitSessionDraft(intent.workspaceId, intent.prompt);
         return;
       case "creation-back":
         this.moveCreationBack();
@@ -525,6 +658,13 @@ export class ApplicationController {
         await this.refresh();
         return;
       case "quit":
+        if (Object.values(this.#state.sessionDrafts).some((draft) => draft.dirty)) {
+          this.apply({ type: "open-modal", modal: { type: "confirm", action: "quit" } });
+          return;
+        }
+        await this.options.onQuit?.();
+        return;
+      case "quit-confirmed":
         await this.options.onQuit?.();
         return;
       case "close-modal":
@@ -729,6 +869,7 @@ export class ApplicationController {
       ? this.#state.activeTabIds[this.#state.selectedWorkspaceId]
       : undefined;
     if (active?.startsWith("session:")) await this.selectAgent(active.slice(8), true);
+    else if (active?.startsWith("draft:")) this.focusSessionDraft(active.slice(6));
     else if (active?.startsWith("terminal:"))
       await this.handleIntent({ type: "open-terminal", terminalId: active.slice(9) });
     else {
@@ -738,6 +879,15 @@ export class ApplicationController {
       this.#observedAgentId = undefined;
       void previous?.release();
     }
+  }
+
+  private focusSessionDraft(workspaceId: string): void {
+    this.#focusGeneration += 1;
+    const previous = this.#timelineObservation;
+    this.#timelineObservation = undefined;
+    this.#observedAgentId = undefined;
+    void previous?.release();
+    this.apply({ type: "open-session-draft", workspaceId });
   }
 
   private async discoverTerminals(workspaceId: string): Promise<void> {
@@ -791,6 +941,92 @@ export class ApplicationController {
 
   private isConnected(): boolean {
     return this.#state.connection === "connected";
+  }
+
+  private async submitSessionDraft(workspaceId: string, prompt: string): Promise<void> {
+    const draft = this.#state.sessionDrafts[workspaceId];
+    if (!draft || draft.submitting) return;
+    const provider = this.#state.directory.providers.find(
+      (item) => item.id === draft.providerId && item.ready,
+    );
+    const model = provider?.models.find((item) => item.id === draft.modelId && item.selectable);
+    if (!prompt.trim() || !provider || !model || !this.isConnected()) {
+      this.apply({
+        type: "set-session-draft",
+        workspaceId,
+        changes: {
+          error: !prompt.trim()
+            ? "Write a first message before creating the session."
+            : !provider || !model
+              ? "Choose a provider and model before creating the session."
+              : "Reconnect to Paseo, then press Enter to retry.",
+        },
+      });
+      return;
+    }
+    this.apply({
+      type: "set-session-draft",
+      workspaceId,
+      changes: { submitting: true, error: undefined, prompt, dirty: true },
+    });
+    try {
+      const result = await this.gateway.execute({
+        type: "create-agent",
+        workspaceId,
+        providerId: provider.id,
+        modelId: model.id,
+        prompt,
+        ...(draft.modeId ? { modeId: draft.modeId } : {}),
+        ...(draft.thinkingLevel ? { thinkingLevel: draft.thinkingLevel } : {}),
+      });
+      if (result.type !== "agent-created")
+        throw new Error("Paseo did not return the created session.");
+      const keepFocus = activeSessionDraftWorkspaceId(this.#state) === workspaceId;
+      if (!this.#state.directory.agents.some((agent) => agent.id === result.agentId))
+        this.apply({
+          type: "directory",
+          update: {
+            type: "agent-upserted",
+            agent: {
+              id: result.agentId,
+              workspaceId,
+              title: "New session",
+              status: "starting",
+              providerId: provider.id,
+              modelId: model.id,
+              ...(draft.modeId ? { modeId: draft.modeId } : {}),
+              ...(draft.thinkingLevel ? { thinkingLevel: draft.thinkingLevel } : {}),
+              availableModeIds: [],
+              availableThinkingLevels: [],
+              pendingPermissions: [],
+              needsAttention: false,
+              archived: false,
+            },
+          },
+        });
+      this.apply({ type: "complete-session-draft", workspaceId, agentId: result.agentId });
+      this.apply({
+        type: "set-creation-default",
+        workspaceId,
+        value: {
+          providerId: provider.id,
+          modelId: model.id,
+          ...(draft.modeId ? { modeId: draft.modeId } : {}),
+          ...(draft.thinkingLevel ? { thinkingLevel: draft.thinkingLevel } : {}),
+        },
+      });
+      if (keepFocus) await this.selectAgent(result.agentId, true);
+      this.apply({ type: "notify", message: `Created session ${shortId(result.agentId)}.` });
+    } catch (error) {
+      this.apply({
+        type: "set-session-draft",
+        workspaceId,
+        changes: {
+          submitting: false,
+          error: `Could not create session: ${errorDetail(error)}. Press Enter to retry.`,
+        },
+      });
+    }
   }
 
   private async submitPrompt(agentId: string, prompt: string): Promise<void> {
@@ -1202,6 +1438,15 @@ function selectedCreationModel(
   return state.directory.providers
     .find((provider) => provider.id === modal.providerId)
     ?.models.find((model) => model.id === modal.modelId);
+}
+
+function defaultSelectableModel(
+  provider: ProviderOption,
+): ProviderOption["models"][number] | undefined {
+  return (
+    provider.models.find((item) => item.id === provider.defaultModelId && item.selectable) ??
+    provider.models.find((item) => item.selectable)
+  );
 }
 
 function errorMessage(error: unknown): string {

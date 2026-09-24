@@ -25,6 +25,7 @@ export type BackgroundTone =
 
 export type DeckGlyph =
   | "agent"
+  | "draft"
   | "expanded"
   | "collapsed"
   | "permission"
@@ -116,6 +117,7 @@ const surfaceOpacity: Readonly<Record<BackgroundTone, number>> = {
 
 const unicodeGlyphs: Readonly<Record<DeckGlyph, string>> = {
   agent: "•",
+  draft: "✎",
   expanded: "▾",
   collapsed: "▸",
   permission: "✓",
@@ -129,6 +131,7 @@ const unicodeGlyphs: Readonly<Record<DeckGlyph, string>> = {
 };
 const asciiGlyphs: Readonly<Record<DeckGlyph, string>> = {
   agent: "*",
+  draft: "+",
   expanded: "v",
   collapsed: ">",
   permission: "[P]",

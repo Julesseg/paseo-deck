@@ -20,7 +20,7 @@ import type {
   TimelineUpdate,
 } from "../contracts/domain.js";
 import type { TerminalRecord } from "../contracts/terminal.js";
-import { createComposerState } from "./composer.js";
+import { activeSessionDraftWorkspaceId, createComposerState } from "./composer.js";
 
 export type AppAction =
   | { type: "directory"; update: DirectoryUpdate }
@@ -28,6 +28,14 @@ export type AppAction =
   | { type: "open-session-tab"; agentId: string; preserveSidebar?: boolean }
   | { type: "set-terminals"; workspaceId: string; terminals: readonly TerminalRecord[] }
   | { type: "open-terminal-tab"; terminalId: string }
+  | { type: "open-session-draft"; workspaceId: string }
+  | {
+      type: "set-session-draft";
+      workspaceId: string;
+      changes: Partial<AppState["sessionDrafts"][string]>;
+    }
+  | { type: "discard-session-draft"; workspaceId: string }
+  | { type: "complete-session-draft"; workspaceId: string; agentId: string }
   | { type: "set-terminal-mode"; mode: TerminalMode }
   | { type: "terminal-lines"; terminalId: string; lines: readonly string[]; stale?: boolean }
   | { type: "set-terminal-scroll"; terminalId: string; offset: number }
@@ -105,6 +113,7 @@ export function createInitialState(): AppState {
     timelineNavigation: {},
     tabOrder: {},
     activeTabIds: {},
+    sessionDrafts: {},
     composer: createComposerState(),
     creationDefaults: {},
     workspaceTerminals: {},
@@ -187,11 +196,12 @@ function reconcileTabs(state: AppState): AppState {
     const terminals = (state.workspaceTerminals?.[workspace.id] ?? [])
       .filter((terminal) => terminal.workspaceId === workspace.id)
       .map((terminal): TabId => `terminal:${terminal.id}`);
-    const valid = new Set([...sessions, ...terminals]);
+    const draft: TabId[] = state.sessionDrafts[workspace.id] ? [`draft:${workspace.id}`] : [];
+    const valid = new Set([...sessions, ...terminals, ...draft]);
     const previous = (state.tabOrder[workspace.id] ?? []).filter((id) => valid.has(id));
     const order = [
       ...previous,
-      ...[...sessions, ...terminals].filter((id) => !previous.includes(id)),
+      ...[...sessions, ...terminals, ...draft].filter((id) => !previous.includes(id)),
     ];
     tabOrder[workspace.id] = order;
     const active = state.activeTabIds[workspace.id];
@@ -228,6 +238,11 @@ function reconcileSelection(state: AppState, directory: DirectorySnapshot): AppS
   const next: AppState = {
     ...state,
     directory,
+    sessionDrafts: Object.fromEntries(
+      Object.entries(state.sessionDrafts).filter(([id]) =>
+        directory.workspaces.some((workspace) => workspace.id === id),
+      ),
+    ),
     workspaceHadResources: new Set([
       ...(state.workspaceHadResources ?? []),
       ...directory.agents.map((agent) => agent.workspaceId),
@@ -839,6 +854,64 @@ export function reduceApp(state: AppState, action: AppAction): AppState {
         focus: "timeline",
       });
     }
+    case "open-session-draft": {
+      const workspace = state.directory.workspaces.find(
+        (item) => item.id === action.workspaceId && !item.archived,
+      );
+      if (!workspace) return state;
+      const defaults = state.creationDefaults[action.workspaceId];
+      return reconcileTabs({
+        ...state,
+        selectedWorkspaceId: action.workspaceId,
+        sessionDrafts: state.sessionDrafts[action.workspaceId]
+          ? state.sessionDrafts
+          : { ...state.sessionDrafts, [action.workspaceId]: { ...defaults, prompt: "" } },
+        activeTabIds: {
+          ...state.activeTabIds,
+          [action.workspaceId]: `draft:${action.workspaceId}`,
+        },
+        focus: "composer",
+        composerMode: "normal",
+      });
+    }
+    case "set-session-draft": {
+      const draft = state.sessionDrafts[action.workspaceId];
+      if (!draft) return state;
+      return {
+        ...state,
+        sessionDrafts: {
+          ...state.sessionDrafts,
+          [action.workspaceId]: { ...draft, ...action.changes },
+        },
+      };
+    }
+    case "discard-session-draft": {
+      if (!state.sessionDrafts[action.workspaceId]) return state;
+      const sessionDrafts = { ...state.sessionDrafts };
+      delete sessionDrafts[action.workspaceId];
+      return reconcileTabs({ ...state, sessionDrafts });
+    }
+    case "complete-session-draft": {
+      const sessionDrafts = { ...state.sessionDrafts };
+      delete sessionDrafts[action.workspaceId];
+      const oldId: TabId = `draft:${action.workspaceId}`;
+      const newId: TabId = `session:${action.agentId}`;
+      const order = state.tabOrder[action.workspaceId] ?? [];
+      const wasActive = state.activeTabIds[action.workspaceId] === oldId;
+      return reconcileTabs({
+        ...state,
+        sessionDrafts,
+        tabOrder: {
+          ...state.tabOrder,
+          [action.workspaceId]: order
+            .filter((id) => id !== newId)
+            .map((id) => (id === oldId ? newId : id)),
+        },
+        activeTabIds: wasActive
+          ? { ...state.activeTabIds, [action.workspaceId]: newId }
+          : state.activeTabIds,
+      });
+    }
     case "set-terminal-mode":
       return { ...state, terminalMode: action.mode };
     case "set-terminal-scroll":
@@ -940,6 +1013,19 @@ export function reduceApp(state: AppState, action: AppAction): AppState {
     case "set-timeline-mode":
       return { ...state, timelineMode: action.mode };
     case "set-composer": {
+      const workspaceId = activeSessionDraftWorkspaceId(state);
+      if (workspaceId)
+        return reduceApp(state, {
+          type: "set-session-draft",
+          workspaceId,
+          changes: {
+            prompt: action.text,
+            dirty:
+              Boolean(action.text.length) ||
+              Boolean(state.sessionDrafts[workspaceId]?.settingsDirty),
+            error: undefined,
+          },
+        });
       const agentId = state.selectedAgentId;
       if (!agentId) return state;
       const historyIndexes = { ...state.composer.historyIndexes };

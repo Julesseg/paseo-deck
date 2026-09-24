@@ -24,7 +24,14 @@ export function createComposerState(): ComposerState {
 }
 
 export function selectedComposerDraft(state: AppState): string {
+  const workspaceId = activeSessionDraftWorkspaceId(state);
+  if (workspaceId) return state.sessionDrafts[workspaceId]?.prompt ?? "";
   return state.selectedAgentId ? (state.composer.drafts[state.selectedAgentId] ?? "") : "";
+}
+
+export function activeSessionDraftWorkspaceId(state: AppState): string | undefined {
+  const id = state.selectedWorkspaceId;
+  return id && state.sessionDrafts[id] && state.activeTabIds[id] === `draft:${id}` ? id : undefined;
 }
 
 export function composerAvailability(state: AppState, agentId: string): ComposerAvailability {
