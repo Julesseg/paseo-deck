@@ -149,20 +149,65 @@ describe("ApplicationController", () => {
     });
   });
 
+  it("starts on the first workspace tab and navigates one session and terminal row", async () => {
+    const gateway = new FakePaseoGateway(snapshot);
+    gateway.terminals = [
+      { id: "terminal-1", workspaceId: "workspace-1", cwd: "/deck", name: "build" },
+      { id: "terminal-2", workspaceId: "workspace-1", cwd: "/deck", name: "watch" },
+    ];
+    const app = new ApplicationController(gateway);
+    await app.start();
+    expect(app.state.selectedWorkspaceId).toBe("workspace-1");
+    expect(app.state.activeSessionId).toBe("agent-1");
+    expect(app.state.tabOrder["workspace-1"]).toEqual([
+      "session:agent-1",
+      "session:agent-2",
+      "terminal:terminal-1",
+      "terminal:terminal-2",
+    ]);
+    await app.handleIntent({ type: "switch-tab", direction: 1, count: 3 });
+    expect(app.state.activeTerminalId).toBe("terminal-1");
+    expect(app.state.activeSessionId).toBeUndefined();
+    await app.handleIntent({ type: "switch-tab", direction: 1 });
+    expect(app.state.activeTerminalId).toBe("terminal-2");
+    await app.handleIntent({ type: "switch-tab", direction: 1 });
+    expect(app.state.activeSessionId).toBe("agent-1");
+  });
+
+  it("keeps tabs until archive or terminal termination changes the daemon set", async () => {
+    const gateway = new FakePaseoGateway(snapshot);
+    gateway.terminals = [
+      { id: "terminal-1", workspaceId: "workspace-1", cwd: "/deck", name: "build" },
+    ];
+    const app = new ApplicationController(gateway);
+    await app.start();
+    await app.handleIntent({ type: "open-confirmation", action: "archive", agentId: "agent-1" });
+    expect(app.state.modal).toMatchObject({ type: "confirm", action: "archive" });
+    expect(app.state.tabOrder["workspace-1"]).toContain("session:agent-1");
+    const firstAgent = snapshot.agents[0];
+    if (!firstAgent) throw new Error("fixture needs a session");
+    gateway.emitDirectory({
+      type: "agent-upserted",
+      agent: { ...firstAgent, archived: true },
+    });
+    expect(app.state.tabOrder["workspace-1"]).not.toContain("session:agent-1");
+    await app.handleIntent({ type: "switch-tab", direction: 1, count: 2 });
+    await app.handleIntent({ type: "kill-terminal" });
+    expect(app.state.modal).toMatchObject({ type: "confirm", action: "kill-terminal" });
+    expect(app.state.tabOrder["workspace-1"]).toContain("terminal:terminal-1");
+    await app.handleIntent({ type: "kill-terminal-confirmed", terminalId: "terminal-1" });
+    expect(app.state.tabOrder["workspace-1"]).toEqual(["session:agent-2"]);
+    expect(app.state.activeSessionId).toBe("agent-2");
+  });
+
   it("navigates remote and orphan workspaces without activating them", async () => {
     const app = new ApplicationController(new FakePaseoGateway(remoteSnapshot));
     await app.start();
     await app.handleIntent({ type: "set-focus", focus: "tree" });
-    expect(app.state.sidebarSelection).toEqual({
-      kind: "project",
-      id: "remote:github.com/acme/paseo-deck",
-    });
-    await app.handleIntent({ type: "collapse-or-expand", direction: 1 });
-    await app.handleIntent({ type: "select-next", direction: 1 });
     expect(app.state.sidebarSelection).toEqual({ kind: "workspace", id: "workspace-remote" });
-    expect(app.state.selectedWorkspaceId).toBeUndefined();
     await app.handleIntent({ type: "select-next", direction: 1 });
     expect(app.state.sidebarSelection).toEqual({ kind: "workspace", id: "workspace-orphan" });
+    expect(app.state.selectedWorkspaceId).toBe("workspace-remote");
     await app.handleIntent({ type: "select-or-open" });
     expect(app.state.selectedWorkspaceId).toBe("workspace-orphan");
   });
@@ -197,7 +242,7 @@ describe("ApplicationController", () => {
     expect(app.state.timeline).toBe(timeline);
     await app.handleIntent({ type: "select-or-open" });
     expect(app.state.selectedWorkspaceId).toBe("workspace-orphan");
-    expect(app.state.activeSessionId).toBeUndefined();
+    expect(app.state.activeSessionId).toBe("agent-orphan");
   });
 
   it("toggles a project row without changing active workspace content", async () => {
@@ -807,12 +852,13 @@ describe("ApplicationController", () => {
     gateway.resolveFocus(0);
     gateway.resolveFocus(1);
     gateway.resolveFocus(2);
+    gateway.resolveFocus(3);
     await Promise.all([first, second, third]);
 
     gateway.emitFocus(0, { type: "event", agentId: "agent-1", event: event(3, "stale") });
-    gateway.emitFocus(2, { type: "event", agentId: "agent-1", event: event(4, "current") });
+    gateway.emitFocus(3, { type: "event", agentId: "agent-1", event: event(4, "current") });
 
-    expect(gateway.focusReleases).toEqual(["agent-1", "agent-2"]);
+    expect(gateway.focusReleases).toEqual(["agent-1", "agent-1", "agent-2"]);
     expect(app.state.timeline.items.map((item) => item.item)).toEqual([
       expect.objectContaining({ text: "current" }),
     ]);

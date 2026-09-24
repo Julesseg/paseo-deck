@@ -14,6 +14,8 @@ import { DeckController } from "./controller.js";
 function state(): AppState {
   return {
     connection: "connected",
+    tabOrder: {},
+    activeTabIds: {},
     recovery: { attempt: 0, directoryStale: false, timelineStale: false },
     directory: {
       ...emptyDirectory(),

@@ -128,12 +128,33 @@ describe("DeckTheme", () => {
 
     expect(theme.styleBackground("sidebar", "x")).toBe("\u001b[48;2;31;29;27mx\u001b[0m");
     expect(theme.styleBackground("selection", "x")).toBe("\u001b[48;2;51;46;39mx\u001b[0m");
-    expect(theme.styleBackground("tab-strip", "x")).toBe("\u001b[48;2;39;36;33mx\u001b[0m");
+    expect(theme.styleBackground("tab-inactive", "x")).toBe("\u001b[48;2;55;51;47mx\u001b[0m");
+    expect(theme.styleBackground("tab-active", "x")).toBe("\u001b[48;2;101;69;43mx\u001b[0m");
+    expect(theme.styleTabCap("tab-active", "")).toBe("\u001b[38;2;101;69;43m\u001b[0m");
     expect(theme.styleBackground("active-session", "x")).toBe("\u001b[48;2;45;42;37mx\u001b[0m");
     expect(theme.styleBackground("composer", "x")).toBe("\u001b[48;2;39;36;33mx\u001b[0m");
     expect(theme.styleRenderedBackground("sidebar", theme.style("focus", "x"))).toBe(
       "\u001b[48;2;31;29;27m\u001b[38;2;125;211;252mx\u001b[0m\u001b[48;2;31;29;27m\u001b[0m",
     );
+  });
+
+  it("uses terminal-native reverse video for pills when the background is unknown", () => {
+    const theme = new DeckTheme({
+      color: "truecolor",
+      unicode: true,
+      theme: "ember",
+      palette: "terminal",
+      symbols: "unicode",
+    });
+
+    expect(theme.styleTabBody("tab-inactive", "header", " Atlas ")).toBe(
+      "\u001b[2;7m Atlas \u001b[0m",
+    );
+    expect(theme.styleTabBody("tab-active", "header", " Harbor ")).toBe(
+      "\u001b[7m Harbor \u001b[0m",
+    );
+    expect(theme.styleTabCap("tab-inactive", "")).toBe("\u001b[2m\u001b[0m");
+    expect(theme.styleTabCap("tab-active", "")).toBe("");
   });
 
   it("derives terminal-palette surfaces from the sampled terminal background", () => {

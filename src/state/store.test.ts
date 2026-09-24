@@ -56,37 +56,60 @@ describe("deriveTree", () => {
 });
 
 describe("application store", () => {
-  it("opens, switches, and closes local tabs without changing session lifecycle", () => {
+  it("keeps one workspace order and restores the last valid tab", () => {
     let state = reduceApp(createInitialState(), {
       type: "directory",
       update: { type: "snapshot", snapshot: directory },
     });
-    state = reduceApp(state, { type: "open-session-tab", agentId: "agent-a" });
-    state = reduceApp(state, { type: "open-session-tab", agentId: "agent-b" });
-    expect(state.openSessionIds).toEqual({
-      "workspace-a": ["agent-a"],
-      "workspace-b": ["agent-b"],
+    expect(state.tabOrder).toEqual({
+      "workspace-a": ["session:agent-a"],
+      "workspace-b": ["session:agent-b"],
     });
-    state = reduceApp(state, { type: "switch-session-tab", direction: -1 });
-    expect(state.activeSessionId).toBe("agent-a");
-    state = { ...state, sidebarSelection: { kind: "workspace", id: "workspace-a" } };
-    state = reduceApp(state, { type: "switch-session-tab", direction: 1, count: 2 });
+    state = reduceApp(state, { type: "activate-workspace", workspaceId: "workspace-a" });
+    state = reduceApp(state, {
+      type: "set-terminals",
+      workspaceId: "workspace-a",
+      terminals: [{ id: "terminal-a", workspaceId: "workspace-a", cwd: "/a", name: "build" }],
+    });
+    expect(state.tabOrder["workspace-a"]).toEqual(["session:agent-a", "terminal:terminal-a"]);
+    state = reduceApp(state, { type: "open-terminal-tab", terminalId: "terminal-a" });
+    state = reduceApp(state, { type: "activate-workspace", workspaceId: "workspace-b" });
     expect(state.activeSessionId).toBe("agent-b");
-    expect(state.sidebarSelection).toEqual({ kind: "workspace", id: "workspace-a" });
-    state = reduceApp(state, { type: "close-session-tab", agentId: "agent-b" });
-    expect(state.openSessionIds).toEqual({ "workspace-a": ["agent-a"] });
-    expect(state.directory.agents).toHaveLength(2);
+    state = reduceApp(state, { type: "activate-workspace", workspaceId: "workspace-a" });
+    expect(state.activeTerminalId).toBe("terminal-a");
+    expect(state.activeSessionId).toBeUndefined();
+    state = reduceApp(state, { type: "set-terminals", workspaceId: "workspace-a", terminals: [] });
+    expect(state.activeSessionId).toBe("agent-a");
+    expect(state.tabOrder["workspace-a"]).toEqual(["session:agent-a"]);
   });
 
-  it("drops missing persisted tab identifiers during hydration", () => {
-    const state = reduceApp(
-      { ...createInitialState(), openSessionIds: { "workspace-a": ["missing", "agent-a"] } },
-      {
-        type: "directory",
-        update: { type: "snapshot", snapshot: directory },
-      },
-    );
-    expect(state.openSessionIds).toEqual({ "workspace-a": ["agent-a"] });
+  it("appends later sessions after observed terminals and drops archived sessions", () => {
+    let state = reduceApp(createInitialState(), {
+      type: "directory",
+      update: { type: "snapshot", snapshot: directory },
+    });
+    state = reduceApp(state, {
+      type: "set-terminals",
+      workspaceId: "workspace-a",
+      terminals: [{ id: "terminal-a", workspaceId: "workspace-a", cwd: "/a", name: "build" }],
+    });
+    const firstAgent = directory.agents[0];
+    if (!firstAgent) throw new Error("fixture needs a session");
+    const later = { ...firstAgent, id: "agent-later", title: "Later" };
+    state = reduceApp(state, {
+      type: "directory",
+      update: { type: "agent-upserted", agent: later },
+    });
+    expect(state.tabOrder["workspace-a"]).toEqual([
+      "session:agent-a",
+      "terminal:terminal-a",
+      "session:agent-later",
+    ]);
+    state = reduceApp(state, {
+      type: "directory",
+      update: { type: "agent-upserted", agent: { ...later, archived: true } },
+    });
+    expect(state.tabOrder["workspace-a"]).toEqual(["session:agent-a", "terminal:terminal-a"]);
   });
   it("starts in composer normal mode and keeps Vim modes reducer-owned", () => {
     let state = createInitialState();

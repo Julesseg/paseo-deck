@@ -14,6 +14,7 @@ export type TimelineMode = "normal" | "visual";
 export type TerminalMode = "normal" | "insert";
 export type TreeOrder = "attention" | "alphabetical";
 export type SidebarSelection = { kind: "project" | "workspace"; id: string };
+export type TabId = `session:${string}` | `terminal:${string}`;
 
 export type ModalState =
   | { type: "none" }
@@ -129,8 +130,10 @@ export interface AppState {
   sidebarOrder?: readonly string[];
   /** The session whose timeline/composer are active. */
   activeSessionId?: string;
-  /** Session tabs are a local working set, grouped by workspace. */
-  openSessionIds?: Readonly<Record<string, readonly string[]>>;
+  /** Current-run resource order, grouped by workspace. */
+  tabOrder: Readonly<Record<string, readonly TabId[]>>;
+  /** Last active resource per workspace during this run. */
+  activeTabIds: Readonly<Record<string, TabId>>;
   expandedIds: ReadonlySet<string>;
   filter: string;
   treeOrder: TreeOrder;
@@ -151,7 +154,6 @@ export interface AppState {
   workspaceTerminals?: Readonly<Record<string, readonly TerminalRecord[]>>;
   /** Workspaces observed with a resource during this run, including resources since removed. */
   workspaceHadResources?: ReadonlySet<string>;
-  openTerminalIds?: readonly string[];
   activeTerminalId?: string;
   terminalMode?: TerminalMode;
   terminalLines?: Readonly<Record<string, readonly string[]>>;

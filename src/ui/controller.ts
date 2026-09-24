@@ -7,12 +7,9 @@ type TimelineTextMotionKey = (typeof timelineTextMotionKeys)[number];
 
 export type UiIntent =
   | { type: "switch-tab"; direction: -1 | 1; count?: number }
-  | { type: "close-tab" }
   | { type: "open-terminal"; terminalId: string }
-  | { type: "close-terminal" }
   | { type: "kill-terminal" }
   | { type: "kill-terminal-confirmed"; terminalId: string }
-  | { type: "switch-terminal-tab"; direction: -1 | 1 }
   | { type: "scroll-terminal"; direction: -1 | 1 }
   | { type: "reconnect-terminal" }
   | { type: "open-create-terminal"; workspaceId: string }
@@ -93,6 +90,7 @@ export type UiIntent =
 
 export class DeckController {
   #tabPrefix = "";
+  #tabCountPrefix = "";
   #timelinePrefix = "";
   constructor(
     private readonly getState: () => AppState,
@@ -104,6 +102,45 @@ export class DeckController {
     // This must precede terminal passthrough as well as every editor, modal,
     // and focus branch. In raw mode Ctrl-C is Deck's unconditional exit key.
     if (data === "\u0003") return this.send({ type: "quit" });
+    const tabNormalMode =
+      state.modal.type === "none" &&
+      (state.focus === "tree" ||
+        (state.focus === "composer" && state.composerMode === "normal") ||
+        (state.focus === "timeline" &&
+          (state.activeTerminalId ? state.terminalMode !== "insert" : true)));
+    if (
+      tabNormalMode &&
+      !this.#tabPrefix &&
+      /^[0-9]$/.test(data) &&
+      (this.#tabCountPrefix || data !== "0")
+    ) {
+      this.#tabCountPrefix += data;
+      return true;
+    }
+    if (tabNormalMode && data === "g" && this.#tabCountPrefix) {
+      this.#tabPrefix = `g${this.#tabCountPrefix}`;
+      this.#tabCountPrefix = "";
+      return true;
+    }
+    if (data !== "g") this.#tabCountPrefix = "";
+    if (tabNormalMode && this.#tabPrefix.startsWith("g")) {
+      if (/^[0-9]$/.test(data)) {
+        this.#tabPrefix += data;
+        return true;
+      }
+      const countText = this.#tabPrefix.slice(1);
+      this.#tabPrefix = "";
+      if (data === "t" || data === "T") {
+        this.#timelinePrefix = "";
+        return this.send({
+          type: "switch-tab",
+          direction: data === "t" ? 1 : -1,
+          ...(countText ? { count: Number(countText) } : {}),
+        });
+      }
+      if (data === "c") return true;
+      if (data === "k" && state.activeTerminalId) return this.send({ type: "kill-terminal" });
+    }
     if (
       state.activeTerminalId !== undefined &&
       state.terminalMode !== undefined &&
@@ -114,25 +151,13 @@ export class DeckController {
       if (data === "\u001b")
         return state.terminalMode === "insert"
           ? this.send({ type: "set-terminal-mode", mode: "normal" })
-          : this.send({ type: "set-focus", focus: "composer" });
+          : this.send({ type: "set-focus", focus: "tree" });
       if (state.terminalMode === "insert") return this.send({ type: "terminal-input", data });
       if (data === "i") return this.send({ type: "set-terminal-mode", mode: "insert" });
-      if (data === "q") return this.send({ type: "close-terminal" });
+      if (data === "q" || data === "n") return this.send({ type: "set-focus", focus: "tree" });
       if (data === "g") {
         this.#tabPrefix = "g";
         return true;
-      }
-      if (this.#tabPrefix === "g" && (data === "t" || data === "T")) {
-        this.#tabPrefix = "";
-        return this.send({ type: "switch-terminal-tab", direction: data === "t" ? 1 : -1 });
-      }
-      if (this.#tabPrefix === "g" && data === "k") {
-        this.#tabPrefix = "";
-        return this.send({ type: "kill-terminal" });
-      }
-      if (this.#tabPrefix === "g" && data === "c") {
-        this.#tabPrefix = "";
-        return this.send({ type: "close-terminal" });
       }
       if (data === "\u001b[A" || data === "\u001b[B" || data === "\u0004" || data === "\u0015")
         return this.send({
@@ -199,6 +224,10 @@ export class DeckController {
       if (data === "v") return this.send({ type: "set-composer-mode", mode: "visual" });
       if (data === "n") return this.send({ type: "set-focus", focus: "tree" });
       if (data === "t") return this.send({ type: "set-focus", focus: "timeline" });
+      if (data === "g") {
+        this.#tabPrefix = "g";
+        return true;
+      }
       if (data === "\u0015" || data === "\u0004" || data === "\u001b[5~" || data === "\u001b[6~")
         return this.send({
           type: "scroll-timeline",
@@ -216,8 +245,10 @@ export class DeckController {
     if (state.modal.type === "none" && state.focus === "timeline") {
       if (data === "g" || (data === "z" && state.timeline.agentId)) {
         this.#timelinePrefix = data;
-        if (data === "g")
+        if (data === "g") {
+          this.#tabPrefix = "g";
           return this.send({ type: "move-timeline-selection-boundary", boundary: "start" });
+        }
         return true;
       }
       if (this.#timelinePrefix === "g") {
@@ -268,7 +299,10 @@ export class DeckController {
       return this.send({ type: "set-focus", focus: "composer" });
     }
     if (state.modal.type === "none" && state.focus === "tree" && data === "\u001b")
-      return this.send({ type: "set-focus", focus: "composer" });
+      return this.send({
+        type: "set-focus",
+        focus: state.activeTerminalId ? "timeline" : "composer",
+      });
     if (data === "\u001b") {
       if (state.modal.type !== "none") this.emit({ type: "close-modal" });
       return state.modal.type !== "none";
@@ -290,20 +324,6 @@ export class DeckController {
         type: "move-timeline-text",
         key: data as "h" | "l" | "w" | "b" | "e" | "0" | "^" | "$",
       });
-    if (this.#tabPrefix.startsWith("g") && (data === "t" || data === "T" || data === "c")) {
-      const countText = this.#tabPrefix.slice(1);
-      this.#tabPrefix = "";
-      if (data === "c") return this.send({ type: "close-tab" });
-      return this.send({
-        type: "switch-tab",
-        direction: data === "t" ? 1 : -1,
-        ...(countText ? { count: Number(countText) } : {}),
-      });
-    }
-    if (this.#tabPrefix.startsWith("g") && /^[0-9]$/.test(data)) {
-      this.#tabPrefix += data;
-      return true;
-    }
     if (this.#tabPrefix === "t" && data === "n") {
       this.#tabPrefix = "";
       if (state.selectedWorkspaceId)

@@ -65,8 +65,7 @@ CI enforces one required `check` result backed by:
 | `[` / `]` | Resize the tree, or jump between turns when the timeline is focused |
 | `{` / `}` | Jump between timeline errors |
 | `Enter` | Select, open, expand, run, or confirm |
-| `gt` / `gT` | Select the next or previous open session tab (`3gt` selects tab 3) |
-| `gc` | Close the active tab; the underlying session keeps running |
+| `gt` / `gT` | Select the next or previous session or terminal tab (`3gt` selects tab 3) |
 | `Tab` / `Shift+Tab` | Move focus between tree, timeline, and composer |
 | `i` | Focus the prompt composer |
 | `Ctrl-P` / `Ctrl-N` | Move through prompt history while composing |
@@ -94,13 +93,12 @@ CI enforces one required `check` result backed by:
 | `Esc` | Close a dialog or cancel editing |
 | `q` / `Ctrl-C` | Quit and restore the terminal |
 
-Workspace terminals are separate from session tabs. Select a workspace to discover its
-daemon-owned terminals, then open one as a terminal tab. Terminal tabs start in normal
-mode: `gt`/`gT` switch tabs, `gc` closes the tab without stopping its process, `i` enters
-insert mode and forwards literal input (including supported escape sequences), and `Esc`
-returns to terminal normal mode. `r` reconnects a stale terminal; killing a terminal is a
-separate confirmed action (`gk`). In terminal normal mode, `gt`/`gT` switch terminal tabs
-and Ctrl-D/Ctrl-U or the arrow keys scroll captured output. Unsupported daemon terminal
+Each active workspace has one tab row with its sessions and terminals. Switching workspaces
+restores its last active tab during the current run. A fresh run starts at the first workspace
+and first tab. Terminal tabs start in normal mode: `gt`/`gT` switch across both resource types,
+`i` enters insert mode and forwards literal input, and `Esc` returns to terminal normal mode.
+`r` reconnects a stale terminal; terminating a terminal requires confirmation (`gk`).
+Ctrl-D/Ctrl-U or the arrow keys scroll captured output. Unsupported daemon terminal
 capabilities are reported as an actionable notification; named terminals can be created
 through the command palette for the selected workspace.
 
@@ -117,19 +115,20 @@ through the command palette for the selected workspace.
 - Epoch/sequence timeline deduplication, replacement recovery, and clean observation release
 - Default local, `--home`, and direct TCP daemon targets
 - Responsive narrow-terminal layout, semantic color, no-color and ASCII fallbacks, and terminal restoration on exit
-- Versioned, target-scoped persistence for safe presentation preferences and open session tabs
-- Workspace terminal discovery, captured scrollback, reconnect, safe tab closure, and explicit termination
+- Versioned, target-scoped persistence for safe presentation preferences
+- Workspace terminal discovery, captured scrollback, reconnect, and explicit termination
 
 ## Preferences
 
 Paseo Deck stores preferences at `$XDG_CONFIG_HOME/paseo-deck/preferences.json`, or `~/.config/paseo-deck/preferences.json` when `XDG_CONFIG_HOME` is unset. Delete that file while Paseo Deck is closed to reset all preferences.
 
-The file contains only the global theme and symbol set plus, for each hashed daemon target, tree width, ordering, archived visibility, expanded project/workspace IDs, and open session tabs grouped by workspace. Target-specific tree state and tabs are not shared between the default daemon, another Paseo home, and a direct TCP host. Corrupt or newer unsupported files produce a short warning and fall back to defaults.
+The file contains only the global theme and symbol set plus, for each hashed daemon target, tree width, ordering, archived visibility, and expanded project/workspace IDs. Tab order and active tabs exist only during the current run. Corrupt or newer unsupported files produce a short warning and fall back to defaults.
 
 With no theme configured, Deck uses ANSI terminal role escapes for semantic roles at every colour tier. Set `PASEO_DECK_THEME=ember` to opt into the built-in Ember palette, or `PASEO_DECK_THEME=terminal` to force the native palette. Configuration takes precedence over the saved interactive preference; otherwise the saved preference is used, followed by the terminal-native default. `NO_COLOR` and `TERM=dumb` always suppress colour while retaining textual and symbolic distinctions.
 
-Preferences never contain prompts, prompt history, timeline content, agent or provider records, selected sessions, notifications, daemon passwords, or raw daemon targets. Closing a tab with `gc` only removes the local tab; it never stops, archives, detaches, or deletes the underlying session. Updates use an atomic file replacement. On POSIX systems, Paseo Deck hardens the containing directory and file to user-only permissions; on Windows, keep the OS profile and configuration directory ACL private to your account.
-Preferences never contain prompts, prompt history, timeline content, agent or provider records, notifications, daemon passwords, or raw daemon targets. Closing a tab with `gc` only removes the local tab; it never stops, archives, detaches, or deletes the underlying session. Updates use an atomic file replacement. On POSIX systems, Paseo Deck hardens the containing directory and file to user-only permissions; on Windows, keep the OS profile and configuration directory ACL private to your account.
+Unicode tabs use the Powerline `` and `` glyphs. Use a Nerd Font for those shapes, or set `PASEO_DECK_ASCII=1` to show bracketed tabs when the font is unavailable.
+
+Preferences never contain prompts, prompt history, timeline content, agent or provider records, selected sessions, notifications, daemon passwords, or raw daemon targets. Updates use an atomic file replacement. On POSIX systems, Paseo Deck hardens the containing directory and file to user-only permissions; on Windows, keep the OS profile and configuration directory ACL private to your account.
 
 ## Known limitations
 

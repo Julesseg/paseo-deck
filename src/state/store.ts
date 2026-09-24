@@ -2,6 +2,7 @@ import type {
   AppState,
   FocusArea,
   ModalState,
+  TabId,
   TerminalMode,
   TimelineNavigationState,
   TreeOrder,
@@ -25,12 +26,8 @@ export type AppAction =
   | { type: "directory"; update: DirectoryUpdate }
   | { type: "select-agent"; agentId?: string; preserveSidebar?: boolean }
   | { type: "open-session-tab"; agentId: string; preserveSidebar?: boolean }
-  | { type: "close-session-tab"; agentId: string }
-  | { type: "switch-session-tab"; direction: -1 | 1; count?: number }
   | { type: "set-terminals"; workspaceId: string; terminals: readonly TerminalRecord[] }
   | { type: "open-terminal-tab"; terminalId: string }
-  | { type: "close-terminal-tab"; terminalId?: string }
-  | { type: "switch-terminal-tab"; direction: -1 | 1 }
   | { type: "set-terminal-mode"; mode: TerminalMode }
   | { type: "terminal-lines"; terminalId: string; lines: readonly string[]; stale?: boolean }
   | { type: "set-terminal-scroll"; terminalId: string; offset: number }
@@ -106,11 +103,11 @@ export function createInitialState(): AppState {
     modal: { type: "none" },
     timeline: { items: [], loading: false, recoveryRevision: 0 },
     timelineNavigation: {},
-    openSessionIds: {},
+    tabOrder: {},
+    activeTabIds: {},
     composer: createComposerState(),
     creationDefaults: {},
     workspaceTerminals: {},
-    openTerminalIds: [],
     terminalMode: "normal",
     terminalLines: {},
     staleTerminalIds: new Set(),
@@ -180,6 +177,46 @@ function directoryUpdate(directory: DirectorySnapshot, update: DirectoryUpdate):
   }
 }
 
+function reconcileTabs(state: AppState): AppState {
+  const tabOrder: Record<string, readonly TabId[]> = {};
+  const activeTabIds: Record<string, TabId> = {};
+  for (const workspace of state.directory.workspaces) {
+    const sessions = state.directory.agents
+      .filter((agent) => agent.workspaceId === workspace.id && !agent.archived)
+      .map((agent): TabId => `session:${agent.id}`);
+    const terminals = (state.workspaceTerminals?.[workspace.id] ?? [])
+      .filter((terminal) => terminal.workspaceId === workspace.id)
+      .map((terminal): TabId => `terminal:${terminal.id}`);
+    const valid = new Set([...sessions, ...terminals]);
+    const previous = (state.tabOrder[workspace.id] ?? []).filter((id) => valid.has(id));
+    const order = [
+      ...previous,
+      ...[...sessions, ...terminals].filter((id) => !previous.includes(id)),
+    ];
+    tabOrder[workspace.id] = order;
+    const active = state.activeTabIds[workspace.id];
+    const selected = active && valid.has(active) ? active : order[0];
+    if (selected) activeTabIds[workspace.id] = selected;
+  }
+  const next: AppState = { ...state, tabOrder, activeTabIds };
+  const active = next.selectedWorkspaceId ? activeTabIds[next.selectedWorkspaceId] : undefined;
+  delete next.activeSessionId;
+  delete next.activeTerminalId;
+  delete next.selectedAgentId;
+  if (active?.startsWith("session:")) {
+    next.activeSessionId = active.slice(8);
+    next.selectedAgentId = next.activeSessionId;
+  } else if (active?.startsWith("terminal:")) next.activeTerminalId = active.slice(9);
+  if (next.timeline.agentId !== next.activeSessionId)
+    next.timeline = {
+      ...(next.activeSessionId ? { agentId: next.activeSessionId } : {}),
+      items: [],
+      loading: Boolean(next.activeSessionId),
+      recoveryRevision: 0,
+    };
+  return next;
+}
+
 function reconcileSelection(state: AppState, directory: DirectorySnapshot): AppState {
   const selectedAgent = directory.agents.find((agent) => agent.id === state.selectedAgentId);
   const selectedWorkspace = directory.workspaces.find(
@@ -197,22 +234,6 @@ function reconcileSelection(state: AppState, directory: DirectorySnapshot): AppS
     ]),
     timeline: selectedAgent ? state.timeline : { items: [], loading: false, recoveryRevision: 0 },
   };
-  const valid = new Set(
-    directory.agents.filter((agent) => !agent.archived).map((agent) => agent.id),
-  );
-  const openSessionIds = Object.fromEntries(
-    Object.entries(state.openSessionIds ?? {}).flatMap(([workspaceId, ids]) => {
-      const filtered = ids.filter((id) => valid.has(id));
-      return filtered.length ? [[workspaceId, filtered]] : [];
-    }),
-  );
-  next.openSessionIds = openSessionIds;
-  if (next.activeSessionId && valid.has(next.activeSessionId)) {
-    next.selectedAgentId ??= next.activeSessionId;
-    next.timeline = next.timeline.agentId
-      ? next.timeline
-      : { items: [], loading: true, recoveryRevision: 0 };
-  } else if (next.activeSessionId) delete next.activeSessionId;
   // Sidebar selection is a separate cursor. Preserve it across directory
   // refreshes while its target still exists; repair it using the same stable
   // identity fallback used for the active selection below.
@@ -254,19 +275,6 @@ function reconcileSelection(state: AppState, directory: DirectorySnapshot): AppS
     );
     if (fallback) next.selectedWorkspaceId = fallback.id;
   }
-  if (!selectedAgent && state.selectedAgentId) {
-    const removed = state.directory.agents.find((item) => item.id === state.selectedAgentId);
-    const fallback = nearby(
-      state.directory.agents,
-      directory.agents,
-      state.selectedAgentId,
-      (item) => item.workspaceId === removed?.workspaceId,
-    );
-    if (fallback) {
-      next.selectedAgentId = fallback.id;
-      next.selectedWorkspaceId = fallback.workspaceId;
-    }
-  }
   if (!selectedProject && state.selectedProjectId) {
     const fallback = nearby(
       state.directory.projects,
@@ -276,7 +284,7 @@ function reconcileSelection(state: AppState, directory: DirectorySnapshot): AppS
     );
     if (fallback) next.selectedProjectId = fallback.id;
   }
-  return next;
+  return reconcileTabs(next);
 }
 
 function nearby<T extends { id: string }>(
@@ -776,6 +784,10 @@ export function reduceApp(state: AppState, action: AppAction): AppState {
       else delete next.selectedAgentId;
       if (agent?.workspaceId) {
         next.selectedWorkspaceId = agent.workspaceId;
+        next.activeTabIds = {
+          ...state.activeTabIds,
+          [agent.workspaceId]: `session:${agent.id}`,
+        };
         next.expandedIds = revealWorkspaceIds(state, agent.workspaceId);
       }
       if (agent?.workspaceId) next.sidebarSelection = { kind: "workspace", id: agent.workspaceId };
@@ -784,140 +796,48 @@ export function reduceApp(state: AppState, action: AppAction): AppState {
         if (sidebarSelection) next.sidebarSelection = sidebarSelection;
         else delete next.sidebarSelection;
       }
-      return next;
+      return agent ? reconcileTabs(next) : next;
     }
     case "open-session-tab": {
       const agent = state.directory.agents.find((candidate) => candidate.id === action.agentId);
       if (!agent) return reduceApp(state, { type: "select-agent", agentId: action.agentId });
       if (agent.archived) return state;
-      const current = state.openSessionIds?.[agent.workspaceId] ?? [];
-      const openSessionIds = {
-        ...(state.openSessionIds ?? {}),
-        [agent.workspaceId]: current.includes(agent.id) ? current : [...current, agent.id],
-      };
-      return reduceApp(
-        { ...state, openSessionIds },
-        {
-          type: "select-agent",
-          agentId: agent.id,
-          ...(action.preserveSidebar ? { preserveSidebar: true } : {}),
-        },
-      );
-    }
-    case "close-session-tab": {
-      const agent = state.directory.agents.find((candidate) => candidate.id === action.agentId);
-      if (!agent) return state;
-      const allTabs = Object.values(state.openSessionIds ?? {}).flat();
-      const allIndex = allTabs.indexOf(agent.id);
-      const current = [...(state.openSessionIds?.[agent.workspaceId] ?? [])];
-      const index = current.indexOf(agent.id);
-      if (index === -1) return state;
-      current.splice(index, 1);
-      const openSessionIds = { ...(state.openSessionIds ?? {}) };
-      if (current.length) openSessionIds[agent.workspaceId] = current;
-      else delete openSessionIds[agent.workspaceId];
-      if (state.activeSessionId !== agent.id) return { ...state, openSessionIds };
-      const remainingTabs = allTabs.filter((id) => id !== agent.id);
-      const nextId = remainingTabs[allIndex] ?? remainingTabs[allIndex - 1];
-      if (!nextId) {
-        const next = {
-          ...state,
-          openSessionIds,
-          timeline: { items: [], loading: false, recoveryRevision: 0 },
-        };
-        delete next.activeSessionId;
-        delete next.selectedAgentId;
-        return next;
-      }
-      return reduceApp(
-        { ...state, openSessionIds },
-        {
-          type: "select-agent",
-          agentId: nextId,
-          preserveSidebar: true,
-        },
-      );
-    }
-    case "switch-session-tab": {
-      const active = state.activeSessionId ?? state.selectedAgentId;
-      const agent = state.directory.agents.find((candidate) => candidate.id === active);
-      if (!agent) return state;
-      const tabs = Object.values(state.openSessionIds ?? {}).flat();
-      if (tabs.length < 2) return state;
-      const index = tabs.indexOf(agent.id);
-      const nextIndex =
-        action.count === undefined
-          ? (index + action.direction + tabs.length) % tabs.length
-          : Math.min(tabs.length - 1, Math.max(0, action.count - 1));
-      const nextId = tabs[nextIndex];
-      return nextId
-        ? reduceApp(state, { type: "select-agent", agentId: nextId, preserveSidebar: true })
-        : state;
+      return reduceApp(state, {
+        type: "select-agent",
+        agentId: agent.id,
+        ...(action.preserveSidebar ? { preserveSidebar: true } : {}),
+      });
     }
     case "set-terminals": {
-      const known = new Set(action.terminals.map((terminal) => terminal.id));
-      const previous = state.workspaceTerminals?.[action.workspaceId] ?? [];
-      const missing = new Set(
-        previous.map((terminal) => terminal.id).filter((id) => !known.has(id)),
-      );
-      const openTerminalIds = (state.openTerminalIds ?? []).filter((id) => !missing.has(id));
       const next: AppState = {
         ...state,
         workspaceTerminals: { ...state.workspaceTerminals, [action.workspaceId]: action.terminals },
         workspaceHadResources: action.terminals.length
           ? new Set([...(state.workspaceHadResources ?? []), action.workspaceId])
           : (state.workspaceHadResources ?? new Set()),
-        openTerminalIds,
         staleTerminalIds: new Set(
           [...(state.staleTerminalIds ?? [])].filter((id) =>
-            action.terminals.some((terminal) => terminal.id === id),
+            Object.values({ ...state.workspaceTerminals, [action.workspaceId]: action.terminals })
+              .flat()
+              .some((terminal) => terminal.id === id),
           ),
         ),
       };
-      if (missing.has(state.activeTerminalId ?? "")) delete next.activeTerminalId;
-      return next;
+      return reconcileTabs(next);
     }
     case "open-terminal-tab": {
       const terminal = Object.values(state.workspaceTerminals ?? {})
         .flat()
         .find((item) => item.id === action.terminalId);
       if (!terminal) return state;
-      return {
+      const id: TabId = `terminal:${terminal.id}`;
+      return reconcileTabs({
         ...state,
         selectedWorkspaceId: terminal.workspaceId,
-        openTerminalIds: (state.openTerminalIds ?? []).includes(terminal.id)
-          ? (state.openTerminalIds ?? [])
-          : [...(state.openTerminalIds ?? []), terminal.id],
-        activeTerminalId: terminal.id,
+        activeTabIds: { ...state.activeTabIds, [terminal.workspaceId]: id },
         terminalMode: "normal",
         focus: "timeline",
-      };
-    }
-    case "close-terminal-tab": {
-      const id = action.terminalId ?? state.activeTerminalId;
-      if (!id) return state;
-      const ids = (state.openTerminalIds ?? []).filter((item) => item !== id);
-      const next: AppState = { ...state, openTerminalIds: ids };
-      if (state.activeTerminalId === id) {
-        const replacement = ids.at(-1);
-        if (replacement) next.activeTerminalId = replacement;
-        else delete next.activeTerminalId;
-      }
-      return next;
-    }
-    case "switch-terminal-tab": {
-      const ids = state.openTerminalIds ?? [];
-      if (ids.length < 2) return state;
-      const current = state.activeTerminalId ?? ids[0];
-      if (!current) return state;
-      const index = Math.max(0, ids.indexOf(current));
-      const nextId = ids[(index + action.direction + ids.length) % ids.length];
-      if (!nextId) return state;
-      return {
-        ...state,
-        activeTerminalId: nextId,
-        terminalMode: "normal",
-      };
+      });
     }
     case "set-terminal-mode":
       return { ...state, terminalMode: action.mode };
@@ -962,13 +882,9 @@ export function reduceApp(state: AppState, action: AppAction): AppState {
         ...state,
         selectedWorkspaceId: workspace.id,
         sidebarSelection: { kind: "workspace", id: workspace.id },
-        timeline: { items: [], loading: false, recoveryRevision: 0 },
         focus: "tree",
       };
-      delete next.activeSessionId;
-      delete next.selectedAgentId;
-      delete next.activeTerminalId;
-      return next;
+      return reconcileTabs(next);
     }
     case "refresh-sidebar-order": {
       const next = { ...state };

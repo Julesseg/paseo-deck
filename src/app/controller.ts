@@ -36,6 +36,7 @@ export class ApplicationController {
   readonly #listeners = new Set<(state: AppState) => void>();
   #directoryObservation: Observation | undefined;
   #timelineObservation: Observation | undefined;
+  #observedAgentId: string | undefined;
   #focusGeneration = 0;
   #permissionFocusGeneration = 0;
   #creationGeneration = 0;
@@ -83,11 +84,7 @@ export class ApplicationController {
       await Promise.all(
         snapshot.workspaces.map(async (workspace) => {
           try {
-            this.apply({
-              type: "set-terminals",
-              workspaceId: workspace.id,
-              terminals: await this.gateway.listTerminals(workspace.id),
-            });
+            await this.discoverTerminals(workspace.id);
           } catch (error) {
             this.apply({
               type: "notify",
@@ -104,9 +101,14 @@ export class ApplicationController {
         type: "directory",
         update: { type: "connection-changed", state: "connected" },
       });
-      const restored = this.#state.activeSessionId;
-      if (restored && this.#state.directory.agents.some((agent) => agent.id === restored))
-        await this.selectAgent(restored);
+      if (!this.#state.selectedWorkspaceId) {
+        const expandedIds = new Set(this.#state.directory.projects.map((project) => project.id));
+        const first = deriveTreeRows({ ...this.#state, expandedIds }).find(
+          (row) => row.kind === "workspace",
+        );
+        if (first) this.apply({ type: "activate-workspace", workspaceId: first.id });
+      }
+      await this.showActiveResource();
     } catch (error) {
       await this.#directoryObservation?.release();
       this.#directoryObservation = undefined;
@@ -127,6 +129,7 @@ export class ApplicationController {
     this.#focusGeneration += 1;
     const observations = [this.#timelineObservation, this.#directoryObservation];
     this.#timelineObservation = undefined;
+    this.#observedAgentId = undefined;
     this.#directoryObservation = undefined;
     await Promise.all(observations.map(async (observation) => observation?.release()));
     await Promise.all(
@@ -158,6 +161,7 @@ export class ApplicationController {
   async selectAgent(agentId: string, preserveSidebar = false): Promise<void> {
     if (
       this.#state.selectedAgentId === agentId &&
+      this.#observedAgentId === agentId &&
       this.#timelineObservation !== undefined &&
       !this.#state.activeTerminalId
     ) {
@@ -169,6 +173,7 @@ export class ApplicationController {
     const generation = ++this.#focusGeneration;
     const previous = this.#timelineObservation;
     this.#timelineObservation = undefined;
+    this.#observedAgentId = agentId;
     // Releasing a remote demand and hydrating the next timeline can both take
     // arbitrarily long. Neither operation may stall the input path: sidebar
     // navigation must remain available while the new session loads.
@@ -227,23 +232,33 @@ export class ApplicationController {
           .flat()
           .find((item) => item.id === intent.terminalId);
         if (!terminal) return;
+        const generation = ++this.#focusGeneration;
         try {
           const capture = await this.gateway.captureTerminal(terminal.id, { start: -2000 });
+          if (generation !== this.#focusGeneration) return;
           this.apply({
             type: "terminal-lines",
             terminalId: terminal.id,
             lines: capture.lines.map(sanitizeObservedTerminal),
           });
           this.apply({ type: "open-terminal-tab", terminalId: terminal.id });
+          const previousTimeline = this.#timelineObservation;
+          this.#timelineObservation = undefined;
+          this.#observedAgentId = undefined;
+          void previousTimeline?.release();
+          await this.#terminalObservations.get(terminal.id)?.release();
           const observation = await this.gateway.observeTerminal(terminal.id, (update) => {
-            if (update.type === "exited")
+            if (update.type === "exited") {
               this.apply({
                 type: "terminal-lines",
                 terminalId: terminal.id,
                 lines: this.#state.terminalLines?.[terminal.id] ?? [],
                 stale: true,
               });
-            else if (update.type === "output")
+              void this.discoverTerminals(terminal.workspaceId).catch((error) =>
+                this.reportError("Could not refresh workspace terminals.", error),
+              );
+            } else if (update.type === "output")
               this.apply({
                 type: "terminal-lines",
                 terminalId: terminal.id,
@@ -259,6 +274,10 @@ export class ApplicationController {
                 lines: update.lines.map(sanitizeObservedTerminal),
               });
           });
+          if (generation !== this.#focusGeneration) {
+            await observation.release();
+            return;
+          }
           this.#terminalObservations.set(terminal.id, observation);
         } catch (error) {
           this.apply({
@@ -270,12 +289,6 @@ export class ApplicationController {
         }
         return;
       }
-      case "close-terminal":
-        this.apply({ type: "close-terminal-tab" });
-        return;
-      case "switch-terminal-tab":
-        this.apply({ type: "switch-terminal-tab", direction: intent.direction });
-        return;
       case "scroll-terminal":
         if (this.#state.activeTerminalId) {
           const id = this.#state.activeTerminalId;
@@ -308,7 +321,10 @@ export class ApplicationController {
           await this.gateway.killTerminal(intent.terminalId);
           await this.#terminalObservations.get(intent.terminalId)?.release();
           this.#terminalObservations.delete(intent.terminalId);
-          this.apply({ type: "close-terminal-tab", terminalId: intent.terminalId });
+          const workspaceId = Object.entries(this.#state.workspaceTerminals ?? {}).find(
+            ([, items]) => items.some((item) => item.id === intent.terminalId),
+          )?.[0];
+          if (workspaceId) await this.discoverTerminals(workspaceId);
           this.apply({ type: "close-modal" });
         } catch (error) {
           this.apply({
@@ -351,20 +367,6 @@ export class ApplicationController {
           if (next?.kind === "session") await this.selectAgent(next.id, true);
           else if (next?.kind === "terminal")
             await this.handleIntent({ type: "open-terminal", terminalId: next.id });
-        }
-        return;
-      case "close-tab":
-        {
-          const id = this.#state.activeSessionId ?? this.#state.selectedAgentId;
-          if (!id) return;
-          const before = this.#state.activeSessionId;
-          const previous = this.#timelineObservation;
-          this.#timelineObservation = undefined;
-          this.#focusGeneration += 1;
-          await previous?.release();
-          this.apply({ type: "close-session-tab", agentId: id });
-          const next = this.#state.activeSessionId;
-          if (next && next !== before) await this.selectAgent(next, true);
         }
         return;
       case "select-boundary":
@@ -712,11 +714,44 @@ export class ApplicationController {
       this.#focusGeneration += 1;
       const previous = this.#timelineObservation;
       this.#timelineObservation = undefined;
+      this.#observedAgentId = undefined;
       void previous?.release();
       this.apply({ type: "activate-workspace", workspaceId: selection.id });
+      await this.showActiveResource();
+      this.apply({ type: "set-focus", focus: "tree" });
       return;
     }
     if (selection?.kind === "project") this.apply({ type: "toggle-expanded", id: selection.id });
+  }
+
+  private async showActiveResource(): Promise<void> {
+    const active = this.#state.selectedWorkspaceId
+      ? this.#state.activeTabIds[this.#state.selectedWorkspaceId]
+      : undefined;
+    if (active?.startsWith("session:")) await this.selectAgent(active.slice(8), true);
+    else if (active?.startsWith("terminal:"))
+      await this.handleIntent({ type: "open-terminal", terminalId: active.slice(9) });
+    else {
+      this.#focusGeneration += 1;
+      const previous = this.#timelineObservation;
+      this.#timelineObservation = undefined;
+      this.#observedAgentId = undefined;
+      void previous?.release();
+    }
+  }
+
+  private async discoverTerminals(workspaceId: string): Promise<void> {
+    const terminals = await this.gateway.listTerminals(workspaceId);
+    const previous =
+      this.#state.selectedWorkspaceId === workspaceId
+        ? this.#state.activeTabIds[workspaceId]
+        : undefined;
+    this.apply({ type: "set-terminals", workspaceId, terminals });
+    const current =
+      this.#state.selectedWorkspaceId === workspaceId
+        ? this.#state.activeTabIds[workspaceId]
+        : undefined;
+    if (current !== previous) await this.showActiveResource();
   }
 
   private activeWorkspace(workspaceId: string): boolean {
@@ -740,6 +775,9 @@ export class ApplicationController {
     try {
       const snapshot = await this.gateway.getDirectorySnapshot();
       this.apply({ type: "directory", update: { type: "snapshot", snapshot } });
+      await Promise.all(
+        snapshot.workspaces.map((workspace) => this.discoverTerminals(workspace.id)),
+      );
       this.apply({ type: "notify", message: "Directory refreshed." });
     } catch (error) {
       this.reportError(
@@ -977,11 +1015,18 @@ export class ApplicationController {
 
   private receiveDirectoryUpdate(update: DirectoryUpdate): void {
     const previous = this.#state.connection;
+    const previousTab = this.#state.selectedWorkspaceId
+      ? this.#state.activeTabIds[this.#state.selectedWorkspaceId]
+      : undefined;
     const observed =
       update.type === "connection-changed" && update.at === undefined
         ? { ...update, at: Date.now() }
         : update;
     this.apply({ type: "directory", update: observed });
+    const currentTab = this.#state.selectedWorkspaceId
+      ? this.#state.activeTabIds[this.#state.selectedWorkspaceId]
+      : undefined;
+    if (currentTab !== previousTab) void this.showActiveResource();
     if (update.type === "connection-changed" && update.state !== "connected")
       this.#recoveryGeneration += 1;
     if (

@@ -10,7 +10,7 @@ import type { UiIntent } from "./controller.js";
 export interface DeckCommand {
   readonly id: string;
   readonly label: string;
-  readonly group: "Sessions" | "Agent" | "Timeline" | "Application";
+  readonly group: "Sessions" | "Tabs" | "Agent" | "Timeline" | "Application";
   readonly shortcuts: readonly string[];
   /** Navigation remains discoverable in help but does not crowd the palette. */
   readonly palette?: boolean;
@@ -78,29 +78,9 @@ export const deckCommands: readonly DeckCommand[] = [
     intent: () => ({ type: "kill-terminal" }),
   },
   {
-    id: "terminal-close",
-    label: "Close active terminal tab",
-    group: "Sessions",
-    shortcuts: ["gc"],
-    contexts: ["timeline", "tree"],
-    palette: true,
-    disabledReason: (state) => (state.activeTerminalId ? undefined : "No active terminal tab"),
-    intent: () => ({ type: "close-terminal" }),
-  },
-  {
-    id: "tab-close",
-    label: "Close active session tab",
-    group: "Sessions",
-    shortcuts: ["gc"],
-    contexts: ["tree", "timeline"],
-    palette: true,
-    disabledReason: (state) => (state.activeSessionId ? undefined : "No active session tab"),
-    intent: () => ({ type: "close-tab" }),
-  },
-  {
     id: "tab-next",
-    label: "Next session tab",
-    group: "Sessions",
+    label: "Next tab",
+    group: "Tabs",
     shortcuts: ["gt"],
     contexts: ["tree", "timeline"],
     palette: true,
@@ -108,8 +88,8 @@ export const deckCommands: readonly DeckCommand[] = [
   },
   {
     id: "tab-previous",
-    label: "Previous session tab",
-    group: "Sessions",
+    label: "Previous tab",
+    group: "Tabs",
     shortcuts: ["gT"],
     contexts: ["tree", "timeline"],
     palette: true,

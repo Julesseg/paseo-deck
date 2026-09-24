@@ -18,6 +18,24 @@ const validScope = `v1-${"a".repeat(64)}`;
 const portablePath = (path: string): string => path.replaceAll("\\", "/");
 
 describe("preferences", () => {
+  it("ignores tabs saved by older versions", () => {
+    const parsed = parsePreferences({
+      version: 1,
+      targets: {
+        [validScope]: {
+          treeOrder: "alphabetical",
+          openSessionIds: { workspace: ["old-session"] },
+          activeSessionId: "old-session",
+        },
+      },
+    });
+    expect(parsed.targets[validScope]).toEqual({ treeOrder: "alphabetical" });
+    const restored = applyTargetPreferences(createInitialState(), parsed.targets[validScope]);
+    expect(restored.tabOrder).toEqual({});
+    expect(restored.activeTabIds).toEqual({});
+    expect(restored.selectedWorkspaceId).toBeUndefined();
+  });
+
   it("writes atomically with a synced file and parent directory", async () => {
     const calls: string[] = [];
     const fs = createNodePreferenceFileSystem(
