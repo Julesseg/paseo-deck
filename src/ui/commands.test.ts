@@ -16,6 +16,7 @@ function state(): AppState {
     connection: "connected",
     tabOrder: {},
     activeTabIds: {},
+    sessionDrafts: {},
     recovery: { attempt: 0, directoryStale: false, timelineStale: false },
     directory: {
       ...emptyDirectory(),

@@ -10,12 +10,15 @@ export type TreeRowKind = "project" | "workspace";
 export type WorkspaceActivity = "attention" | "working" | "idle" | "done";
 export type WorkspaceTab =
   | { kind: "session"; id: string; agent: AgentRecord }
-  | { kind: "terminal"; id: string; terminal: TerminalRecord };
+  | { kind: "terminal"; id: string; terminal: TerminalRecord }
+  | { kind: "draft"; id: string };
 
 export function workspaceTabs(state: AppState): WorkspaceTab[] {
   const workspaceId = state.selectedWorkspaceId;
   if (!workspaceId) return [];
   return (state.tabOrder[workspaceId] ?? []).flatMap((key): WorkspaceTab[] => {
+    if (key === `draft:${workspaceId}`)
+      return state.sessionDrafts[workspaceId] ? [{ kind: "draft", id: workspaceId }] : [];
     if (key.startsWith("session:")) {
       const agent = state.directory.agents.find(
         (item) => item.id === key.slice(8) && item.workspaceId === workspaceId && !item.archived,

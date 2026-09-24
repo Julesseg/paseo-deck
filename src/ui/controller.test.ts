@@ -9,6 +9,7 @@ function makeState(): AppState {
     connection: "connected",
     tabOrder: {},
     activeTabIds: {},
+    sessionDrafts: {},
     recovery: { attempt: 0, directoryStale: false, timelineStale: false },
     notifications: [],
     directory: {
@@ -61,6 +62,99 @@ function makeState(): AppState {
 }
 
 describe("DeckController keyboard seam", () => {
+  it("opens New Tab only in normal mode outside the sidebar and modal", () => {
+    const intents: unknown[] = [];
+    let state = { ...makeState(), focus: "composer" as const, composerMode: "normal" as const };
+    const controller = new DeckController(
+      () => state,
+      (intent) => intents.push(intent),
+    );
+    controller.handleKey("T");
+    expect(intents).toEqual([{ type: "open-new-tab", workspaceId: "w" }]);
+    for (const variant of [
+      { focus: "composer" as const, composerMode: "insert" as const },
+      { focus: "composer" as const, composerMode: "visual" as const },
+      { focus: "tree" as const, composerMode: "normal" as const },
+      { focus: "timeline" as const, timelineMode: "visual" as const },
+      {
+        focus: "composer" as const,
+        modal: { type: "create-agent" as const, workspaceId: "w", step: "prompt" as const },
+      },
+    ]) {
+      state = { ...makeState(), ...variant } as typeof state;
+      controller.handleKey("T");
+    }
+    expect(intents).toHaveLength(1);
+  });
+
+  it("lets the New Tab and setting pickers own their filter input", () => {
+    const intents: unknown[] = [];
+    let state: AppState = {
+      ...makeState(),
+      focus: "composer" as const,
+      composerMode: "normal" as const,
+      modal: { type: "new-tab" as const, workspaceId: "w" },
+    };
+    const controller = new DeckController(
+      () => state,
+      (intent) => intents.push(intent),
+    );
+    expect(controller.handleKey("i")).toBe(false);
+    state = {
+      ...state,
+      modal: { type: "draft-setting", workspaceId: "w", setting: "model" },
+    };
+    expect(controller.handleKey("m")).toBe(false);
+    expect(intents).toEqual([]);
+  });
+
+  it("keeps New Tab unavailable in terminal insert mode through the command palette", () => {
+    const intents: unknown[] = [];
+    const state: AppState = {
+      ...makeState(),
+      focus: "timeline",
+      activeTerminalId: "terminal",
+      terminalMode: "insert",
+      terminalLines: { terminal: ["$ "] },
+    };
+    const controller = new DeckController(
+      () => state,
+      (intent) => intents.push(intent),
+    );
+    expect(controller.invokeCommand("new-tab")).toBe(false);
+    controller.handleKey("T");
+    expect(intents).toEqual([{ type: "terminal-input", data: "T" }]);
+  });
+
+  it("routes gc to the workspace draft from active or background tabs", () => {
+    const intents: unknown[] = [];
+    const state = {
+      ...makeState(),
+      focus: "composer" as const,
+      composerMode: "normal" as const,
+      activeTabIds: { w: "draft:w" as const },
+      sessionDrafts: { w: { prompt: "hello" } },
+    };
+    const controller = new DeckController(
+      () => state,
+      (intent) => intents.push(intent),
+    );
+    controller.handleKey("g");
+    controller.handleKey("c");
+    expect(intents).toEqual([{ type: "discard-session-draft", workspaceId: "w" }]);
+    const backgroundState: AppState = {
+      ...state,
+      activeTabIds: { w: "session:a" },
+      focus: "timeline",
+    };
+    const backgroundController = new DeckController(
+      () => backgroundState,
+      (intent) => intents.push(intent),
+    );
+    backgroundController.handleKey("g");
+    backgroundController.handleKey("c");
+    expect(intents.at(-1)).toEqual({ type: "discard-session-draft", workspaceId: "w" });
+  });
   it("recognizes tab navigation sequences and counts", () => {
     const intents: unknown[] = [];
     const controller = new DeckController(

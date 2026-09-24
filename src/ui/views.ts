@@ -20,7 +20,11 @@ import {
 
 import type { AppState, ModalState } from "../contracts/app-state.js";
 import type { TimelineEvent, TimelineItem } from "../contracts/domain.js";
-import { composerAvailability, selectedComposerDraft } from "../state/composer.js";
+import {
+  activeSessionDraftWorkspaceId,
+  composerAvailability,
+  selectedComposerDraft,
+} from "../state/composer.js";
 import { activeNotification } from "../state/store.js";
 import { defaultTerminalAppearance, type TerminalAppearance } from "./capabilities.js";
 import {
@@ -293,18 +297,28 @@ class SessionTabsView implements Component {
       const attention =
         resource.kind === "session"
           ? resource.agent.needsAttention || resource.agent.pendingPermissions.length > 0
-          : resource.terminal.activity === "attention";
+          : resource.kind === "terminal" && resource.terminal.activity === "attention";
       const working =
         resource.kind === "session"
           ? resource.agent.status === "running" || resource.agent.status === "starting"
-          : resource.terminal.activity === "working";
-      const glyph = resource.kind === "session" ? this.theme.glyph("agent") : "⌁";
+          : resource.kind === "terminal" && resource.terminal.activity === "working";
+      const glyph =
+        resource.kind === "session"
+          ? this.theme.glyph("agent")
+          : resource.kind === "draft"
+            ? this.theme.glyph("draft")
+            : "⌁";
       const status = attention
         ? ` ${this.theme.glyph("attention")}`
         : working
           ? ` ${this.theme.glyph("running")}`
           : "";
-      const title = resource.kind === "session" ? resource.agent.title : resource.terminal.name;
+      const title =
+        resource.kind === "session"
+          ? resource.agent.title
+          : resource.kind === "draft"
+            ? "New session"
+            : resource.terminal.name;
       return {
         label: ` ${glyph}${status} ${sanitizeTerminalText(title)} `,
         tone: `${resource.kind}:${resource.id}` === activeId ? "tab-active" : "tab-inactive",
@@ -404,6 +418,15 @@ class ContentPane implements Component {
     this.timeline.invalidate();
   }
   render(width: number): string[] {
+    const workspaceId = activeSessionDraftWorkspaceId(this.state);
+    if (workspaceId) {
+      const draft = this.state.sessionDrafts[workspaceId];
+      return draft?.error
+        ? wrapTerminalProse(draft.error, width).map((line) =>
+            this.theme.clipRendered(this.theme.styleRendered("failure", line), width),
+          )
+        : [];
+    }
     if (this.state.activeTerminalId) {
       const mode = (this.state.terminalMode ?? "normal").toUpperCase();
       const stale = (this.state.staleTerminalIds ?? new Set()).has(this.state.activeTerminalId)
@@ -925,6 +948,7 @@ class ComposerView implements Component, Focusable {
   focused = false;
   private readonly editor: BorderlessEditor;
   private selectedAgentId: string | undefined;
+  private draftWorkspaceId: string | undefined;
   private state: AppState;
   private visualAnchor: { line: number; col: number } | undefined;
   constructor(
@@ -935,6 +959,7 @@ class ComposerView implements Component, Focusable {
   ) {
     this.state = state;
     this.selectedAgentId = state.selectedAgentId;
+    this.draftWorkspaceId = activeSessionDraftWorkspaceId(state);
     this.editor = new BorderlessEditor(
       tui,
       {
@@ -946,7 +971,9 @@ class ComposerView implements Component, Focusable {
     this.editor.setText(selectedComposerDraft(state));
     this.editor.onChange = (text) => emit({ type: "set-composer-text", text });
     this.editor.onSubmit = (prompt) => {
-      if (this.selectedAgentId && prompt.trim())
+      if (this.draftWorkspaceId && prompt.trim())
+        emit({ type: "submit-session-draft", workspaceId: this.draftWorkspaceId, prompt });
+      else if (this.selectedAgentId && prompt.trim())
         emit({ type: "submit-composer", agentId: this.selectedAgentId, prompt });
     };
   }
@@ -954,6 +981,7 @@ class ComposerView implements Component, Focusable {
     const previousMode = this.state.composerMode;
     this.state = state;
     this.selectedAgentId = state.selectedAgentId;
+    this.draftWorkspaceId = activeSessionDraftWorkspaceId(state);
     const draft = selectedComposerDraft(state);
     if (this.editor.getText() !== draft) this.editor.setText(draft);
     if (state.composerMode === "visual" && previousMode !== "visual")
@@ -971,11 +999,21 @@ class ComposerView implements Component, Focusable {
     const availability = this.selectedAgentId
       ? composerAvailability(this.state, this.selectedAgentId)
       : { canSend: false as const, reason: "missing" as const };
-    const destination = agent
-      ? `Prompt ${this.theme.label("→")} ${sanitizeTerminalText(agent.title)}`
-      : this.theme.label("Prompt → no agent selected");
-    const status =
-      this.selectedAgentId && this.state.composer.sendingAgentIds.has(this.selectedAgentId)
+    const destination = this.draftWorkspaceId
+      ? this.theme.label("First message → New session")
+      : agent
+        ? `Prompt ${this.theme.label("→")} ${sanitizeTerminalText(agent.title)}`
+        : this.theme.label("Prompt → no agent selected");
+    const draft = this.draftWorkspaceId
+      ? this.state.sessionDrafts[this.draftWorkspaceId]
+      : undefined;
+    const status = draft
+      ? draft.submitting
+        ? ` ${this.theme.glyph("bullet")} creating${this.theme.glyph("running")}`
+        : draft.error
+          ? ` ${this.theme.glyph("bullet")} retry`
+          : ""
+      : this.selectedAgentId && this.state.composer.sendingAgentIds.has(this.selectedAgentId)
         ? ` ${this.theme.glyph("bullet")} sending${this.theme.glyph("running")}`
         : !availability.canSend
           ? ` ${this.theme.glyph("bullet")} ${availability.reason}`
@@ -1036,7 +1074,9 @@ class ComposerView implements Component, Focusable {
     if (data === "\r" || data === "\n") {
       if (this.state.composerMode === "normal") {
         const prompt = this.editor.getText();
-        if (this.selectedAgentId && prompt.trim())
+        if (this.draftWorkspaceId)
+          this.emit({ type: "submit-session-draft", workspaceId: this.draftWorkspaceId, prompt });
+        else if (this.selectedAgentId && prompt.trim())
           this.emit({ type: "submit-composer", agentId: this.selectedAgentId, prompt });
         return;
       }
@@ -1101,9 +1141,24 @@ class ComposerView implements Component, Focusable {
   }
 }
 
-/** The compact session-control row is intentionally derived from commands so
- * its cues and availability cannot drift from help or the command palette. */
+/** The existing session's controls use the command inventory for their cues and availability. */
 export function composerControlRow(state: AppState, theme: DeckTheme, width: number): string {
+  const draftWorkspaceId = activeSessionDraftWorkspaceId(state);
+  if (draftWorkspaceId) {
+    const draft = state.sessionDrafts[draftWorkspaceId];
+    const controls = [
+      ["p", draft?.providerId ?? "provider"],
+      ["m", draft?.modelId ?? "model"],
+      ["z", draft?.thinkingLevel ?? "thinking"],
+      ["o", draft?.modeId ?? "mode"],
+    ] as const;
+    return theme.clipRendered(
+      controls
+        .map(([key, value]) => `${theme.style("muted", `[${key}]`)} ${theme.style("focus", value)}`)
+        .join("  "),
+      width,
+    );
+  }
   const agent = state.directory.agents.find((item) => item.id === state.selectedAgentId);
   const modelCommand = commandById(state, "model");
   const model = modelCommand?.disabledReason ? "unavailable" : (agent?.modelId ?? "-");
@@ -1148,6 +1203,19 @@ class SessionActivityView implements Component {
   invalidate(): void {}
   render(width: number): string[] {
     const state = this.state();
+    const draftId = activeSessionDraftWorkspaceId(state);
+    if (draftId) {
+      const draft = state.sessionDrafts[draftId];
+      return [
+        this.theme.styleRendered(
+          "muted",
+          this.theme.clipRendered(
+            `Session draft ${this.theme.glyph("bullet")} ${draft?.submitting ? "creating" : "unsent"}`,
+            width,
+          ),
+        ),
+      ];
+    }
     const agent = state.directory.agents.find((item) => item.id === state.selectedAgentId);
     const sending = agent && state.composer.sendingAgentIds.has(agent.id);
     const activity = sending ? "sending" : agent?.status === "running" ? "active" : "idle";
@@ -1208,7 +1276,9 @@ class StatusView implements Component {
           )
       : activeTerminal
         ? `terminal ${sanitizeTerminalText(activeTerminal.name)}`
-        : "no active resource";
+        : activeSessionDraftWorkspaceId(this.state)
+          ? "session draft"
+          : "no active resource";
     const permissions = this.state.directory.agents.reduce(
       (total, agent) => total + agent.pendingPermissions.length,
       0,
@@ -2575,7 +2645,62 @@ export class DeckTui {
         close,
         this.theme,
       );
-    else if (modal.type === "create-terminal")
+    else if (modal.type === "new-tab") {
+      const choices = [
+        {
+          value: "session",
+          label: "Session",
+          description: "Create or resume a session draft",
+          disabled: false,
+        },
+      ];
+      component = new SearchableChoiceDialog(
+        "New Tab",
+        choices,
+        (choice) => this.emit({ type: "new-tab-choice", choice }),
+        close,
+        "session",
+        this.choicePickerMaxVisible(true),
+        this.theme,
+      );
+      overlayOptions = {
+        width: centeredChoicePickerWidth(this.terminal.columns, "New Tab", choices),
+        maxHeight: Math.max(1, this.terminal.rows - 2),
+        margin: 1,
+        visible: (columns, rows) => shellLayout(columns, rows, this.treeWidth).supported,
+      };
+    } else if (modal.type === "draft-setting") {
+      const draft = this.state.sessionDrafts[modal.workspaceId];
+      const choices = creationChoices(this.state, {
+        type: "create-agent",
+        workspaceId: modal.workspaceId,
+        step: modal.setting,
+        ...(draft?.providerId ? { providerId: draft.providerId } : {}),
+        ...(draft?.modelId ? { modelId: draft.modelId } : {}),
+      });
+      const title = titleForModal(modal.setting);
+      component = new SearchableChoiceDialog(
+        title,
+        choices,
+        (choice) => this.emit({ type: "draft-setting-choice", choice }),
+        close,
+        modal.setting === "provider"
+          ? draft?.providerId
+          : modal.setting === "model"
+            ? draft?.modelId
+            : modal.setting === "mode"
+              ? draft?.modeId
+              : draft?.thinkingLevel,
+        this.choicePickerMaxVisible(true),
+        this.theme,
+      );
+      overlayOptions = {
+        width: centeredChoicePickerWidth(this.terminal.columns, title, choices),
+        maxHeight: Math.max(1, this.terminal.rows - 2),
+        margin: 1,
+        visible: (columns, rows) => shellLayout(columns, rows, this.treeWidth).supported,
+      };
+    } else if (modal.type === "create-terminal")
       component = new InputDialog(
         `Create terminal in ${modal.workspaceId}`,
         modal.name,
@@ -2586,7 +2711,33 @@ export class DeckTui {
         close,
         this.theme,
       );
-    else if (modal.type === "confirm" && modal.action === "kill-terminal") {
+    else if (
+      modal.type === "confirm" &&
+      (modal.action === "discard-draft" || modal.action === "quit")
+    ) {
+      const title =
+        modal.action === "quit"
+          ? "Quit with unsent session drafts?"
+          : "Discard this session draft?";
+      component = new SearchableChoiceDialog(
+        title,
+        [
+          { value: "no", label: "No", description: "Keep working", disabled: false },
+          {
+            value: "yes",
+            label: "Yes",
+            description:
+              modal.action === "quit" ? "Quit and discard unsent drafts" : "Discard this draft",
+            disabled: false,
+          },
+        ],
+        (choice) => (choice === "yes" ? this.controller.confirm(modal) : close()),
+        close,
+        "no",
+        this.choicePickerMaxVisible(true),
+        this.theme,
+      );
+    } else if (modal.type === "confirm" && modal.action === "kill-terminal") {
       const choices = [
         { value: "no", label: "No", description: "Keep terminal running", disabled: false },
         {

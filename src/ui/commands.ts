@@ -28,6 +28,8 @@ export type CommandContext =
   | "rename"
   | "create-agent"
   | "create-terminal"
+  | "new-tab"
+  | "draft-setting"
   | "mode"
   | "thinking"
   | "error-details"
@@ -53,7 +55,47 @@ const requireConnected = (state: AppState): string | undefined =>
 const requireRemoteAgent = (state: AppState): string | undefined =>
   requireConnected(state) ?? requireAgent(state);
 
+export function newTabUnavailableReason(state: AppState): string | undefined {
+  const workspace = requireWorkspace(state);
+  if (workspace) return workspace;
+  if (state.modal.type !== "none") return "Close the dialog first";
+  if (state.focus === "tree") return "Leave sidebar navigation first";
+  if (state.focus === "composer" && state.composerMode !== "normal")
+    return "Return to normal mode first";
+  if (state.focus === "timeline" && state.activeTerminalId && state.terminalMode !== "normal")
+    return "Leave terminal insert mode first";
+  if (state.focus === "timeline" && !state.activeTerminalId && state.timelineMode === "visual")
+    return "Leave visual mode first";
+  return undefined;
+}
+
 export const deckCommands: readonly DeckCommand[] = [
+  {
+    id: "new-tab",
+    label: "New Tab",
+    group: "Tabs",
+    shortcuts: ["T"],
+    contexts: ["composer", "timeline"],
+    palette: true,
+    disabledReason: newTabUnavailableReason,
+    intent: (state) => ({ type: "open-new-tab", workspaceId: state.selectedWorkspaceId ?? "" }),
+  },
+  {
+    id: "discard-draft",
+    label: "Discard session draft",
+    group: "Tabs",
+    shortcuts: ["gc"],
+    contexts: ["composer", "timeline"],
+    palette: true,
+    disabledReason: (state) =>
+      state.selectedWorkspaceId && state.sessionDrafts[state.selectedWorkspaceId]
+        ? undefined
+        : "No session draft in this workspace",
+    intent: (state) => ({
+      type: "discard-session-draft",
+      workspaceId: state.selectedWorkspaceId ?? "",
+    }),
+  },
   {
     id: "terminal-create",
     label: "Create named workspace terminal",
@@ -107,6 +149,8 @@ export const deckCommands: readonly DeckCommand[] = [
       "filter",
       "rename",
       "create-agent",
+      "new-tab",
+      "draft-setting",
       "palette",
       "help",
       "mode",

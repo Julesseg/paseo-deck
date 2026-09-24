@@ -23,6 +23,80 @@ function output() {
 }
 
 describe("runCli", () => {
+  it("creates a session through the New Tab picker and normal-mode composer", async () => {
+    const terminal = new RecordingTerminal(100, 30);
+    const directory = {
+      ...treeDirectory(),
+      agents: [],
+      providers: [
+        {
+          id: "codex",
+          name: "Codex",
+          ready: true,
+          modeIds: [],
+          models: [{ id: "model", name: "Model", selectable: true, thinkingLevels: [] }],
+        },
+      ],
+    };
+    const gateway = new FakePaseoGateway(directory);
+    const running = runInteractive({ type: "default" }, output().io, {
+      ...testRuntimeDependencies(),
+      gateway,
+      terminal,
+      bindExitHandlers: () => () => undefined,
+    });
+    await tick();
+    terminal.sendInput("\u001b");
+    terminal.sendInput("T");
+    await terminal.waitForRender();
+    expect(terminal.viewport().join("\n")).toContain("New Tab");
+    terminal.sendInput("\r");
+    await terminal.waitForRender();
+    expect(terminal.viewport().join("\n")).toContain("New session");
+    terminal.sendInput("i");
+    for (const key of "Build this") terminal.sendInput(key);
+    terminal.sendInput("\u001b");
+    terminal.sendInput("\r");
+    await terminal.waitForRender();
+    expect(gateway.commands).toContainEqual({
+      type: "create-agent",
+      workspaceId: "workspace",
+      providerId: "codex",
+      modelId: "model",
+      prompt: "Build this",
+    });
+    terminal.sendInput("q");
+    await expect(running).resolves.toBe(0);
+  });
+
+  it("keeps a dirty draft when quit is declined and exits after confirmation", async () => {
+    const terminal = new RecordingTerminal(100, 30);
+    const gateway = new FakePaseoGateway({ ...treeDirectory(), agents: [] });
+    const running = runInteractive({ type: "default" }, output().io, {
+      ...testRuntimeDependencies(),
+      gateway,
+      terminal,
+      bindExitHandlers: () => () => undefined,
+    });
+    await tick();
+    terminal.sendInput("\u001b");
+    terminal.sendInput("T");
+    terminal.sendInput("\r");
+    await terminal.waitForRender();
+    terminal.sendInput("i");
+    terminal.sendInput("x");
+    terminal.sendInput("\u001b");
+    terminal.sendInput("q");
+    await terminal.waitForRender();
+    expect(terminal.viewport().join("\n")).toContain("Quit with unsent session drafts?");
+    terminal.sendInput("\r");
+    await terminal.waitForRender();
+    expect(terminal.viewport().join("\n")).not.toContain("Quit with unsent session drafts?");
+    terminal.sendInput("q");
+    terminal.sendInput("\u001b[B");
+    terminal.sendInput("\r");
+    await expect(running).resolves.toBe(0);
+  });
   it("prints help without starting the terminal", async () => {
     const capture = output();
     await expect(runCli(["--help"], { io: capture.io })).resolves.toBe(0);

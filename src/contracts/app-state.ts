@@ -14,7 +14,18 @@ export type TimelineMode = "normal" | "visual";
 export type TerminalMode = "normal" | "insert";
 export type TreeOrder = "attention" | "alphabetical";
 export type SidebarSelection = { kind: "project" | "workspace"; id: string };
-export type TabId = `session:${string}` | `terminal:${string}`;
+export type TabId = `session:${string}` | `terminal:${string}` | `draft:${string}`;
+export interface SessionDraft {
+  providerId?: string | undefined;
+  modelId?: string | undefined;
+  modeId?: string | undefined;
+  thinkingLevel?: string | undefined;
+  prompt: string;
+  dirty?: boolean | undefined;
+  settingsDirty?: boolean | undefined;
+  error?: string | undefined;
+  submitting?: boolean | undefined;
+}
 
 export type ModalState =
   | { type: "none" }
@@ -22,10 +33,17 @@ export type ModalState =
   | { type: "notifications"; index: number }
   | { type: "filter"; query: string }
   | { type: "create-terminal"; workspaceId: string; name: string; error?: string }
+  | { type: "new-tab"; workspaceId: string }
+  | {
+      type: "draft-setting";
+      workspaceId: string;
+      setting: "provider" | "model" | "mode" | "thinking";
+    }
   | {
       type: "confirm";
-      action: "stop" | "archive" | "detach" | "kill-terminal";
+      action: "stop" | "archive" | "detach" | "kill-terminal" | "discard-draft" | "quit";
       agentId?: string;
+      workspaceId?: string;
       terminalId?: string;
       draftWarning?: boolean;
     }
@@ -134,6 +152,7 @@ export interface AppState {
   tabOrder: Readonly<Record<string, readonly TabId[]>>;
   /** Last active resource per workspace during this run. */
   activeTabIds: Readonly<Record<string, TabId>>;
+  sessionDrafts: Readonly<Record<string, SessionDraft>>;
   expandedIds: ReadonlySet<string>;
   filter: string;
   treeOrder: TreeOrder;

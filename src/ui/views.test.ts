@@ -22,6 +22,7 @@ function state(): AppState {
     connection: "connected",
     tabOrder: {},
     activeTabIds: {},
+    sessionDrafts: {},
     recovery: { attempt: 0, directoryStale: false, timelineStale: false },
     notifications: [],
     directory: {
@@ -305,6 +306,76 @@ describe("creation picker choices", () => {
 });
 
 describe("composer controls", () => {
+  it("shows draft parameters in the composer without repeating them in the timeline", async () => {
+    const terminal = new RecordingTerminal(100, 28);
+    const base = state();
+    const deck = new DeckTui(
+      terminal,
+      {
+        ...base,
+        selectedWorkspaceId: "w",
+        focus: "composer",
+        composerMode: "normal",
+        tabOrder: { w: ["draft:w"] },
+        activeTabIds: { w: "draft:w" },
+        sessionDrafts: {
+          w: {
+            providerId: "ready",
+            modelId: "one",
+            modeId: "plan",
+            thinkingLevel: "low",
+            prompt: "First message",
+          },
+        },
+      },
+      () => undefined,
+      { appearance: { color: "none", unicode: true, theme: "plain", symbols: "unicode" } },
+    );
+    deck.start();
+    await terminal.waitForRender();
+    const screen = terminal.viewport().join("\n");
+    await deck.stop();
+    expect(screen).toContain("✎ New session");
+    expect(screen).toContain("[p] ready");
+    expect(screen).toContain("[m] one");
+    expect(screen).toContain("[z] low");
+    expect(screen).toContain("[o] plan");
+    expect(screen).not.toContain("Provider:");
+    expect(screen).not.toContain("Press i to edit");
+    expect(screen).toContain("First message");
+    expect(screen).toContain("NORMAL");
+  });
+
+  it("keeps draft creation errors visible in the timeline area", async () => {
+    const terminal = new RecordingTerminal(100, 28);
+    const deck = new DeckTui(
+      terminal,
+      {
+        ...state(),
+        selectedWorkspaceId: "w",
+        tabOrder: { w: ["draft:w"] },
+        activeTabIds: { w: "draft:w" },
+        sessionDrafts: {
+          w: {
+            providerId: "ready",
+            modelId: "one",
+            modeId: "plan",
+            thinkingLevel: "low",
+            prompt: "First message",
+            error: "Could not create session. Try again.",
+          },
+        },
+      },
+      () => undefined,
+      { appearance: { color: "none", unicode: true, theme: "plain", symbols: "unicode" } },
+    );
+    deck.start();
+    await terminal.waitForRender();
+    const screen = terminal.viewport().join("\n");
+    await deck.stop();
+    expect(screen).toContain("Could not create session. Try again.");
+    expect(screen).not.toContain("Provider:");
+  });
   it("windows a mixed tab row around the active resource and swaps its content", async () => {
     const terminal = new RecordingTerminal(70, 18);
     const base = state();

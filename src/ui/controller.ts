@@ -1,6 +1,7 @@
 import type { AppState, FocusArea, ModalState } from "../contracts/app-state.js";
 import type { AgentCommand } from "../contracts/commands.js";
-import { commandById, commandForKey } from "./commands.js";
+import { activeSessionDraftWorkspaceId } from "../state/composer.js";
+import { commandById, commandForKey, newTabUnavailableReason } from "./commands.js";
 
 const timelineTextMotionKeys = ["h", "l", "w", "b", "e", "0", "^", "$"] as const;
 type TimelineTextMotionKey = (typeof timelineTextMotionKeys)[number];
@@ -13,6 +14,14 @@ export type UiIntent =
   | { type: "scroll-terminal"; direction: -1 | 1 }
   | { type: "reconnect-terminal" }
   | { type: "open-create-terminal"; workspaceId: string }
+  | { type: "open-new-tab"; workspaceId: string }
+  | { type: "new-tab-choice"; choice: string }
+  | { type: "discard-session-draft"; workspaceId: string }
+  | { type: "discard-session-draft-confirmed"; workspaceId: string }
+  | { type: "open-draft-setting"; setting: "provider" | "model" | "mode" | "thinking" }
+  | { type: "draft-setting-choice"; choice: string }
+  | { type: "submit-session-draft"; workspaceId: string; prompt: string }
+  | { type: "quit-confirmed" }
   | { type: "set-terminal-name"; name: string }
   | { type: "submit-terminal-name" }
   | { type: "set-terminal-mode"; mode: "normal" | "insert" }
@@ -108,6 +117,27 @@ export class DeckController {
         (state.focus === "composer" && state.composerMode === "normal") ||
         (state.focus === "timeline" &&
           (state.activeTerminalId ? state.terminalMode !== "insert" : true)));
+    const draftWorkspaceId = activeSessionDraftWorkspaceId(state);
+    if (
+      data === "T" &&
+      !this.#tabPrefix &&
+      !newTabUnavailableReason(state) &&
+      state.selectedWorkspaceId
+    )
+      return this.send({ type: "open-new-tab", workspaceId: state.selectedWorkspaceId });
+    if (
+      draftWorkspaceId &&
+      state.modal.type === "none" &&
+      state.focus === "composer" &&
+      state.composerMode === "normal" &&
+      ["p", "m", "z", "o"].includes(data)
+    )
+      return this.send({
+        type: "open-draft-setting",
+        setting: ({ p: "provider", m: "model", z: "thinking", o: "mode" } as const)[
+          data as "p" | "m" | "z" | "o"
+        ],
+      });
     if (
       tabNormalMode &&
       !this.#tabPrefix &&
@@ -138,7 +168,12 @@ export class DeckController {
           ...(countText ? { count: Number(countText) } : {}),
         });
       }
-      if (data === "c") return true;
+      if (data === "c") {
+        const workspaceId = state.selectedWorkspaceId;
+        if (workspaceId && state.sessionDrafts[workspaceId])
+          return this.send({ type: "discard-session-draft", workspaceId });
+        return true;
+      }
       if (data === "k" && state.activeTerminalId) return this.send({ type: "kill-terminal" });
     }
     if (
@@ -180,6 +215,14 @@ export class DeckController {
     }
     if (state.modal.type === "notifications") {
       return this.sendResolved(global, state);
+    }
+    if (state.modal.type === "confirm") {
+      if (data === "\u001b") return this.send({ type: "close-modal" });
+      return false;
+    }
+    if (state.modal.type === "new-tab" || state.modal.type === "draft-setting") {
+      if (data === "\u001b") return this.send({ type: "close-modal" });
+      return false;
     }
     if (state.modal.type === "create-terminal") {
       if (data === "\r") return this.send({ type: "submit-terminal-name" });
@@ -353,6 +396,15 @@ export class DeckController {
   }
 
   confirm(modal: Extract<ModalState, { type: "confirm" }>): void {
+    if (modal.action === "quit") {
+      this.emit({ type: "quit-confirmed" });
+      return;
+    }
+    if (modal.action === "discard-draft") {
+      if (modal.workspaceId)
+        this.emit({ type: "discard-session-draft-confirmed", workspaceId: modal.workspaceId });
+      return;
+    }
     if (modal.action === "kill-terminal") {
       if (modal.terminalId)
         this.emit({ type: "kill-terminal-confirmed", terminalId: modal.terminalId });

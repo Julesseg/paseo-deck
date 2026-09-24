@@ -11,6 +11,7 @@ describe("application state contracts", () => {
       connection: "connected",
       tabOrder: {},
       activeTabIds: {},
+      sessionDrafts: {},
       recovery: { attempt: 0, directoryStale: false, timelineStale: false },
       notifications: [],
       directory: {

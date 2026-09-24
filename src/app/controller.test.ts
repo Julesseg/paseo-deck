@@ -1190,3 +1190,216 @@ class DeferredRecoveryGateway extends FakePaseoGateway {
 async function nextTurn(): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, 0));
 }
+
+describe("New Tab session draft", () => {
+  async function openDraft(app: ApplicationController, workspaceId = "workspace-1") {
+    await app.handleIntent({ type: "open-new-tab", workspaceId });
+    expect(app.state.modal.type).toBe("new-tab");
+    await app.handleIntent({ type: "new-tab-choice", choice: "session" });
+  }
+
+  it("keeps one draft per workspace and resumes its message and settings", async () => {
+    const twoWorkspaces = {
+      ...snapshot,
+      workspaces: [
+        ...snapshot.workspaces,
+        {
+          id: "workspace-2",
+          projectId: "project-1",
+          title: "Second",
+          directory: "/second",
+          archived: false,
+        },
+      ],
+    };
+    const app = new ApplicationController(new FakePaseoGateway(twoWorkspaces));
+    await app.start();
+    await openDraft(app);
+    expect(app.state.activeTabIds["workspace-1"]).toBe("draft:workspace-1");
+    expect(app.state.composerMode).toBe("normal");
+    app.setComposerText("Keep this message");
+    await app.handleIntent({ type: "open-draft-setting", setting: "thinking" });
+    await app.handleIntent({ type: "draft-setting-choice", choice: "medium" });
+    await openDraft(app);
+    expect(
+      app.state.tabOrder["workspace-1"]?.filter((id) => id === "draft:workspace-1"),
+    ).toHaveLength(1);
+    expect(app.state.sessionDrafts["workspace-1"]).toMatchObject({
+      prompt: "Keep this message",
+      thinkingLevel: "medium",
+    });
+    await app.handleIntent({ type: "set-focus", focus: "tree" });
+    await app.handleIntent({ type: "select-next", direction: 1 });
+    await app.handleIntent({ type: "select-or-open" });
+    expect(app.state.selectedWorkspaceId).toBe("workspace-2");
+    await openDraft(app, "workspace-2");
+    expect(Object.keys(app.state.sessionDrafts)).toEqual(["workspace-1", "workspace-2"]);
+    expect(app.state.sessionDrafts["workspace-2"]?.prompt).toBe("");
+  });
+
+  it("replaces the draft at its tab position after the daemon creates a session", async () => {
+    const gateway = new FakePaseoGateway(snapshot);
+    const app = new ApplicationController(gateway);
+    await app.start();
+    await openDraft(app);
+    const index = app.state.tabOrder["workspace-1"]?.indexOf("draft:workspace-1");
+    app.setComposerText("Build the feature");
+    await app.handleIntent({
+      type: "submit-session-draft",
+      workspaceId: "workspace-1",
+      prompt: "Build the feature",
+    });
+    expect(gateway.commands.at(-1)).toMatchObject({
+      type: "create-agent",
+      workspaceId: "workspace-1",
+      prompt: "Build the feature",
+    });
+    expect(app.state.sessionDrafts["workspace-1"]).toBeUndefined();
+    expect(app.state.tabOrder["workspace-1"]?.[index ?? -1]).toBe("session:fake-agent-1");
+    expect(app.state.activeTabIds["workspace-1"]).toBe("session:fake-agent-1");
+    expect(
+      app.state.tabOrder["workspace-1"]?.filter((id) => id === "session:fake-agent-1"),
+    ).toHaveLength(1);
+  });
+
+  it("keeps the user's current tab and daemon metadata if creation finishes in the background", async () => {
+    const gateway = new DeferredCreateGateway(snapshot);
+    const app = new ApplicationController(gateway);
+    await app.start();
+    await openDraft(app);
+    app.setComposerText("Build later");
+    const pending = app.handleIntent({
+      type: "submit-session-draft",
+      workspaceId: "workspace-1",
+      prompt: "Build later",
+    });
+    await app.handleIntent({ type: "switch-tab", direction: 1 });
+    const active = app.state.activeTabIds["workspace-1"];
+    gateway.emitDirectory({
+      type: "agent-upserted",
+      agent: {
+        id: "real-session",
+        workspaceId: "workspace-1",
+        title: "Actual title",
+        status: "running",
+        availableModeIds: [],
+        availableThinkingLevels: [],
+        pendingPermissions: [],
+        needsAttention: false,
+        archived: false,
+      },
+    });
+    gateway.resolveCreate("real-session");
+    await pending;
+    expect(app.state.activeTabIds["workspace-1"]).toBe(active);
+    expect(
+      app.state.tabOrder["workspace-1"]?.filter((id) => id === "session:real-session"),
+    ).toHaveLength(1);
+    expect(app.state.directory.agents.find((agent) => agent.id === "real-session")?.title).toBe(
+      "Actual title",
+    );
+  });
+
+  it("keeps all inputs and an actionable error when creation fails, then retries", async () => {
+    class FailOnceGateway extends FakePaseoGateway {
+      fail = true;
+      override async execute(command: import("../contracts/commands.js").AgentCommand) {
+        if (command.type === "create-agent" && this.fail) {
+          this.fail = false;
+          throw new Error("daemon busy");
+        }
+        return super.execute(command);
+      }
+    }
+    const gateway = new FailOnceGateway(snapshot);
+    const app = new ApplicationController(gateway);
+    await app.start();
+    await openDraft(app);
+    app.setComposerText("Keep the exact prompt");
+    await app.handleIntent({
+      type: "submit-session-draft",
+      workspaceId: "workspace-1",
+      prompt: "Keep the exact prompt",
+    });
+    expect(app.state.sessionDrafts["workspace-1"]).toMatchObject({
+      prompt: "Keep the exact prompt",
+      providerId: "codex",
+      modelId: "gpt-5.6",
+      submitting: false,
+      error: expect.stringContaining("Press Enter to retry"),
+    });
+    await app.handleIntent({
+      type: "submit-session-draft",
+      workspaceId: "workspace-1",
+      prompt: "Keep the exact prompt",
+    });
+    expect(app.state.sessionDrafts["workspace-1"]).toBeUndefined();
+  });
+
+  it("discards an untouched draft directly and confirms a dirty draft", async () => {
+    const app = new ApplicationController(new FakePaseoGateway(snapshot));
+    await app.start();
+    await openDraft(app);
+    await app.handleIntent({ type: "switch-tab", direction: 1 });
+    const active = app.state.activeTabIds["workspace-1"];
+    await app.handleIntent({ type: "discard-session-draft", workspaceId: "workspace-1" });
+    expect(app.state.sessionDrafts["workspace-1"]).toBeUndefined();
+    expect(app.state.modal.type).toBe("none");
+    expect(app.state.activeTabIds["workspace-1"]).toBe(active);
+    await openDraft(app);
+    app.setComposerText("Unsaved");
+    await app.handleIntent({ type: "discard-session-draft", workspaceId: "workspace-1" });
+    expect(app.state.modal).toMatchObject({ type: "confirm", action: "discard-draft" });
+    expect(app.state.sessionDrafts["workspace-1"]?.prompt).toBe("Unsaved");
+    await app.handleIntent({ type: "discard-session-draft-confirmed", workspaceId: "workspace-1" });
+    expect(app.state.sessionDrafts["workspace-1"]).toBeUndefined();
+  });
+
+  it("treats whitespace entered into a draft as unsent work", async () => {
+    const app = new ApplicationController(new FakePaseoGateway(snapshot));
+    await app.start();
+    await openDraft(app);
+    app.setComposerText("   ");
+    await app.handleIntent({ type: "discard-session-draft", workspaceId: "workspace-1" });
+    expect(app.state.modal).toMatchObject({ type: "confirm", action: "discard-draft" });
+    expect(app.state.sessionDrafts["workspace-1"]?.prompt).toBe("   ");
+  });
+
+  it("warns once on quit for any dirty workspace draft and skips empty drafts", async () => {
+    let quits = 0;
+    const twoWorkspaces = {
+      ...snapshot,
+      workspaces: [
+        ...snapshot.workspaces,
+        {
+          id: "workspace-2",
+          projectId: "project-1",
+          title: "Second",
+          directory: "/second",
+          archived: false,
+        },
+      ],
+    };
+    const app = new ApplicationController(new FakePaseoGateway(twoWorkspaces), {
+      onQuit: () => {
+        quits += 1;
+      },
+    });
+    await app.start();
+    await openDraft(app);
+    await app.handleIntent({ type: "quit" });
+    expect(quits).toBe(1);
+    app.setComposerText("Unsent");
+    await app.handleIntent({ type: "set-focus", focus: "tree" });
+    await app.handleIntent({ type: "select-next", direction: 1 });
+    await app.handleIntent({ type: "select-or-open" });
+    await openDraft(app, "workspace-2");
+    app.setComposerText("Also unsent");
+    await app.handleIntent({ type: "quit" });
+    expect(app.state.modal).toMatchObject({ type: "confirm", action: "quit" });
+    expect(Object.values(app.state.sessionDrafts).filter((draft) => draft.dirty)).toHaveLength(2);
+    expect(quits).toBe(1);
+    await app.handleIntent({ type: "quit-confirmed" });
+    expect(quits).toBe(2);
+  });
+});
