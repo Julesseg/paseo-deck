@@ -421,19 +421,11 @@ class ContentPane implements Component {
     const workspaceId = activeSessionDraftWorkspaceId(this.state);
     if (workspaceId) {
       const draft = this.state.sessionDrafts[workspaceId];
-      return [
-        this.theme.styleRendered("header", "New session"),
-        this.theme.styleRendered("muted", `Provider: ${draft?.providerId ?? "Choose with p"}`),
-        this.theme.styleRendered("muted", `Model: ${draft?.modelId ?? "Choose with m"}`),
-        this.theme.styleRendered("muted", `Mode: ${draft?.modeId ?? "Default"}`),
-        this.theme.styleRendered("muted", `Thinking: ${draft?.thinkingLevel ?? "Default"}`),
-        this.theme.styleRendered("muted", "Press i to edit. Esc, then Enter to create."),
-        ...(draft?.error
-          ? wrapTerminalProse(draft.error, width).map((line) =>
-              this.theme.styleRendered("failure", line),
-            )
-          : []),
-      ].map((line) => this.theme.clipRendered(line, width));
+      return draft?.error
+        ? wrapTerminalProse(draft.error, width).map((line) =>
+            this.theme.clipRendered(this.theme.styleRendered("failure", line), width),
+          )
+        : [];
     }
     if (this.state.activeTerminalId) {
       const mode = (this.state.terminalMode ?? "normal").toUpperCase();
