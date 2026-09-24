@@ -428,15 +428,11 @@ class ContentPane implements Component {
         : [];
     }
     if (this.state.activeTerminalId) {
-      const mode = (this.state.terminalMode ?? "normal").toUpperCase();
       const stale = (this.state.staleTerminalIds ?? new Set()).has(this.state.activeTerminalId)
         ? " STALE"
         : "";
       return [
-        this.theme.styleRendered(
-          "header",
-          this.theme.clipRendered(`${mode} Terminal${stale}`, width),
-        ),
+        this.theme.styleRendered("header", this.theme.clipRendered(`Terminal${stale}`, width)),
         ...(this.state.terminalLines?.[this.state.activeTerminalId] ?? [])
           .slice(this.state.terminalScrollTop?.[this.state.activeTerminalId] ?? 0)
           .map((line) => clipTerminalLine(line, width)),
@@ -482,8 +478,12 @@ class MainPaneRule implements Component {
     const line = unicode ? "─" : "-";
     const state = this.state();
     const label =
-      this.kind === "top" && state.focus === "timeline"
-        ? ` ${(state.timelineMode ?? "normal").toUpperCase()} `
+      this.kind === "top"
+        ? state.activeTerminalId
+          ? ` ${(state.terminalMode ?? "normal").toUpperCase()} `
+          : state.focus === "timeline"
+            ? ` ${(state.timelineMode ?? "normal").toUpperCase()} `
+            : ""
         : "";
     const content = label
       ? `${label}${line.repeat(Math.max(0, width - terminalDisplayWidth(label)))}`
@@ -1605,12 +1605,15 @@ class SearchableChoiceDialog implements Component, Focusable {
       this.title,
       [
         ...this.query.render(Math.max(1, width - 2)),
-        ...visible.map((item, index) =>
+        ...visible.flatMap((item, index) => [
+          ...(item.category && (index === 0 || visible[index - 1]?.category !== item.category)
+            ? [this.theme.clipOwnedLabel(item.category, Math.max(1, width - 2))]
+            : []),
           this.theme.clipOwnedLabel(
             `${start + index === this.selected ? "> " : "  "}${item.label}${item.description ? ` - ${item.description}` : ""}`,
             Math.max(1, width - 2),
           ),
-        ),
+        ]),
         ...(visible.length < matches.length
           ? [
               this.theme.clipOwnedLabel(
@@ -1644,9 +1647,15 @@ class SearchableChoiceDialog implements Component, Focusable {
   private matches(): readonly CreationChoice[] {
     const query = this.query.getValue().toLocaleLowerCase();
     if (!query) return this.items;
-    return this.items
-      .map((item, index) => ({ item, index, score: fuzzyChoiceScore(item.label, query) }))
-      .filter(({ score }) => score >= 0)
+    const matches = this.items
+      .map((item, index) => ({
+        item,
+        index,
+        score: fuzzyChoiceScore(`${item.category ?? ""} ${item.label}`, query),
+      }))
+      .filter(({ score }) => score >= 0);
+    if (matches.some(({ item }) => item.category)) return matches.map(({ item }) => item);
+    return matches
       .sort((left, right) => left.score - right.score || left.index - right.index)
       .map(({ item }) => item);
   }
@@ -2649,18 +2658,39 @@ export class DeckTui {
       const choices = [
         {
           value: "session",
+          choice: { kind: "session" as const },
           label: "Session",
           description: "Create or resume a session draft",
           disabled: false,
+          category: "Session",
         },
+        {
+          value: "terminal",
+          choice: { kind: "terminal" as const },
+          label: "Blank Terminal",
+          description: "Daemon defaults",
+          disabled: false,
+          category: "Terminal",
+        },
+        ...(modal.profiles ?? []).map((profile) => ({
+          value: `profile:${profile.id}`,
+          choice: { kind: "profile" as const, profileId: profile.id },
+          label: profile.name,
+          description: "Daemon profile",
+          disabled: false,
+          category: "Terminal",
+        })),
       ];
       component = new SearchableChoiceDialog(
         "New Tab",
         choices,
-        (choice) => this.emit({ type: "new-tab-choice", choice }),
+        (value) => {
+          const selected = choices.find((item) => item.value === value);
+          if (selected) this.emit({ type: "new-tab-choice", choice: selected.choice });
+        },
         close,
         "session",
-        this.choicePickerMaxVisible(true),
+        Math.max(1, this.choicePickerMaxVisible(true) - 2),
         this.theme,
       );
       overlayOptions = {
@@ -2909,7 +2939,7 @@ function notificationDialogLines(state: AppState, index: number): readonly strin
   ];
 }
 
-export type CreationChoice = SelectItem & { disabled: boolean };
+export type CreationChoice = SelectItem & { disabled: boolean; category?: string };
 
 function selectedCreationModel(
   state: AppState,

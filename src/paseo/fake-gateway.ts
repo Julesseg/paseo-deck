@@ -1,8 +1,10 @@
+import { resolveTerminalProfileLaunch } from "@getpaseo/protocol/terminal-profiles";
 import type { AgentCommand, CommandResult } from "../contracts/commands.js";
 import type { DirectorySnapshot, DirectoryUpdate, TimelineUpdate } from "../contracts/domain.js";
 import type { Observation, PaseoGateway } from "../contracts/gateway.js";
 import type {
   TerminalCreateOptions,
+  TerminalProfile,
   TerminalRecord,
   TerminalStreamUpdate,
 } from "../contracts/terminal.js";
@@ -15,6 +17,11 @@ export class FakePaseoGateway implements PaseoGateway {
   public readonly commands: AgentCommand[] = [];
   public releaseCount = 0;
   public terminals: TerminalRecord[] = [];
+  public terminalProfiles: TerminalProfile[] = [];
+  public readonly createdTerminals: Array<{
+    workspaceId: string;
+    options: TerminalCreateOptions | undefined;
+  }> = [];
   public readonly terminalInput: Array<{ terminalId: string; data: string }> = [];
   private readonly terminalListeners = new Map<
     string,
@@ -73,19 +80,32 @@ export class FakePaseoGateway implements PaseoGateway {
     return this.terminals.filter((terminal) => terminal.workspaceId === workspaceId);
   }
 
+  public async listTerminalProfiles(): Promise<readonly TerminalProfile[]> {
+    this.assertConnected();
+    return this.terminalProfiles;
+  }
+
   public async createTerminal(
     workspaceId: string,
-    options: TerminalCreateOptions = {},
+    options?: TerminalCreateOptions,
   ): Promise<TerminalRecord> {
     this.assertConnected();
+    this.createdTerminals.push({ workspaceId, options });
     const terminal: TerminalRecord = {
       id: `fake-terminal-${this.terminals.length + 1}`,
       workspaceId,
-      cwd: options.cwd ?? "/",
-      name: options.name ?? "Terminal",
+      cwd: options?.cwd ?? "/",
+      name: options?.name ?? "Terminal",
     };
     this.terminals.push(terminal);
     return terminal;
+  }
+
+  public async createProfileTerminal(
+    workspaceId: string,
+    profile: TerminalProfile,
+  ): Promise<TerminalRecord> {
+    return this.createTerminal(workspaceId, resolveTerminalProfileLaunch(profile, ""));
   }
 
   public async captureTerminal(

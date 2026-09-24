@@ -2,7 +2,12 @@ import type { AppState, ModalState, PaseoFailureKind } from "../contracts/app-st
 import type { AgentCommand } from "../contracts/commands.js";
 import type { DirectoryUpdate, ProviderOption } from "../contracts/domain.js";
 import type { Observation, PaseoGateway } from "../contracts/gateway.js";
-import type { TerminalObservation } from "../contracts/terminal.js";
+import type {
+  TerminalCreateOptions,
+  TerminalObservation,
+  TerminalProfile,
+  TerminalRecord,
+} from "../contracts/terminal.js";
 import { PaseoGatewayError, paseoFailure, redactTransportDetail } from "../paseo/errors.js";
 import { activeSessionDraftWorkspaceId, composerAvailability } from "../state/composer.js";
 import {
@@ -142,12 +147,36 @@ export class ApplicationController {
     this.apply({ type: "set-composer", text });
   }
 
-  async createWorkspaceTerminal(workspaceId: string, name: string): Promise<void> {
+  async createWorkspaceTerminal(
+    workspaceId: string,
+    options?: TerminalCreateOptions,
+  ): Promise<boolean> {
+    return this.activateCreatedTerminal(
+      workspaceId,
+      this.gateway.createTerminal(workspaceId, options),
+    );
+  }
+
+  private async createWorkspaceProfileTerminal(
+    workspaceId: string,
+    profile: TerminalProfile,
+  ): Promise<boolean> {
+    return this.activateCreatedTerminal(
+      workspaceId,
+      this.gateway.createProfileTerminal(workspaceId, profile),
+    );
+  }
+
+  private async activateCreatedTerminal(
+    workspaceId: string,
+    creation: Promise<TerminalRecord>,
+  ): Promise<boolean> {
     try {
-      const terminal = await this.gateway.createTerminal(workspaceId, { name });
+      const terminal = await creation;
       const existing = this.#state.workspaceTerminals?.[workspaceId] ?? [];
       this.apply({ type: "set-terminals", workspaceId, terminals: [...existing, terminal] });
       await this.handleIntent({ type: "open-terminal", terminalId: terminal.id });
+      return this.#state.activeTerminalId === terminal.id;
     } catch (error) {
       this.apply({
         type: "notify",
@@ -155,6 +184,7 @@ export class ApplicationController {
         detail: errorMessage(error),
         kind: "error",
       });
+      return false;
     }
   }
 
@@ -428,15 +458,45 @@ export class ApplicationController {
           intent.workspaceId === this.#state.selectedWorkspaceId &&
           this.activeWorkspace(intent.workspaceId) &&
           this.#state.modal.type === "none"
-        )
+        ) {
+          const opened: Extract<ModalState, { type: "new-tab" }> = {
+            type: "new-tab",
+            workspaceId: intent.workspaceId,
+            profiles: [],
+          };
           this.apply({
             type: "open-modal",
-            modal: { type: "new-tab", workspaceId: intent.workspaceId },
+            modal: opened,
           });
+          try {
+            const profiles = await this.gateway.listTerminalProfiles();
+            if ((this.#state.modal as ModalState) === opened)
+              this.apply({
+                type: "open-modal",
+                modal: { type: "new-tab", workspaceId: intent.workspaceId, profiles },
+              });
+          } catch (error) {
+            this.reportError("Could not load terminal profiles.", error);
+          }
+        }
         return;
       case "new-tab-choice": {
         const modal = this.#state.modal;
-        if (modal.type !== "new-tab" || intent.choice !== "session") return;
+        if (modal.type !== "new-tab") return;
+        if (intent.choice.kind === "terminal") {
+          if (await this.createWorkspaceTerminal(modal.workspaceId))
+            this.apply({ type: "close-modal" });
+          return;
+        }
+        if (intent.choice.kind === "profile") {
+          const profileId = intent.choice.profileId;
+          const profile = modal.profiles?.find((item) => item.id === profileId);
+          if (!profile) return;
+          if (await this.createWorkspaceProfileTerminal(modal.workspaceId, profile))
+            this.apply({ type: "close-modal" });
+          return;
+        }
+        if (intent.choice.kind !== "session") return;
         const provider = this.#state.directory.providers.find((item) => item.ready);
         const model = provider ? defaultSelectableModel(provider) : undefined;
         if (!this.#state.sessionDrafts[modal.workspaceId])
@@ -745,7 +805,7 @@ export class ApplicationController {
           });
           return;
         }
-        await this.createWorkspaceTerminal(this.#state.modal.workspaceId, name);
+        await this.createWorkspaceTerminal(this.#state.modal.workspaceId, { name });
         this.apply({ type: "close-modal" });
         return;
       }

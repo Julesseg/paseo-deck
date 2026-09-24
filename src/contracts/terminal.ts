@@ -1,3 +1,5 @@
+import type { TerminalProfile } from "@getpaseo/protocol/messages";
+
 /** A daemon-owned terminal, deliberately separate from an agent/session. */
 export interface TerminalRecord {
   id: string;
@@ -31,8 +33,10 @@ export interface TerminalCreateOptions {
 }
 
 export interface TerminalGateway {
+  listTerminalProfiles(): Promise<readonly TerminalProfile[]>;
   listTerminals(workspaceId: string): Promise<readonly TerminalRecord[]>;
   createTerminal(workspaceId: string, options?: TerminalCreateOptions): Promise<TerminalRecord>;
+  createProfileTerminal(workspaceId: string, profile: TerminalProfile): Promise<TerminalRecord>;
   captureTerminal(
     terminalId: string,
     options?: { start?: number; end?: number },
@@ -44,3 +48,5 @@ export interface TerminalGateway {
   ): Promise<TerminalObservation>;
   killTerminal(terminalId: string): Promise<void>;
 }
+
+export type { TerminalProfile };

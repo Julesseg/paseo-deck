@@ -64,7 +64,40 @@ const shots: Array<{
       ...baseState,
       focus: "composer",
       composerMode: "normal",
-      modal: { type: "new-tab", workspaceId: "workspace-main" },
+      modal: {
+        type: "new-tab",
+        workspaceId: "workspace-main",
+        profiles: [
+          { id: "codex", name: "Codex", command: "codex" },
+          { id: "pi", name: "Pi", command: "pi" },
+        ],
+      },
+    },
+  },
+  {
+    name: "new-tab-no-profiles",
+    columns: 100,
+    rows: 28,
+    state: {
+      ...baseState,
+      focus: "composer",
+      composerMode: "normal",
+      modal: { type: "new-tab", workspaceId: "workspace-main", profiles: [] },
+    },
+  },
+  {
+    name: "new-tab-picker-narrow",
+    columns: 52,
+    rows: 18,
+    state: {
+      ...baseState,
+      focus: "composer",
+      composerMode: "normal",
+      modal: {
+        type: "new-tab",
+        workspaceId: "workspace-main",
+        profiles: [{ id: "codex", name: "Codex", command: "codex" }],
+      },
     },
   },
   { name: "session-draft-empty", columns: 100, rows: 28, state: draftState },
@@ -369,6 +402,7 @@ const shots: Array<{
           "session:agent-atlas-1234",
           "session:agent-harbor-5678",
           "terminal:terminal-1",
+          "draft:workspace-main",
         ],
       },
       workspaceTerminals: {
@@ -377,6 +411,9 @@ const shots: Array<{
         ],
       },
       terminalMode: "normal",
+      sessionDrafts: {
+        "workspace-main": { ...draftFixture, prompt: "Keep this first message", dirty: true },
+      },
       terminalLines: { "terminal-1": ["$ npm test", "All tests passed"] },
     },
   },

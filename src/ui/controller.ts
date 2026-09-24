@@ -15,7 +15,10 @@ export type UiIntent =
   | { type: "reconnect-terminal" }
   | { type: "open-create-terminal"; workspaceId: string }
   | { type: "open-new-tab"; workspaceId: string }
-  | { type: "new-tab-choice"; choice: string }
+  | {
+      type: "new-tab-choice";
+      choice: { kind: "session" } | { kind: "terminal" } | { kind: "profile"; profileId: string };
+    }
   | { type: "discard-session-draft"; workspaceId: string }
   | { type: "discard-session-draft-confirmed"; workspaceId: string }
   | { type: "open-draft-setting"; setting: "provider" | "model" | "mode" | "thinking" }

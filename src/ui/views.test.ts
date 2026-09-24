@@ -306,6 +306,115 @@ describe("creation picker choices", () => {
 });
 
 describe("composer controls", () => {
+  it("shows Session, blank Terminal, and daemon profiles in one categorized New Tab picker", async () => {
+    const terminal = new RecordingTerminal(100, 30);
+    const intents: unknown[] = [];
+    const pickerState: AppState = {
+      ...state(),
+      selectedWorkspaceId: "w",
+      modal: {
+        type: "new-tab",
+        workspaceId: "w",
+        profiles: [{ id: "codex", name: "Codex", command: "codex" }],
+      },
+    };
+    const deck = new DeckTui(terminal, pickerState, (intent) => intents.push(intent), {
+      appearance: { color: "none", unicode: true, theme: "plain", symbols: "unicode" },
+    });
+    deck.start();
+    deck.update(pickerState);
+    await terminal.waitForRender();
+    const screen = terminal.viewport().join("\n");
+    expect(screen).toContain("New Tab");
+    expect(screen).toContain("Session");
+    expect(screen).toContain("Terminal");
+    expect(screen).toContain("Blank");
+    expect(screen).toContain("Codex");
+    terminal.sendInput("\u001b[B");
+    terminal.sendInput("\u001b[B");
+    terminal.sendInput("\r");
+    expect(intents).toContainEqual({
+      type: "new-tab-choice",
+      choice: { kind: "profile", profileId: "codex" },
+    });
+    await deck.stop();
+  });
+
+  it("keeps the final daemon profile reachable in a short picker", async () => {
+    const terminal = new RecordingTerminal(52, 18);
+    const profiles = Array.from({ length: 20 }, (_, index) => ({
+      id: `profile-${index}`,
+      name: `Profile ${index}`,
+      command: "echo",
+    }));
+    const pickerState: AppState = {
+      ...state(),
+      selectedWorkspaceId: "w",
+      modal: { type: "new-tab", workspaceId: "w", profiles },
+    };
+    const deck = new DeckTui(terminal, pickerState, () => undefined);
+    deck.start();
+    deck.update(pickerState);
+    for (let index = 0; index < profiles.length + 1; index += 1) terminal.sendInput("\u001b[B");
+    await terminal.waitForRender();
+    expect(terminal.viewport().join("\n")).toContain("Profile 19");
+    await deck.stop();
+  });
+
+  it("labels only the active terminal main pane border with its Vim mode", async () => {
+    const terminal = new RecordingTerminal(100, 24);
+    const deck = new DeckTui(
+      terminal,
+      {
+        ...state(),
+        selectedWorkspaceId: "w",
+        activeTerminalId: "term",
+        terminalMode: "insert",
+        terminalLines: { term: ["literal input"] },
+        workspaceTerminals: {
+          w: [{ id: "term", workspaceId: "w", cwd: "/workspace", name: "build" }],
+        },
+        tabOrder: { w: ["terminal:term"] },
+        activeTabIds: { w: "terminal:term" },
+        focus: "timeline",
+      },
+      () => undefined,
+      { appearance: { color: "none", unicode: true, theme: "plain", symbols: "unicode" } },
+    );
+    deck.start();
+    await terminal.waitForRender();
+    const lines = terminal.viewport();
+    await deck.stop();
+    expect(lines.join("\n")).toContain("INSERT");
+    expect(lines.filter((line) => line.includes("INSERT"))).toHaveLength(1);
+    expect(lines.join("\n")).toContain("literal input");
+
+    const sidebarTerminal = new RecordingTerminal(100, 24);
+    const sidebarDeck = new DeckTui(
+      sidebarTerminal,
+      {
+        ...state(),
+        selectedWorkspaceId: "w",
+        activeTerminalId: "term",
+        terminalMode: "normal",
+        terminalLines: { term: ["literal input"] },
+        workspaceTerminals: {
+          w: [{ id: "term", workspaceId: "w", cwd: "/workspace", name: "build" }],
+        },
+        tabOrder: { w: ["terminal:term"] },
+        activeTabIds: { w: "terminal:term" },
+        focus: "tree",
+      },
+      () => undefined,
+      { appearance: { color: "none", unicode: true, theme: "plain", symbols: "unicode" } },
+    );
+    sidebarDeck.start();
+    await sidebarTerminal.waitForRender();
+    const sidebarLines = sidebarTerminal.viewport();
+    await sidebarDeck.stop();
+    expect(sidebarLines.filter((line) => line.includes("NORMAL"))).toHaveLength(1);
+  });
+
   it("shows draft parameters in the composer without repeating them in the timeline", async () => {
     const terminal = new RecordingTerminal(100, 28);
     const base = state();

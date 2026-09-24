@@ -6,7 +6,7 @@ import type {
   TimelineEvent,
   UsageSummary,
 } from "./domain.js";
-import type { TerminalRecord } from "./terminal.js";
+import type { TerminalProfile, TerminalRecord } from "./terminal.js";
 
 export type FocusArea = "tree" | "timeline" | "composer";
 export type ComposerMode = "normal" | "insert" | "visual";
@@ -33,7 +33,7 @@ export type ModalState =
   | { type: "notifications"; index: number }
   | { type: "filter"; query: string }
   | { type: "create-terminal"; workspaceId: string; name: string; error?: string }
-  | { type: "new-tab"; workspaceId: string }
+  | { type: "new-tab"; workspaceId: string; profiles?: readonly TerminalProfile[] }
   | {
       type: "draft-setting";
       workspaceId: string;

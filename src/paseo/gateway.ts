@@ -1,4 +1,8 @@
 import { createPaseoClient, type PaseoClient } from "@getpaseo/client";
+import {
+  resolveTerminalProfileLaunch,
+  resolveTerminalProfiles,
+} from "@getpaseo/protocol/terminal-profiles";
 import type { AgentCommand, CommandResult } from "../contracts/commands.js";
 import type {
   AgentRecord,
@@ -21,6 +25,7 @@ import type {
   TerminalCapture,
   TerminalCreateOptions,
   TerminalObservation,
+  TerminalProfile,
   TerminalRecord,
   TerminalStreamUpdate,
 } from "../contracts/terminal.js";
@@ -128,6 +133,15 @@ export class ProductionPaseoGateway implements PaseoGateway {
     }
   }
 
+  public async listTerminalProfiles(): Promise<readonly TerminalProfile[]> {
+    try {
+      const { config } = await this.requireClient().config.get();
+      return resolveTerminalProfiles(config.terminalProfiles);
+    } catch (error) {
+      throw paseoFailure(error, "protocol");
+    }
+  }
+
   public async createTerminal(
     workspaceId: string,
     options: TerminalCreateOptions = {},
@@ -153,6 +167,13 @@ export class ProductionPaseoGateway implements PaseoGateway {
     } catch (error) {
       throw paseoFailure(error, "command");
     }
+  }
+
+  public async createProfileTerminal(
+    workspaceId: string,
+    profile: TerminalProfile,
+  ): Promise<TerminalRecord> {
+    return this.createTerminal(workspaceId, resolveTerminalProfileLaunch(profile, ""));
   }
 
   public async captureTerminal(
