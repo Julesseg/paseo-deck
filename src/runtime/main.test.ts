@@ -324,13 +324,13 @@ describe("runCli", () => {
       treeWidth: 36,
       treeOrder: "alphabetical",
       showArchived: true,
-      expandedIds: ["project"],
+      expandedIds: ["project", "workspace"],
     });
     expect(parsed.targets[targetScope({ type: "host", value: "b:1" })]).toMatchObject({
       treeWidth: 32,
       treeOrder: "attention",
       showArchived: false,
-      expandedIds: ["project"],
+      expandedIds: ["project", "workspace"],
     });
   });
 });
@@ -397,15 +397,8 @@ function treeDirectory(): DirectorySnapshot {
 }
 
 async function mutateTreePreferences(terminal: RecordingTerminal, widen: boolean): Promise<void> {
+  terminal.sendInput("\u001b");
   terminal.sendInput("n");
-  terminal.sendInput("j");
-  await tick();
-  terminal.sendInput("\r");
-  await tick();
-  terminal.sendInput("j");
-  await tick();
-  terminal.sendInput("\r");
-  await tick();
   if (widen) {
     terminal.sendInput("o");
     terminal.sendInput("v");

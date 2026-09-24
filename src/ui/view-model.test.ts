@@ -11,11 +11,14 @@ import {
   renderDashboard,
   timelineDisplay,
   timelineItemDisplay,
+  workspaceTabs,
 } from "./view-model.js";
 
 function state(): AppState {
   return {
     connection: "connected",
+    tabOrder: {},
+    activeTabIds: {},
     recovery: { attempt: 0, directoryStale: false, timelineStale: false },
     notifications: [],
     directory: {
@@ -66,6 +69,21 @@ function state(): AppState {
 }
 
 describe("tree view model", () => {
+  it("only renders resources owned by the active workspace", () => {
+    const current = state();
+    const tabs = workspaceTabs({
+      ...current,
+      tabOrder: { w: ["session:agent-123456", "terminal:other-terminal", "terminal:own-terminal"] },
+      workspaceTerminals: {
+        w: [{ id: "own-terminal", workspaceId: "w", cwd: "/deck", name: "own" }],
+        other: [{ id: "other-terminal", workspaceId: "other", cwd: "/tmp", name: "other" }],
+      },
+    });
+    expect(tabs.map((tab) => `${tab.kind}:${tab.id}`)).toEqual([
+      "session:agent-123456",
+      "terminal:own-terminal",
+    ]);
+  });
   it.each([
     ["attention", { status: "idle", needsAttention: true, pendingPermissions: [] }],
     ["working", { status: "running", needsAttention: false, pendingPermissions: [] }],

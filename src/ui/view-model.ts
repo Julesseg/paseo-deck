@@ -15,16 +15,18 @@ export type WorkspaceTab =
 export function workspaceTabs(state: AppState): WorkspaceTab[] {
   const workspaceId = state.selectedWorkspaceId;
   if (!workspaceId) return [];
-  return [
-    ...state.directory.agents
-      .filter((agent) => agent.workspaceId === workspaceId && !agent.archived)
-      .map((agent) => ({ kind: "session" as const, id: agent.id, agent })),
-    ...(state.workspaceTerminals?.[workspaceId] ?? []).map((terminal) => ({
-      kind: "terminal" as const,
-      id: terminal.id,
-      terminal,
-    })),
-  ];
+  return (state.tabOrder[workspaceId] ?? []).flatMap((key): WorkspaceTab[] => {
+    if (key.startsWith("session:")) {
+      const agent = state.directory.agents.find(
+        (item) => item.id === key.slice(8) && item.workspaceId === workspaceId && !item.archived,
+      );
+      return agent ? [{ kind: "session", id: agent.id, agent }] : [];
+    }
+    const terminal = (state.workspaceTerminals?.[workspaceId] ?? []).find(
+      (item) => item.id === key.slice(9) && item.workspaceId === workspaceId,
+    );
+    return terminal ? [{ kind: "terminal", id: terminal.id, terminal }] : [];
+  });
 }
 
 export interface TreeRow {

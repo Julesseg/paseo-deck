@@ -15,7 +15,13 @@ export type SemanticTone =
   | "code";
 
 /** Background layers are intentionally separate from semantic foreground hues. */
-export type BackgroundTone = "sidebar" | "tab-strip" | "active-session" | "composer" | "selection";
+export type BackgroundTone =
+  | "sidebar"
+  | "tab-inactive"
+  | "tab-active"
+  | "active-session"
+  | "composer"
+  | "selection";
 
 export type DeckGlyph =
   | "agent"
@@ -77,28 +83,32 @@ const truecolor: Readonly<Record<SemanticTone, readonly [number, number, number]
 // the interface feel like a collection of coloured cards.
 const emberBackground: Readonly<Record<BackgroundTone, readonly [number, number, number]>> = {
   sidebar: [31, 29, 27],
-  "tab-strip": [39, 36, 33],
+  "tab-inactive": [55, 51, 47],
+  "tab-active": [101, 69, 43],
   "active-session": [45, 42, 37],
   composer: [39, 36, 33],
   selection: [51, 46, 39],
 };
 const emberBackground256: Readonly<Record<BackgroundTone, number>> = {
   sidebar: 235,
-  "tab-strip": 237,
+  "tab-inactive": 237,
+  "tab-active": 240,
   "active-session": 238,
   composer: 237,
   selection: 239,
 };
 const emberBackground16: Readonly<Record<BackgroundTone, number>> = {
   sidebar: 40,
-  "tab-strip": 100,
+  "tab-inactive": 100,
+  "tab-active": 43,
   "active-session": 40,
   composer: 100,
   selection: 100,
 };
 const surfaceOpacity: Readonly<Record<BackgroundTone, number>> = {
   sidebar: 0.035,
-  "tab-strip": 0.06,
+  "tab-inactive": 0.16,
+  "tab-active": 0.32,
   "active-session": 0.075,
   composer: 0.06,
   selection: 0.1,
@@ -173,6 +183,27 @@ export class DeckTheme {
     return `${prefix}${safe.replaceAll("\u001b[0m", `\u001b[0m${prefix}`)}\u001b[0m`;
   }
 
+  /** Uses the terminal's own foreground for pills when its background cannot be sampled. */
+  styleTabBody(tone: "tab-inactive" | "tab-active", textTone: SemanticTone, value: string): string {
+    if (this.appearance.color === "none" || this.appearance.theme === "plain") return value;
+    if (this.paletteId() === "terminal" && !this.appearance.background)
+      return `\u001b[${tone === "tab-active" ? "7" : "2;7"}m${value}\u001b[0m`;
+    return this.styleRenderedBackground(tone, this.styleRendered(textTone, value));
+  }
+
+  /** Colours a pill endcap to match the tab body without filling its outside edge. */
+  styleTabCap(tone: "tab-inactive" | "tab-active", value: string): string {
+    if (this.appearance.color === "none" || this.appearance.theme === "plain") return value;
+    if (this.paletteId() === "terminal" && !this.appearance.background)
+      return tone === "tab-active" ? value : `\u001b[2m${value}\u001b[0m`;
+    if (this.appearance.color === "ansi16")
+      return `\u001b[${emberBackground16[tone] - 10}m${value}\u001b[0m`;
+    if (this.appearance.color === "ansi256")
+      return `\u001b[38;5;${emberBackground256[tone]}m${value}\u001b[0m`;
+    const [red, green, blue] = this.backgroundColor(tone);
+    return `\u001b[38;2;${red};${green};${blue}m${value}\u001b[0m`;
+  }
+
   /**
    * Styles trusted internal render output without sanitising it again. Callers
    * must only pass Deck-generated text or Markdown sourced through the
@@ -244,10 +275,21 @@ export class DeckTheme {
   private backgroundPrefix(tone: BackgroundTone): string {
     if (this.appearance.color === "ansi16") return `\u001b[${emberBackground16[tone]}m`;
     if (this.appearance.color === "ansi256") return `\u001b[48;5;${emberBackground256[tone]}m`;
-    const [red, green, blue] = this.appearance.background
-      ? overlayBackground(this.appearance.background, surfaceOpacity[tone])
-      : emberBackground[tone];
+    const [red, green, blue] = this.backgroundColor(tone);
     return `\u001b[48;2;${red};${green};${blue}m`;
+  }
+
+  private backgroundColor(tone: BackgroundTone): readonly [number, number, number] {
+    if (!this.appearance.background) return emberBackground[tone];
+    if (tone === "tab-active") {
+      const dark = relativeLuminance(this.appearance.background) < 0.5;
+      return blendBackground(
+        this.appearance.background,
+        dark ? [207, 132, 66] : [116, 71, 38],
+        dark ? 0.4 : 0.28,
+      );
+    }
+    return overlayBackground(this.appearance.background, surfaceOpacity[tone]);
   }
 
   private paletteId(): PaletteId {
@@ -261,11 +303,17 @@ function overlayBackground(
   opacity: number,
 ): readonly [number, number, number] {
   const target = relativeLuminance(background) < 0.5 ? 255 : 0;
-  return background.map((channel) => Math.round(channel * (1 - opacity) + target * opacity)) as [
-    number,
-    number,
-    number,
-  ];
+  return blendBackground(background, [target, target, target], opacity);
+}
+
+function blendBackground(
+  background: TerminalBackground,
+  target: TerminalBackground,
+  opacity: number,
+): readonly [number, number, number] {
+  return background.map((channel, index) =>
+    Math.round(channel * (1 - opacity) + (target[index] ?? 0) * opacity),
+  ) as [number, number, number];
 }
 
 function relativeLuminance([red, green, blue]: TerminalBackground): number {

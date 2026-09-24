@@ -9,6 +9,8 @@ describe("application state contracts", () => {
   it("finds the selected agent by its stable id", () => {
     const state: AppState = {
       connection: "connected",
+      tabOrder: {},
+      activeTabIds: {},
       recovery: { attempt: 0, directoryStale: false, timelineStale: false },
       notifications: [],
       directory: {

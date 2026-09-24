@@ -7,6 +7,8 @@ import { DeckController } from "./controller.js";
 function makeState(): AppState {
   return {
     connection: "connected",
+    tabOrder: {},
+    activeTabIds: {},
     recovery: { attempt: 0, directoryStale: false, timelineStale: false },
     notifications: [],
     directory: {
@@ -71,7 +73,53 @@ describe("DeckController keyboard seam", () => {
     controller.handleKey("g");
     controller.handleKey("c");
     expect(intents).toContainEqual({ type: "switch-tab", direction: 1, count: 3 });
-    expect(intents.at(-1)).toEqual({ type: "close-tab" });
+    expect(intents).not.toContainEqual({ type: "close-tab" });
+  });
+  it("uses the same numbered tab navigation in terminal and timeline normal modes", () => {
+    const intents: unknown[] = [];
+    let current: AppState = {
+      ...makeState(),
+      focus: "timeline" as const,
+      activeTerminalId: "terminal-1",
+      terminalMode: "normal" as const,
+      terminalLines: { "terminal-1": ["$ "] },
+    };
+    const controller = new DeckController(
+      () => current,
+      (intent) => intents.push(intent),
+    );
+    for (const key of ["3", "g", "t", "g", "T"]) controller.handleKey(key);
+    expect(intents).toEqual([
+      { type: "switch-tab", direction: 1, count: 3 },
+      { type: "switch-tab", direction: -1 },
+    ]);
+    const { activeTerminalId: _activeTerminalId, ...sessionState } = current;
+    current = sessionState;
+    for (const key of ["g", "t"]) controller.handleKey(key);
+    expect(intents.at(-1)).toEqual({ type: "switch-tab", direction: 1 });
+  });
+  it("leaves terminal normal mode for the sidebar and returns without a hidden composer", () => {
+    const intents: unknown[] = [];
+    let current: AppState = {
+      ...makeState(),
+      focus: "timeline",
+      activeTerminalId: "terminal-1",
+      terminalMode: "normal",
+      terminalLines: { "terminal-1": ["$ "] },
+    };
+    const controller = new DeckController(
+      () => current,
+      (intent) => {
+        intents.push(intent);
+        if (intent.type === "set-focus") current = { ...current, focus: intent.focus };
+      },
+    );
+    controller.handleKey("\u001b");
+    controller.handleKey("\u001b");
+    expect(intents).toEqual([
+      { type: "set-focus", focus: "tree" },
+      { type: "set-focus", focus: "timeline" },
+    ]);
   });
   it("uses direct Vim region transitions from composer normal mode", () => {
     const intents: unknown[] = [];

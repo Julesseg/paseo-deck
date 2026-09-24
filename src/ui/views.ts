@@ -1,5 +1,6 @@
 import {
   type Component,
+  CURSOR_MARKER,
   Editor,
   type Focusable,
   HStack,
@@ -280,71 +281,111 @@ class SessionTabsView implements Component {
   }
   invalidate(): void {}
   render(width: number): string[] {
-    const active = this.state.activeSessionId;
     const workspaceId = this.state.selectedWorkspaceId;
     const resources = workspaceTabs(this.state);
-    const tabs = resources.flatMap((resource) =>
-      resource.kind === "session" ? [resource.agent] : [],
-    );
-    const terminals = resources.flatMap((resource) =>
-      resource.kind === "terminal" ? [resource.terminal] : [],
-    );
-    if (!tabs.length && !terminals.length) {
-      const message = this.theme.style(
-        "muted",
-        `Tabs ${this.theme.glyph("bullet")} ${workspaceId ? "No sessions or terminals in this workspace" : "Open a workspace from the sidebar"}`,
-      );
-      return [
-        this.theme.styleRenderedBackground(
-          "tab-strip",
-          `${this.theme.clipRendered(message, width)}${" ".repeat(Math.max(0, width - terminalDisplayWidth(message)))}`,
-        ),
-      ];
-    }
+    if (!resources.length) return [" ".repeat(width)];
+    const activeId = workspaceId ? this.state.activeTabIds[workspaceId] : undefined;
     const activeIndex = Math.max(
       0,
-      tabs.findIndex((agent) => agent.id === active),
+      resources.findIndex((resource) => `${resource.kind}:${resource.id}` === activeId),
     );
-    const visibleOrder = [...tabs.slice(activeIndex), ...tabs.slice(0, activeIndex)];
-    let used = 0;
-    const labels: string[] = [];
-    for (const agent of visibleOrder) {
-      const attention = agent.needsAttention || agent.pendingPermissions.length > 0;
-      const marker = attention
-        ? this.theme.glyph("attention")
-        : agent.status === "running"
-          ? this.theme.glyph("running")
-          : this.theme.glyph("bullet");
-      const label = ` ${marker} ${sanitizeTerminalText(agent.title)} `;
-      if (used + terminalDisplayWidth(label) > width) break;
-      labels.push(
-        this.theme.styleRenderedBackground(
-          agent.id === active ? "active-session" : "tab-strip",
-          this.theme.styleRendered(attention ? "attention" : "muted", label),
-        ),
-      );
-      used += terminalDisplayWidth(label);
+    const tabs = resources.map((resource) => {
+      const attention =
+        resource.kind === "session"
+          ? resource.agent.needsAttention || resource.agent.pendingPermissions.length > 0
+          : resource.terminal.activity === "attention";
+      const working =
+        resource.kind === "session"
+          ? resource.agent.status === "running" || resource.agent.status === "starting"
+          : resource.terminal.activity === "working";
+      const glyph = resource.kind === "session" ? this.theme.glyph("agent") : "⌁";
+      const status = attention
+        ? ` ${this.theme.glyph("attention")}`
+        : working
+          ? ` ${this.theme.glyph("running")}`
+          : "";
+      const title = resource.kind === "session" ? resource.agent.title : resource.terminal.name;
+      return {
+        label: ` ${glyph}${status} ${sanitizeTerminalText(title)} `,
+        tone: `${resource.kind}:${resource.id}` === activeId ? "tab-active" : "tab-inactive",
+        textTone: attention ? "attention" : working ? "running" : "header",
+      } as const;
+    });
+    const positions: number[] = [];
+    let totalWidth = 0;
+    for (const [index, tab] of tabs.entries()) {
+      positions.push(totalWidth);
+      totalWidth += terminalDisplayWidth(tab.label) + 2 + (index < tabs.length - 1 ? 1 : 0);
     }
-    const prefix = activeIndex > 0 ? `${this.theme.glyph("ellipsis")} ` : "";
-    const terminalLabels = terminals.map((terminal) =>
-      this.theme.styleRenderedBackground(
-        terminal.id === this.state.activeTerminalId ? "active-session" : "tab-strip",
-        this.theme.styleRendered("muted", ` ⌁ ${sanitizeTerminalText(terminal.name)} `),
-      ),
-    );
-    const content = this.theme.clipRendered(
-      prefix +
-        labels.join(this.theme.glyph("divider")) +
-        terminalLabels.join(this.theme.glyph("divider")),
-      width,
-    );
-    return [
-      this.theme.styleRenderedBackground(
-        "tab-strip",
-        `${content}${" ".repeat(Math.max(0, width - terminalDisplayWidth(content)))}`,
-      ),
-    ];
+    const ellipsis = this.theme.glyph("ellipsis");
+    const ellipsisWidth = terminalDisplayWidth(ellipsis);
+    const baseWidth = Math.max(1, width - 2 * ellipsisWidth);
+    const activeStart = positions[activeIndex] ?? 0;
+    const activeEnd = activeStart + terminalDisplayWidth(tabs[activeIndex]?.label ?? "") + 2;
+    let start =
+      totalWidth <= width
+        ? 0
+        : Math.max(
+            0,
+            Math.min(totalWidth - baseWidth, Math.floor((activeStart + activeEnd - baseWidth) / 2)),
+          );
+    if (activeEnd - activeStart <= baseWidth) {
+      start = Math.min(start, activeStart);
+      start = Math.max(start, activeEnd - baseWidth);
+    }
+    const leading = start > 0 ? ellipsis : "";
+    const available = Math.max(0, width - terminalDisplayWidth(leading));
+    const trailing = start + available < totalWidth ? ellipsis : "";
+    const end = start + Math.max(0, available - terminalDisplayWidth(trailing));
+    const pieces = [this.theme.styleRendered("muted", leading)];
+    for (const [index, tab] of tabs.entries()) {
+      const tabStart = positions[index] ?? 0;
+      const cap =
+        this.theme.appearance.symbols === "unicode" ? (["", ""] as const) : (["[", "]"] as const);
+      const segments = [
+        { text: cap[0], kind: "cap" },
+        { text: tab.label, kind: "body" },
+        { text: cap[1], kind: "cap" },
+        { text: index < tabs.length - 1 ? " " : "", kind: "space" },
+      ] as const;
+      let segmentStart = tabStart;
+      for (const segment of segments) {
+        const segmentEnd = segmentStart + terminalDisplayWidth(segment.text);
+        const visible = sliceTabCells(
+          segment.text,
+          Math.max(0, start - segmentStart),
+          Math.max(0, Math.min(segmentEnd, end) - segmentStart),
+        );
+        if (visible) {
+          pieces.push(
+            segment.kind === "cap"
+              ? this.theme.styleTabCap(tab.tone, visible)
+              : segment.kind === "body"
+                ? this.theme.styleTabBody(tab.tone, tab.textTone, visible)
+                : visible,
+          );
+        }
+        segmentStart = segmentEnd;
+      }
+    }
+    pieces.push(this.theme.styleRendered("muted", trailing));
+    const content = pieces.join("");
+    return [`${content}${" ".repeat(Math.max(0, width - terminalDisplayWidth(content)))}`];
   }
+}
+
+function sliceTabCells(value: string, from: number, to: number): string {
+  if (to <= from) return "";
+  let offset = 0;
+  let result = "";
+  for (const { segment } of new Intl.Segmenter(undefined, { granularity: "grapheme" }).segment(
+    value,
+  )) {
+    const next = offset + terminalDisplayWidth(segment);
+    if (next > from && offset < to) result += offset >= from && next <= to ? segment : " ";
+    offset = next;
+  }
+  return result;
 }
 
 class ContentPane implements Component {
@@ -410,7 +451,7 @@ class MainPaneRule implements Component {
   constructor(
     private readonly theme: DeckTheme,
     private readonly state: () => AppState,
-    private readonly kind: "top" | "divider" | "bottom",
+    private readonly kind: "top" | "bottom",
   ) {}
   invalidate(): void {}
   render(width: number): string[] {
@@ -1137,6 +1178,11 @@ class StatusView implements Component {
     const selected = this.state.directory.agents.find(
       (agent) => agent.id === this.state.selectedAgentId,
     );
+    const activeTerminal = this.state.selectedWorkspaceId
+      ? (this.state.workspaceTerminals?.[this.state.selectedWorkspaceId] ?? []).find(
+          (terminal) => terminal.id === this.state.activeTerminalId,
+        )
+      : undefined;
     const usage = this.state.timeline.usage ?? selected?.lastUsage;
     const usageDetails = usage
       ? [
@@ -1160,7 +1206,9 @@ class StatusView implements Component {
               : "",
             usageDetails ? `${separator}${usageDetails}` : "",
           )
-      : "no agent selected";
+      : activeTerminal
+        ? `terminal ${sanitizeTerminalText(activeTerminal.name)}`
+        : "no active resource";
     const permissions = this.state.directory.agents.reduce(
       (total, agent) => total + agent.pendingPermissions.length,
       0,
@@ -1176,7 +1224,7 @@ class StatusView implements Component {
       ? ` ${this.theme.glyph("bullet")} ${active.kind}${active.failureKind ? `/${active.failureKind}` : ""}: ${sanitizeTerminalText(active.message)}${active.detail ? ` ${this.theme.glyph("bullet")} E details` : ""}${active.retry ? ` ${this.theme.glyph("bullet")} R retry` : ""}${this.state.notifications.length > 1 ? ` ${this.theme.glyph("bullet")} ${this.state.notifications.length} notices ${this.theme.glyph("bullet")} N review` : ""}`
       : "";
     const line = this.theme.clipRendered(
-      `${selected ? details : "no active session"}${separator}${connection}${compact ? "" : `${separator}permissions ${permissions}`}${notification}`,
+      `${details}${separator}${connection}${compact ? "" : `${separator}permissions ${permissions}`}${notification}`,
       width,
     );
     const tone =
@@ -1379,8 +1427,12 @@ function framedChoicePickerLines(
     innerWidth,
   )}${topRight}`;
   const frame = (line: string): string => {
-    const body = theme.clipRendered(line, innerWidth);
-    const padded = `${body}${" ".repeat(Math.max(0, innerWidth - terminalDisplayWidth(body)))}`;
+    const withoutMarker = line.replaceAll(CURSOR_MARKER, "");
+    const body =
+      line.includes(CURSOR_MARKER) && terminalDisplayWidth(withoutMarker) <= innerWidth
+        ? line
+        : theme.clipRendered(withoutMarker, innerWidth);
+    const padded = `${body}${" ".repeat(Math.max(0, innerWidth - terminalDisplayWidth(body.replaceAll(CURSOR_MARKER, ""))))}`;
     return theme.styleRenderedBackground(
       "composer",
       `${theme.styleRendered("border", vertical)}${padded}${theme.styleRendered("border", vertical)}`,
@@ -1521,8 +1573,26 @@ class SearchableChoiceDialog implements Component, Focusable {
   }
   private matches(): readonly CreationChoice[] {
     const query = this.query.getValue().toLocaleLowerCase();
-    return this.items.filter((item) => item.label.toLocaleLowerCase().includes(query));
+    if (!query) return this.items;
+    return this.items
+      .map((item, index) => ({ item, index, score: fuzzyChoiceScore(item.label, query) }))
+      .filter(({ score }) => score >= 0)
+      .sort((left, right) => left.score - right.score || left.index - right.index)
+      .map(({ item }) => item);
   }
+}
+
+function fuzzyChoiceScore(label: string, query: string): number {
+  const text = label.toLocaleLowerCase();
+  let previous = -1;
+  let score = 0;
+  for (const character of query) {
+    const found = text.indexOf(character, previous + 1);
+    if (found < 0) return -1;
+    score += found - previous - 1;
+    previous = found;
+  }
+  return score;
 }
 
 class CommandPaletteDialog implements Component, Focusable {
@@ -1732,11 +1802,6 @@ export class DeckTui {
             },
             { component: this.tabs, basis: 1, minSize: 1 },
             {
-              component: new MainPaneRule(this.theme, () => this.state, "divider"),
-              basis: 1,
-              minSize: 1,
-            },
-            {
               component: new HStack(
                 [
                   {
@@ -1752,28 +1817,39 @@ export class DeckTui {
                         component: new Spacer(1),
                         basis: 1,
                         minSize: 0,
-                        visible: (viewport) => viewport.height >= 20,
+                        visible: (viewport) =>
+                          viewport.height >= 20 && !this.state.activeTerminalId,
                       },
                       { component: this.transcript, basis: 0, grow: 1, minSize: 3 },
                       {
                         component: new Spacer(2),
                         basis: 2,
                         minSize: 0,
-                        visible: (viewport) => viewport.height >= 24,
+                        visible: (viewport) =>
+                          viewport.height >= 24 && !this.state.activeTerminalId,
                       },
                       {
                         component: new Spacer(1),
                         basis: 1,
                         minSize: 0,
-                        visible: (viewport) => viewport.height >= 18 && viewport.height < 24,
+                        visible: (viewport) =>
+                          viewport.height >= 18 &&
+                          viewport.height < 24 &&
+                          !this.state.activeTerminalId,
                       },
                       {
                         component: new SessionActivityView(() => this.state, this.theme),
                         basis: 1,
                         minSize: 1,
-                        visible: (viewport) => viewport.height >= 24,
+                        visible: (viewport) =>
+                          viewport.height >= 24 && !this.state.activeTerminalId,
                       },
-                      { component: this.composer, basis: "auto", minSize: 4 },
+                      {
+                        component: this.composer,
+                        basis: "auto",
+                        minSize: 4,
+                        visible: () => !this.state.activeTerminalId,
+                      },
                     ]),
                     basis: 100,
                     shrink: 1,
@@ -1902,7 +1978,7 @@ export class DeckTui {
     this.timeline.updateSelection(state);
     this.composer.update(state);
     this.status.update(state);
-    this.tui.setFocus(state.focus === "composer" ? this.composer : null);
+    this.tui.setFocus(state.focus === "composer" && !state.activeTerminalId ? this.composer : null);
     this.syncModal();
     this.syncSidebarOverlay();
     if (
@@ -2296,7 +2372,10 @@ export class DeckTui {
       else this.transcript.scrollTo(snapshot.scrollTop, { disableFollow: true });
       this.setTimelineFollowing(snapshot.following, snapshot.anchor);
     }
-    if (!this.appOverlay) this.tui.setFocus(this.state.focus === "composer" ? this.composer : null);
+    if (!this.appOverlay)
+      this.tui.setFocus(
+        this.state.focus === "composer" && !this.state.activeTerminalId ? this.composer : null,
+      );
     this.renderScheduler.requestImmediate();
   }
 
@@ -2446,7 +2525,10 @@ export class DeckTui {
     const key = JSON.stringify(this.state.modal);
     if (key === this.appModalKey) return;
     this.disposeLocalOverlay();
-    this.appOverlay?.unfocus({ target: this.state.focus === "composer" ? this.composer : null });
+    this.appOverlay?.unfocus({
+      target:
+        this.state.focus === "composer" && !this.state.activeTerminalId ? this.composer : null,
+    });
     this.appOverlay?.hide();
     this.appOverlay = undefined;
     this.appModalKey = key;
@@ -2504,11 +2586,39 @@ export class DeckTui {
         close,
         this.theme,
       );
-    else if (modal.type === "confirm")
+    else if (modal.type === "confirm" && modal.action === "kill-terminal") {
+      const choices = [
+        { value: "no", label: "No", description: "Keep terminal running", disabled: false },
+        {
+          value: "yes",
+          label: "Yes",
+          description: "Terminate terminal and its process",
+          disabled: false,
+        },
+      ];
+      const title = "Terminate terminal?";
+      component = new SearchableChoiceDialog(
+        title,
+        choices,
+        (choice) => (choice === "yes" ? this.controller.confirm(modal) : close()),
+        close,
+        "no",
+        this.choicePickerMaxVisible(true),
+        this.theme,
+      );
+      overlayOptions = {
+        width: centeredChoicePickerWidth(this.terminal.columns, title, choices),
+        maxHeight: Math.max(1, this.terminal.rows - 2),
+        margin: 1,
+        visible: (columns, rows) => shellLayout(columns, rows, this.treeWidth).supported,
+      };
+    } else if (modal.type === "confirm")
       component = new Dialog(
         [
-          `${modal.action} this agent?`,
-          ...(modal.draftWarning ? ["This agent has an unsent draft; it will be preserved."] : []),
+          `${modal.action === "archive" ? "Archive" : modal.action === "stop" ? "Stop" : "Detach"} this session?`,
+          ...(modal.draftWarning
+            ? ["This session has an unsent draft; it will be preserved."]
+            : []),
         ],
         (data) => {
           if (matchesKey(data, "enter")) this.controller.confirm(modal);

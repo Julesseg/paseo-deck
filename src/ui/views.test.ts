@@ -20,6 +20,8 @@ import {
 function state(): AppState {
   return {
     connection: "connected",
+    tabOrder: {},
+    activeTabIds: {},
     recovery: { attempt: 0, directoryStale: false, timelineStale: false },
     notifications: [],
     directory: {
@@ -303,6 +305,167 @@ describe("creation picker choices", () => {
 });
 
 describe("composer controls", () => {
+  it("windows a mixed tab row around the active resource and swaps its content", async () => {
+    const terminal = new RecordingTerminal(70, 18);
+    const base = state();
+    const agents = Array.from({ length: 8 }, (_, index) => ({
+      id: `agent-${index + 1}`,
+      workspaceId: "w",
+      title: `Work-${index + 1}-long-title`,
+      status: "idle" as const,
+      availableModeIds: [],
+      availableThinkingLevels: [],
+      pendingPermissions: [],
+      needsAttention: false,
+      archived: false,
+    }));
+    const order = [
+      ...agents.map((agent) => `session:${agent.id}` as const),
+      "terminal:terminal-1" as const,
+    ];
+    let current: AppState = {
+      ...base,
+      directory: { ...base.directory, agents },
+      selectedWorkspaceId: "w",
+      selectedAgentId: "agent-4",
+      activeSessionId: "agent-4",
+      tabOrder: { w: order },
+      activeTabIds: { w: "session:agent-4" },
+      workspaceTerminals: {
+        w: [{ id: "terminal-1", workspaceId: "w", cwd: "/workspace", name: "build" }],
+      },
+      timeline: {
+        recoveryRevision: 0,
+        agentId: "agent-4",
+        loading: false,
+        items: [
+          {
+            epoch: "e",
+            sequence: 1,
+            item: { id: "message", type: "user-message", text: "session sample" },
+          },
+        ],
+      },
+    };
+    const deck = new DeckTui(terminal, current, () => undefined, {
+      appearance: { color: "none", unicode: true, theme: "plain", symbols: "unicode" },
+    });
+    deck.start();
+    await terminal.waitForRender();
+    const sessionView = terminal.viewport().join("\n");
+    expect(sessionView).toContain("Work-4-long-title");
+    expect(sessionView).toContain("session sample");
+    expect(sessionView).toMatch(/….*Work-4-long-title.*…/);
+    const {
+      selectedAgentId: _selectedAgentId,
+      activeSessionId: _activeSessionId,
+      ...withoutSession
+    } = current;
+    current = {
+      ...withoutSession,
+      activeTerminalId: "terminal-1",
+      activeTabIds: { w: "terminal:terminal-1" },
+      terminalLines: { "terminal-1": ["terminal sample"] },
+    };
+    deck.update(current);
+    await terminal.waitForRender();
+    await deck.stop();
+    const terminalView = terminal.viewport().join("\n");
+    expect(terminalView).toContain("build");
+    expect(terminalView).toContain("terminal sample");
+    expect(terminalView).toContain("terminal build");
+    expect(terminalView).not.toContain("session sample");
+    expect(terminalView).not.toContain("Prompt →");
+    expect(terminalView).not.toContain("Session activity");
+  });
+
+  it("renders separate pills with a distinct active background and no tab rule", async () => {
+    const terminal = new RecordingTerminal(100, 28);
+    const base = state();
+    const agents = ["Atlas", "Harbor"].map((title, index) => ({
+      id: `agent-${index}`,
+      workspaceId: "w",
+      title,
+      status: "idle" as const,
+      availableModeIds: [],
+      availableThinkingLevels: [],
+      pendingPermissions: [],
+      needsAttention: false,
+      archived: false,
+    }));
+    const deck = new DeckTui(
+      terminal,
+      {
+        ...base,
+        directory: { ...base.directory, agents },
+        selectedWorkspaceId: "w",
+        selectedAgentId: "agent-1",
+        activeSessionId: "agent-1",
+        tabOrder: { w: ["session:agent-0", "session:agent-1"] },
+        activeTabIds: { w: "session:agent-1" },
+      },
+      () => undefined,
+      {
+        appearance: {
+          color: "truecolor",
+          unicode: true,
+          theme: "ember",
+          palette: "terminal",
+          background: [28, 25, 23],
+          symbols: "unicode",
+        },
+      },
+    );
+    deck.start();
+    await terminal.waitForRender();
+    const row = terminal.viewport().findIndex((line) => line.includes("Atlas"));
+    const line = terminal.viewport()[row] ?? "";
+    const backgrounds = terminal.viewportBackgrounds()[row] ?? [];
+    await deck.stop();
+
+    expect(line).toContain(" • Atlas   • Harbor ");
+    expect(backgrounds[line.indexOf("Atlas")]).toBeDefined();
+    expect(backgrounds[line.indexOf("Harbor")]).toBeDefined();
+    expect(backgrounds[line.indexOf("Atlas")]).not.toBe(backgrounds[line.indexOf("Harbor")]);
+    expect(terminal.viewport()[row + 1]).not.toMatch(/─{5}/);
+  });
+
+  it("reserves the trailing ellipsis when one active title fills the strip", async () => {
+    const terminal = new RecordingTerminal(70, 18);
+    const base = state();
+    const agents = ["VeryLong".repeat(20), "Next"].map((title, index) => ({
+      id: `agent-${index}`,
+      workspaceId: "w",
+      title,
+      status: "idle" as const,
+      availableModeIds: [],
+      availableThinkingLevels: [],
+      pendingPermissions: [],
+      needsAttention: false,
+      archived: false,
+    }));
+    const current: AppState = {
+      ...base,
+      directory: { ...base.directory, agents },
+      selectedWorkspaceId: "w",
+      selectedAgentId: "agent-0",
+      activeSessionId: "agent-0",
+      tabOrder: { w: ["session:agent-0", "session:agent-1"] },
+      activeTabIds: { w: "session:agent-0" },
+    };
+    const deck = new DeckTui(terminal, current, () => undefined, {
+      appearance: { color: "none", unicode: true, theme: "plain", symbols: "unicode" },
+    });
+    deck.start();
+    await terminal.waitForRender();
+    const tabRow = terminal.viewport().find((line) => line.includes("VeryLong"));
+    await deck.stop();
+    expect(tabRow).toBeDefined();
+    expect(tabRow?.match(/…/g)).toHaveLength(2);
+    expect(tabRow).toMatch(/….*VeryLong.*…│/);
+    expect(tabRow).not.toContain("Next");
+  });
+
   it("places the tab strip, timeline, and one-piece composer inside the main-pane frame", async () => {
     const terminal = new RecordingTerminal(160, 28);
     const current = {
@@ -2150,7 +2313,7 @@ describe("DeckTui viewport and focus", () => {
     expect(terminal.viewport().join("\n")).not.toContain("Composer NORMAL:");
   });
 
-  it("keeps a named shortcut hint in the narrow supported footer", async () => {
+  it("leaves the empty workspace tab row blank in a narrow viewport", async () => {
     const terminal = new RecordingTerminal(30, 12);
     const deck = new DeckTui(terminal, state(), () => undefined);
 
@@ -2158,7 +2321,7 @@ describe("DeckTui viewport and focus", () => {
     await terminal.waitForRender();
     await deck.stop();
 
-    expect(terminal.viewport().join("\n")).toContain("Tabs");
+    expect(terminal.viewport().join("\n")).not.toContain("Tabs");
   });
 
   it("recovers the exact session shell after repeated minimum-size resize cycles", async () => {
@@ -2480,6 +2643,59 @@ describe("DeckTui viewport and focus", () => {
     await deck.stop();
     expect(terminal.viewport().join("\n")).toContain("unsent draft; it will be preserved");
   });
+  it("confirms terminal termination through a centered fuzzy choice picker", async () => {
+    const terminal = new RecordingTerminal(100, 28);
+    const intents: unknown[] = [];
+    const current: AppState = {
+      ...state(),
+      modal: { type: "confirm", action: "kill-terminal", terminalId: "terminal-1" },
+    };
+    const deck = new DeckTui(terminal, current, (intent) => intents.push(intent));
+    deck.update(current);
+    deck.start();
+    await terminal.waitForRender();
+    const lines = terminal.viewport();
+    const top = lines.findIndex((line) => line.includes("Terminate terminal?"));
+    const left = lines[top]?.indexOf("┌") ?? -1;
+    expect(top).toBeGreaterThan(4);
+    expect(left).toBeGreaterThan(10);
+    expect(lines.join("\n")).toContain("> No - Keep terminal running");
+    expect(lines.join("\n")).toContain("Yes - Terminate terminal and its process");
+    expect(lines.join("\n")).not.toContain("␛_pi:c");
+
+    terminal.sendInput("y");
+    terminal.sendInput("s");
+    await terminal.waitForRender();
+    expect(terminal.viewport().join("\n")).toContain("> Yes - Terminate terminal and its process");
+    terminal.sendInput("\r");
+    await terminal.waitForRender();
+    await deck.stop();
+    expect(intents).toContainEqual({ type: "kill-terminal-confirmed", terminalId: "terminal-1" });
+  });
+  it("uses arrow keys to choose the safe terminal confirmation option", async () => {
+    const terminal = new RecordingTerminal(100, 28);
+    const intents: unknown[] = [];
+    const current: AppState = {
+      ...state(),
+      modal: { type: "confirm", action: "kill-terminal", terminalId: "terminal-1" },
+    };
+    const deck = new DeckTui(terminal, current, (intent) => intents.push(intent));
+    deck.update(current);
+    deck.start();
+    terminal.sendInput("\u001b[B");
+    await terminal.waitForRender();
+    expect(terminal.viewport().join("\n")).toContain("> Yes - Terminate terminal and its process");
+    terminal.sendInput("\u001b[A");
+    await terminal.waitForRender();
+    expect(terminal.viewport().join("\n")).toContain("> No - Keep terminal running");
+    terminal.sendInput("\r");
+    await terminal.waitForRender();
+    await deck.stop();
+    expect(intents).toContainEqual({ type: "close-modal" });
+    expect(intents).not.toContainEqual(
+      expect.objectContaining({ type: "kill-terminal-confirmed" }),
+    );
+  });
   it("shows mode and token context in the status line when space allows", async () => {
     const terminal = new RecordingTerminal(120, 18);
     const base = state();
@@ -2575,7 +2791,7 @@ describe("DeckTui viewport and focus", () => {
 
     const lines = terminal.viewport();
     expect(lines.join("\n")).toContain("Projects");
-    expect(lines.join("\n")).toContain("Tabs");
+    expect(lines.join("\n")).not.toContain("Tabs");
     expect(lines.join("\n")).toContain("Prompt");
     expect(lines.every((line) => line.length <= 30)).toBe(true);
   });

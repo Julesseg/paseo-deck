@@ -4,13 +4,23 @@ import type { AppState } from "../src/contracts/app-state.js";
 import type { TerminalAppearance } from "../src/ui/capabilities.js";
 import { NARROW_SIDEBAR_BREAKPOINT } from "../src/ui/layout.js";
 import { RecordingTerminal } from "../src/ui/terminal.js";
+import { terminalDisplayWidth } from "../src/ui/text-safety.js";
 import { DeckTui } from "../src/ui/views.js";
 
 const outputDirectory = process.argv[2];
 if (!outputDirectory) throw new Error("Usage: tsx scripts/capture-ui-report.ts <output-directory>");
 
 const baseState = syntheticState();
+const { selectedAgentId: _selectedAgentId, ...terminalBaseState } = baseState;
 const emptyState = withoutSelection(baseState);
+const overflowTemplate = baseState.directory.agents[0];
+if (!overflowTemplate) throw new Error("UI report needs a session fixture");
+const overflowAgents = Array.from({ length: 8 }, (_, index) => ({
+  ...overflowTemplate,
+  id: `agent-overflow-${index}`,
+  title: `Session ${index + 1} review`,
+  status: "idle" as const,
+}));
 const sampledTerminalAppearance: TerminalAppearance = {
   color: "truecolor",
   unicode: true,
@@ -145,7 +155,53 @@ const shots: Array<{
     state: {
       ...baseState,
       activeSessionId: "agent-atlas-1234",
-      openSessionIds: { "workspace-main": ["agent-atlas-1234", "agent-harbor-5678"] },
+      tabOrder: {
+        ...baseState.tabOrder,
+        "workspace-main": ["session:agent-atlas-1234", "session:agent-harbor-5678"],
+      },
+    },
+  },
+  {
+    name: "unified-overflow",
+    columns: 100,
+    rows: 28,
+    state: {
+      ...baseState,
+      directory: {
+        ...baseState.directory,
+        agents: [...baseState.directory.agents, ...overflowAgents],
+      },
+      tabOrder: {
+        ...baseState.tabOrder,
+        "workspace-main": [
+          "session:agent-atlas-1234",
+          "terminal:terminal-1",
+          ...overflowAgents.map((agent) => `session:${agent.id}` as const),
+          "session:agent-harbor-5678",
+        ],
+      },
+      workspaceTerminals: {
+        "workspace-main": [
+          { id: "terminal-1", workspaceId: "workspace-main", cwd: "/demo/deck", name: "build" },
+        ],
+      },
+      activeTabIds: { ...baseState.activeTabIds, "workspace-main": "session:agent-overflow-3" },
+      activeSessionId: "agent-overflow-3",
+      selectedAgentId: "agent-overflow-3",
+      timeline: { recoveryRevision: 0, agentId: "agent-overflow-3", items: [], loading: false },
+    },
+  },
+  {
+    name: "workspace-restored",
+    columns: 100,
+    rows: 28,
+    state: {
+      ...baseState,
+      selectedWorkspaceId: "workspace-theme",
+      selectedAgentId: "agent-lumen-9012",
+      activeSessionId: "agent-lumen-9012",
+      sidebarSelection: { kind: "workspace", id: "workspace-main" },
+      timeline: { recoveryRevision: 0, agentId: "agent-lumen-9012", items: [], loading: false },
     },
   },
   { name: "session-tree", columns: 100, rows: 28, state: baseState },
@@ -160,6 +216,14 @@ const shots: Array<{
           { id: "terminal-1", workspaceId: "workspace-main", cwd: "/repo", name: "build" },
         ],
       },
+      tabOrder: {
+        ...baseState.tabOrder,
+        "workspace-main": [
+          "session:agent-atlas-1234",
+          "session:agent-harbor-5678",
+          "terminal:terminal-1",
+        ],
+      },
     },
   },
   {
@@ -167,10 +231,23 @@ const shots: Array<{
     columns: 100,
     rows: 28,
     state: {
-      ...baseState,
+      ...terminalBaseState,
       focus: "timeline",
       activeTerminalId: "terminal-1",
-      openTerminalIds: ["terminal-1"],
+      activeTabIds: { ...baseState.activeTabIds, "workspace-main": "terminal:terminal-1" },
+      tabOrder: {
+        ...baseState.tabOrder,
+        "workspace-main": [
+          "session:agent-atlas-1234",
+          "session:agent-harbor-5678",
+          "terminal:terminal-1",
+        ],
+      },
+      workspaceTerminals: {
+        "workspace-main": [
+          { id: "terminal-1", workspaceId: "workspace-main", cwd: "/demo/deck", name: "build" },
+        ],
+      },
       terminalMode: "normal",
       terminalLines: { "terminal-1": ["$ npm test", "All tests passed"] },
     },
@@ -180,12 +257,45 @@ const shots: Array<{
     columns: 100,
     rows: 28,
     state: {
-      ...baseState,
+      ...terminalBaseState,
       focus: "timeline",
       activeTerminalId: "terminal-1",
-      openTerminalIds: ["terminal-1"],
+      activeTabIds: { ...baseState.activeTabIds, "workspace-main": "terminal:terminal-1" },
+      tabOrder: {
+        ...baseState.tabOrder,
+        "workspace-main": [
+          "session:agent-atlas-1234",
+          "session:agent-harbor-5678",
+          "terminal:terminal-1",
+        ],
+      },
+      workspaceTerminals: {
+        "workspace-main": [
+          { id: "terminal-1", workspaceId: "workspace-main", cwd: "/demo/deck", name: "build" },
+        ],
+      },
       terminalMode: "insert",
       terminalLines: { "terminal-1": ["$ "] },
+    },
+  },
+  {
+    name: "terminal-confirm",
+    columns: 100,
+    rows: 28,
+    state: {
+      ...terminalBaseState,
+      activeTerminalId: "terminal-1",
+      activeTabIds: { ...baseState.activeTabIds, "workspace-main": "terminal:terminal-1" },
+      tabOrder: {
+        ...baseState.tabOrder,
+        "workspace-main": ["session:agent-atlas-1234", "terminal:terminal-1"],
+      },
+      workspaceTerminals: {
+        "workspace-main": [
+          { id: "terminal-1", workspaceId: "workspace-main", cwd: "/demo/deck", name: "build" },
+        ],
+      },
+      modal: { type: "confirm", action: "kill-terminal", terminalId: "terminal-1" },
     },
   },
   {
@@ -579,6 +689,16 @@ for (const shot of shots) {
 function syntheticState(): AppState {
   return {
     connection: "connected",
+    tabOrder: {
+      "workspace-main": ["session:agent-atlas-1234", "session:agent-harbor-5678"],
+      "workspace-theme": ["session:agent-lumen-9012"],
+      "workspace-orphan": ["session:agent-orphan-3456"],
+    },
+    activeTabIds: {
+      "workspace-main": "session:agent-atlas-1234",
+      "workspace-theme": "session:agent-lumen-9012",
+      "workspace-orphan": "session:agent-orphan-3456",
+    },
     recovery: { attempt: 0, directoryStale: false, timelineStale: false },
     notifications: [],
     directory: {
@@ -816,7 +936,18 @@ function terminalSvg(
     .slice(0, rows)
     .map(
       (line, row) =>
-        `<text x="${padding}" y="${chromeHeight + padding + (row + 1) * lineHeight - 4}" xml:space="preserve">${escapeXml(line)}</text>`,
+        `<text x="${padding}" y="${chromeHeight + padding + (row + 1) * lineHeight - 4}" xml:space="preserve">${escapeXml(line.replaceAll("", " ").replaceAll("", " "))}</text>`,
+    )
+    .join("\n");
+  const pillCaps = lines
+    .slice(0, rows)
+    .flatMap((line, row) =>
+      [...line.matchAll(/[]/gu)].map((match) => {
+        const column = terminalDisplayWidth(line.slice(0, match.index));
+        const neighbor = match[0] === "" ? column + 1 : column - 1;
+        const color = backgrounds[row]?.[neighbor] ?? "#f5f5f4";
+        return `<text x="${padding + column * cellWidth}" y="${chromeHeight + padding + (row + 1) * lineHeight - 4}" fill="${color}" font-family="JetBrainsMono Nerd Font Mono, Menlo, Consolas, monospace" font-size="15">${match[0]}</text>`;
+      }),
     )
     .join("\n");
   const backgroundsSvg = backgrounds
@@ -849,9 +980,10 @@ function terminalSvg(
   <circle cx="36" cy="16" r="5" fill="#f59e0b"/>
   <circle cx="54" cy="16" r="5" fill="#22c55e"/>
   <g>${backgroundsSvg}</g>
-  <g fill="#f5f5f4" font-family="Menlo, Consolas, monospace" font-size="15">
+  <g fill="#f5f5f4" font-family="JetBrainsMono Nerd Font Mono, Menlo, Consolas, monospace" font-size="15">
 ${text}
   </g>
+  <g>${pillCaps}</g>
 </svg>`;
 }
 
