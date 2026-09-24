@@ -20,7 +20,7 @@ A workspace that uses a Paseo-managed Git worktree created for that workspace.
 The remote or local Git ref from which Paseo creates a Worktree workspace.
 
 **Session**:
-The user-facing conversation and activity history for one AI coding agent in a workspace. Use this term for tabs, timelines, and user commands.
+The user-facing conversation and activity history for one AI coding agent in a workspace. Use this term for tabs, timelines, and user commands. Sessions do not appear as sidebar rows.
 _Avoid_: Agent, chat, conversation
 
 **Session draft**:
@@ -32,7 +32,7 @@ The provider-backed worker that performs a session's task. Use this term when th
 _Avoid_: Session process
 
 **Terminal**:
-A persistent shell owned by a workspace. A terminal is a workspace resource, not a session timeline item.
+A persistent shell owned by a workspace. A terminal is a workspace resource in the active Workspace's Tab row, not a sidebar row or session timeline item.
 _Avoid_: Console, shell tab
 
 **Terminal profile**:
@@ -119,7 +119,7 @@ A semantic visual cue for attention, working, idle, or done activity. Text or sy
 _Avoid_: Status color
 
 **Workspace activity**:
-The roll-up state of a Workspace's Sessions and Terminals. `attention` means intervention is required, `working` means at least one resource is active, `idle` means the Workspace is available without active work, and `done` means it had resources and all of them have ended or been archived.
+The roll-up state of a Workspace's Sessions and Terminals. `attention` means intervention is required, `working` means at least one resource is active, `idle` means the Workspace is available without active work, including when it is empty and launchable, and `done` means it had resources and all of them have ended or been archived.
 _Avoid_: Workspace status
 
 **Key cue**:

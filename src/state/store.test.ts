@@ -69,10 +69,10 @@ describe("application store", () => {
     });
     state = reduceApp(state, { type: "switch-session-tab", direction: -1 });
     expect(state.activeSessionId).toBe("agent-a");
-    state = { ...state, sidebarSelection: { kind: "session", id: "agent-a" } };
+    state = { ...state, sidebarSelection: { kind: "workspace", id: "workspace-a" } };
     state = reduceApp(state, { type: "switch-session-tab", direction: 1, count: 2 });
     expect(state.activeSessionId).toBe("agent-b");
-    expect(state.sidebarSelection).toEqual({ kind: "session", id: "agent-a" });
+    expect(state.sidebarSelection).toEqual({ kind: "workspace", id: "workspace-a" });
     state = reduceApp(state, { type: "close-session-tab", agentId: "agent-b" });
     expect(state.openSessionIds).toEqual({ "workspace-a": ["agent-a"] });
     expect(state.directory.agents).toHaveLength(2);

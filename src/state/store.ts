@@ -34,7 +34,9 @@ export type AppAction =
   | { type: "set-terminal-mode"; mode: TerminalMode }
   | { type: "terminal-lines"; terminalId: string; lines: readonly string[]; stale?: boolean }
   | { type: "set-terminal-scroll"; terminalId: string; offset: number }
-  | { type: "select-sidebar"; selection?: AppState["sidebarSelection"] }
+  | { type: "select-sidebar"; selection?: AppState["sidebarSelection"]; order?: readonly string[] }
+  | { type: "activate-workspace"; workspaceId: string }
+  | { type: "refresh-sidebar-order" }
   | { type: "select-workspace"; workspaceId?: string }
   | { type: "select-project"; projectId?: string }
   | { type: "set-filter"; filter: string }
@@ -189,6 +191,10 @@ function reconcileSelection(state: AppState, directory: DirectorySnapshot): AppS
   const next: AppState = {
     ...state,
     directory,
+    workspaceHadResources: new Set([
+      ...(state.workspaceHadResources ?? []),
+      ...directory.agents.map((agent) => agent.workspaceId),
+    ]),
     timeline: selectedAgent ? state.timeline : { items: [], loading: false, recoveryRevision: 0 },
   };
   const valid = new Set(
@@ -215,17 +221,13 @@ function reconcileSelection(state: AppState, directory: DirectorySnapshot): AppS
     const exists =
       sidebar.kind === "project"
         ? directory.projects.some((item) => item.id === sidebar.id)
-        : sidebar.kind === "workspace"
-          ? directory.workspaces.some((item) => item.id === sidebar.id)
-          : directory.agents.some((item) => item.id === sidebar.id);
+        : directory.workspaces.some((item) => item.id === sidebar.id);
     if (exists) next.sidebarSelection = sidebar;
     else {
       const fallback =
         sidebar.kind === "project"
           ? nearby(state.directory.projects, directory.projects, sidebar.id, () => true)
-          : sidebar.kind === "workspace"
-            ? nearby(state.directory.workspaces, directory.workspaces, sidebar.id, () => true)
-            : nearby(state.directory.agents, directory.agents, sidebar.id, () => true);
+          : nearby(state.directory.workspaces, directory.workspaces, sidebar.id, () => true);
       if (fallback) next.sidebarSelection = { kind: sidebar.kind, id: fallback.id };
       else delete next.sidebarSelection;
     }
@@ -768,6 +770,7 @@ export function reduceApp(state: AppState, action: AppAction): AppState {
         focus: "timeline",
         ...(agentId ? { activeSessionId: agentId } : {}),
       };
+      delete next.activeTerminalId;
       const sidebarSelection = state.sidebarSelection;
       if (agentId) next.selectedAgentId = agent?.id ?? agentId;
       else delete next.selectedAgentId;
@@ -775,7 +778,7 @@ export function reduceApp(state: AppState, action: AppAction): AppState {
         next.selectedWorkspaceId = agent.workspaceId;
         next.expandedIds = revealWorkspaceIds(state, agent.workspaceId);
       }
-      if (agentId) next.sidebarSelection = { kind: "session", id: agentId };
+      if (agent?.workspaceId) next.sidebarSelection = { kind: "workspace", id: agent.workspaceId };
       else delete next.sidebarSelection;
       if (action.preserveSidebar) {
         if (sidebarSelection) next.sidebarSelection = sidebarSelection;
@@ -861,6 +864,9 @@ export function reduceApp(state: AppState, action: AppAction): AppState {
       const next: AppState = {
         ...state,
         workspaceTerminals: { ...state.workspaceTerminals, [action.workspaceId]: action.terminals },
+        workspaceHadResources: action.terminals.length
+          ? new Set([...(state.workspaceHadResources ?? []), action.workspaceId])
+          : (state.workspaceHadResources ?? new Set()),
         openTerminalIds,
         staleTerminalIds: new Set(
           [...(state.staleTerminalIds ?? [])].filter((id) =>
@@ -878,6 +884,7 @@ export function reduceApp(state: AppState, action: AppAction): AppState {
       if (!terminal) return state;
       return {
         ...state,
+        selectedWorkspaceId: terminal.workspaceId,
         openTerminalIds: (state.openTerminalIds ?? []).includes(terminal.id)
           ? (state.openTerminalIds ?? [])
           : [...(state.openTerminalIds ?? []), terminal.id],
@@ -939,12 +946,33 @@ export function reduceApp(state: AppState, action: AppAction): AppState {
         delete next.sidebarSelection;
         return next;
       }
-      const next = { ...state, sidebarSelection: selection, focus: "tree" as const };
-      // Keep the historical selected project/workspace fields as compatibility
-      // projections for consumers that only render the sidebar. They no longer
-      // replace the active session/timeline.
-      if (selection.kind === "project") next.selectedProjectId = selection.id;
-      if (selection.kind === "workspace") next.selectedWorkspaceId = selection.id;
+      return {
+        ...state,
+        sidebarSelection: selection,
+        ...(state.sidebarOrder || action.order
+          ? { sidebarOrder: state.sidebarOrder ?? action.order ?? [] }
+          : {}),
+        focus: "tree" as const,
+      };
+    }
+    case "activate-workspace": {
+      const workspace = state.directory.workspaces.find((item) => item.id === action.workspaceId);
+      if (!workspace) return state;
+      const next: AppState = {
+        ...state,
+        selectedWorkspaceId: workspace.id,
+        sidebarSelection: { kind: "workspace", id: workspace.id },
+        timeline: { items: [], loading: false, recoveryRevision: 0 },
+        focus: "tree",
+      };
+      delete next.activeSessionId;
+      delete next.selectedAgentId;
+      delete next.activeTerminalId;
+      return next;
+    }
+    case "refresh-sidebar-order": {
+      const next = { ...state };
+      delete next.sidebarOrder;
       return next;
     }
     case "select-workspace": {
@@ -986,8 +1014,11 @@ export function reduceApp(state: AppState, action: AppAction): AppState {
       return { ...state, showArchived: !state.showArchived };
     case "toggle-attention-only":
       return { ...state, attentionOnly: !state.attentionOnly };
-    case "set-focus":
-      return { ...state, focus: action.focus };
+    case "set-focus": {
+      const next = { ...state, focus: action.focus };
+      if (action.focus !== "tree") delete next.sidebarOrder;
+      return next;
+    }
     case "set-composer-mode":
       return { ...state, composerMode: action.mode };
     case "set-timeline-mode":

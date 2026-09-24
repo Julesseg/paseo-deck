@@ -1,12 +1,31 @@
 import type { AppState } from "../contracts/app-state.js";
 import type { AgentRecord, TimelineEvent, TimelineItem } from "../contracts/domain.js";
+import type { TerminalRecord } from "../contracts/terminal.js";
 import { selectedComposerDraft } from "../state/composer.js";
 import { activeNotification } from "../state/store.js";
 import { projectForWorkspace } from "../state/tree.js";
 import { clipTerminalLine, sanitizeTerminalText, wrapTerminalText } from "./text-safety.js";
 
-export type TreeRowKind = "project" | "workspace" | "agent";
+export type TreeRowKind = "project" | "workspace";
 export type WorkspaceActivity = "attention" | "working" | "idle" | "done";
+export type WorkspaceTab =
+  | { kind: "session"; id: string; agent: AgentRecord }
+  | { kind: "terminal"; id: string; terminal: TerminalRecord };
+
+export function workspaceTabs(state: AppState): WorkspaceTab[] {
+  const workspaceId = state.selectedWorkspaceId;
+  if (!workspaceId) return [];
+  return [
+    ...state.directory.agents
+      .filter((agent) => agent.workspaceId === workspaceId && !agent.archived)
+      .map((agent) => ({ kind: "session" as const, id: agent.id, agent })),
+    ...(state.workspaceTerminals?.[workspaceId] ?? []).map((terminal) => ({
+      kind: "terminal" as const,
+      id: terminal.id,
+      terminal,
+    })),
+  ];
+}
 
 export interface TreeRow {
   id: string;
@@ -15,42 +34,17 @@ export interface TreeRow {
   depth: number;
   expanded?: boolean;
   selected: boolean;
-  status?: string;
-  providerModel?: string;
-  activityLabel?: string;
   attention: boolean;
-  permissionCount: number;
-  agentCount?: number;
-  attentionCount?: number;
-  /** Derived workspace activity, or an agent's status for session rows. */
+  /** Derived from sessions and terminals in the workspace. */
   activity?: WorkspaceActivity;
-  /** The workspace containing the active session. */
+  /** The workspace currently shown in the main pane. */
   active?: boolean;
   /** Number of blank lines before this row, used for semantic grouping. */
   gapBefore?: number;
 }
 
-function agentMatches(agent: AgentRecord, filter: string): boolean {
-  return `${agent.title} ${agent.providerId ?? ""} ${agent.modelId ?? ""}`
-    .toLocaleLowerCase()
-    .includes(filter);
-}
-
 function needsIntervention(agent: AgentRecord): boolean {
   return agent.pendingPermissions.length > 0 || agent.needsAttention || agent.status === "failed";
-}
-
-function activityRank(agent: AgentRecord): number {
-  if (agent.pendingPermissions.length > 0) return 4;
-  if (agent.status === "failed") return 3;
-  if (agent.needsAttention) return 2;
-  return agent.status === "running" ? 1 : 0;
-}
-
-function activityTimestamp(agent: AgentRecord): number {
-  if (agent.lastActivityAt === undefined) return Number.NEGATIVE_INFINITY;
-  const timestamp = Date.parse(agent.lastActivityAt);
-  return Number.isNaN(timestamp) ? Number.NEGATIVE_INFINITY : timestamp;
 }
 
 export function activityForAgent(agent: AgentRecord): WorkspaceActivity {
@@ -66,126 +60,119 @@ export function activityForAgents(agents: readonly AgentRecord[]): WorkspaceActi
     return "working";
   if (agents.some((agent) => !["stopped", "archived", "failed"].includes(agent.status)))
     return "idle";
+  return agents.length ? "done" : "idle";
+}
+
+export function activityForWorkspace(
+  agents: readonly AgentRecord[],
+  terminals: readonly TerminalRecord[],
+  endedTerminalIds: ReadonlySet<string> = new Set(),
+  hadResources = false,
+): WorkspaceActivity {
+  if (
+    agents.some((agent) => !agent.archived && needsIntervention(agent)) ||
+    terminals.some(
+      (terminal) => !endedTerminalIds.has(terminal.id) && terminal.activity === "attention",
+    )
+  )
+    return "attention";
+  if (
+    agents.some(
+      (agent) => !agent.archived && (agent.status === "running" || agent.status === "starting"),
+    ) ||
+    terminals.some(
+      (terminal) => !endedTerminalIds.has(terminal.id) && terminal.activity === "working",
+    )
+  )
+    return "working";
+  if (
+    agents.some(
+      (agent) => !agent.archived && !["stopped", "archived", "failed"].includes(agent.status),
+    ) ||
+    terminals.some((terminal) => !endedTerminalIds.has(terminal.id)) ||
+    (agents.length === 0 && terminals.length === 0 && !hadResources)
+  )
+    return "idle";
   return "done";
-}
-
-function compareAgents(
-  left: AgentRecord,
-  right: AgentRecord,
-  order: AppState["treeOrder"],
-): number {
-  if (order === "alphabetical")
-    return left.title.localeCompare(right.title) || left.id.localeCompare(right.id);
-  return (
-    activityRank(right) - activityRank(left) ||
-    activityTimestamp(right) - activityTimestamp(left) ||
-    left.title.localeCompare(right.title) ||
-    left.id.localeCompare(right.id)
-  );
-}
-
-function compactActivity(timestamp: string | undefined): string | undefined {
-  if (timestamp === undefined || Number.isNaN(Date.parse(timestamp))) return undefined;
-  const [date, time] = timestamp.split("T");
-  if (date === undefined || time === undefined) return undefined;
-  return `${date.slice(5).replace("-", "/")} ${time.slice(0, 5)}`;
 }
 
 export function deriveTreeRows(state: AppState): TreeRow[] {
   const rows: TreeRow[] = [];
   const filter = state.filter.trim().toLocaleLowerCase();
-  const workspacesByProject = new Map<string, typeof state.directory.workspaces>();
-  const rootWorkspaces: (typeof state.directory.workspaces)[number][] = [];
-  for (const workspace of state.directory.workspaces.filter(
-    (item) => state.showArchived || !item.archived,
-  )) {
-    const project = projectForWorkspace(state.directory.projects, workspace);
-    if (project) {
-      workspacesByProject.set(project.id, [
-        ...(workspacesByProject.get(project.id) ?? []),
-        workspace,
-      ]);
-    } else {
-      rootWorkspaces.push(workspace);
-    }
-  }
-
-  const visibleWorkspaces = (workspaces: readonly (typeof state.directory.workspaces)[number][]) =>
-    workspaces.filter((workspace) => {
-      const agents = state.directory.agents.filter(
-        (agent) =>
-          agent.workspaceId === workspace.id &&
-          (state.showArchived || !agent.archived) &&
-          (!state.attentionOnly || needsIntervention(agent)) &&
-          (!filter || agentMatches(agent, filter)),
-      );
-      const workspaceMatches = workspace.title.toLocaleLowerCase().includes(filter);
-      if (state.attentionOnly) return agents.length > 0;
-      return !filter || workspaceMatches || agents.length > 0;
-    });
-
-  const appendWorkspace = (
-    workspace: (typeof state.directory.workspaces)[number],
-    depth: number,
-  ): void => {
-    const workspaceAllAgents = state.directory.agents.filter(
-      (agent) => agent.workspaceId === workspace.id && (state.showArchived || !agent.archived),
+  const workspaces = state.directory.workspaces.filter(
+    (workspace) => state.showArchived || !workspace.archived,
+  );
+  const frozenOrder =
+    state.focus === "tree" && state.sidebarOrder
+      ? new Map(state.sidebarOrder.map((id, index) => [id, index]))
+      : undefined;
+  const compareFrozen = (left: string, right: string): number =>
+    frozenOrder
+      ? (frozenOrder.get(left) ?? Number.MAX_SAFE_INTEGER) -
+        (frozenOrder.get(right) ?? Number.MAX_SAFE_INTEGER)
+      : 0;
+  const projects = [...state.directory.projects].sort(
+    (left, right) =>
+      compareFrozen(left.id, right.id) ||
+      left.name.localeCompare(right.name) ||
+      left.id.localeCompare(right.id),
+  );
+  const activity = (workspaceId: string): WorkspaceActivity =>
+    activityForWorkspace(
+      state.directory.agents.filter((agent) => agent.workspaceId === workspaceId),
+      state.workspaceTerminals?.[workspaceId] ?? [],
+      state.staleTerminalIds,
+      state.workspaceHadResources?.has(workspaceId),
     );
-    const workspaceExpanded = Boolean(filter) || state.expandedIds.has(workspace.id);
+  const rank: Record<WorkspaceActivity, number> = { attention: 0, working: 1, idle: 2, done: 3 };
+  const sorted = (items: typeof workspaces) =>
+    [...items].sort(
+      (left, right) =>
+        compareFrozen(left.id, right.id) ||
+        (state.treeOrder === "attention"
+          ? rank[activity(left.id)] - rank[activity(right.id)]
+          : 0) ||
+        left.title.localeCompare(right.title) ||
+        left.id.localeCompare(right.id),
+    );
+  const visible = (items: typeof workspaces, projectMatches = false) =>
+    sorted(
+      items.filter((workspace) => {
+        const matches =
+          !filter ||
+          projectMatches ||
+          workspace.title.toLocaleLowerCase().includes(filter) ||
+          workspace.id.toLocaleLowerCase().includes(filter) ||
+          workspace.directory.toLocaleLowerCase().includes(filter);
+        return matches && (!state.attentionOnly || activity(workspace.id) === "attention");
+      }),
+    );
+  const appendWorkspace = (workspace: (typeof workspaces)[number], depth: number): void => {
     rows.push({
       id: workspace.id,
       kind: "workspace",
       label: workspace.title,
       depth,
-      expanded: workspaceExpanded,
       selected:
         state.sidebarSelection?.kind === "workspace"
           ? state.sidebarSelection.id === workspace.id
-          : state.sidebarSelection === undefined &&
-            state.selectedWorkspaceId === workspace.id &&
-            state.selectedAgentId === undefined,
-      attention: false,
-      permissionCount: 0,
-      agentCount: workspaceAllAgents.length,
-      attentionCount: workspaceAllAgents.filter(needsIntervention).length,
-      activity: activityForAgents(workspaceAllAgents),
-      active:
-        workspace.id ===
-        state.directory.agents.find(
-          (agent) => agent.id === (state.activeSessionId ?? state.selectedAgentId),
-        )?.workspaceId,
+          : !state.sidebarSelection && state.selectedWorkspaceId === workspace.id,
+      attention: activity(workspace.id) === "attention",
+      activity: activity(workspace.id),
+      active: workspace.id === state.selectedWorkspaceId,
       gapBefore: rows.at(-1)?.kind === "workspace" ? 1 : 0,
     });
-    if (!workspaceExpanded) return;
-    const workspaceAgents = state.directory.agents
-      .filter(
-        (item) =>
-          item.workspaceId === workspace.id &&
-          (state.showArchived || !item.archived) &&
-          (!state.attentionOnly || needsIntervention(item)) &&
-          (!filter || agentMatches(item, filter)),
-      )
-      .sort((left, right) => compareAgents(left, right, state.treeOrder));
-    for (const agent of workspaceAgents) {
-      const row = agentRow(
-        agent,
-        state.selectedAgentId,
-        state.sidebarSelection,
-        state.activeSessionId ?? state.selectedAgentId,
-        depth + 1,
-      );
-      rows.push({ ...row, gapBefore: workspaceAgents.indexOf(agent) > 0 ? 1 : 0 });
-    }
   };
-
-  for (const project of state.directory.projects) {
-    const workspaces = visibleWorkspaces(workspacesByProject.get(project.id) ?? []);
-    const projectMatches = Boolean(filter) && project.name.toLocaleLowerCase().includes(filter);
-    const selected =
-      state.sidebarSelection?.kind === "project"
-        ? state.sidebarSelection.id === project.id
-        : state.sidebarSelection === undefined && state.selectedProjectId === project.id;
-    if (workspaces.length === 0 && !projectMatches && !selected) continue;
+  for (const project of projects) {
+    const projectMatches =
+      Boolean(filter) &&
+      (project.name.toLocaleLowerCase().includes(filter) ||
+        project.id.toLocaleLowerCase().includes(filter));
+    const children = visible(
+      workspaces.filter((workspace) => projectForWorkspace(projects, workspace)?.id === project.id),
+      projectMatches,
+    );
+    if (children.length === 0 && !projectMatches) continue;
     const expanded = Boolean(filter) || state.expandedIds.has(project.id);
     rows.push({
       id: project.id,
@@ -193,53 +180,15 @@ export function deriveTreeRows(state: AppState): TreeRow[] {
       label: project.name,
       depth: 0,
       expanded,
-      selected: selected,
+      selected:
+        state.sidebarSelection?.kind === "project" && state.sidebarSelection.id === project.id,
       attention: false,
-      permissionCount: 0,
-      agentCount: workspaces.flatMap((workspace) =>
-        state.directory.agents.filter(
-          (agent) => agent.workspaceId === workspace.id && (state.showArchived || !agent.archived),
-        ),
-      ).length,
-      attentionCount: workspaces.flatMap((workspace) =>
-        state.directory.agents.filter(
-          (agent) =>
-            agent.workspaceId === workspace.id &&
-            needsIntervention(agent) &&
-            (state.showArchived || !agent.archived),
-        ),
-      ).length,
     });
-    if (!expanded) continue;
-    for (const workspace of workspaces) appendWorkspace(workspace, 1);
+    if (expanded) for (const workspace of children) appendWorkspace(workspace, 1);
   }
-  for (const workspace of visibleWorkspaces(rootWorkspaces)) appendWorkspace(workspace, 0);
+  const roots = workspaces.filter((workspace) => !projectForWorkspace(projects, workspace));
+  for (const workspace of visible(roots)) appendWorkspace(workspace, 0);
   return rows;
-}
-
-function agentRow(
-  agent: AgentRecord,
-  selectedAgentId: string | undefined,
-  selection?: AppState["sidebarSelection"],
-  activeSessionId?: string,
-  depth = 2,
-): TreeRow {
-  const activityLabel = compactActivity(agent.lastActivityAt);
-  return {
-    id: agent.id,
-    kind: "agent",
-    label: `${agent.title} [${shortAgentId(agent.id)}]`,
-    depth,
-    selected:
-      selection?.kind === "session" ? selection.id === agent.id : agent.id === selectedAgentId,
-    status: agent.status,
-    providerModel: [agent.providerId, agent.modelId].filter(Boolean).join("/"),
-    attention: needsIntervention(agent),
-    permissionCount: agent.pendingPermissions.length,
-    active: agent.id === activeSessionId,
-    ...(activityLabel === undefined ? {} : { activityLabel }),
-    activity: activityForAgent(agent),
-  };
 }
 
 export function shortAgentId(agentId: string): string {
@@ -401,12 +350,15 @@ export function renderDashboard(
     "Projects / workspaces",
     ...deriveTreeRows(state).map((row) => {
       const marker = row.selected ? ">" : " ";
-      const branch = row.kind === "agent" ? "•" : row.expanded ? "▾" : "▸";
-      const flags =
-        row.kind === "agent"
-          ? `${row.permissionCount ? " ✓" : ""}${row.attention ? " !" : ""}${row.status ? ` ${row.status}` : ""}`
-          : "";
-      return `${marker}${"  ".repeat(row.depth)}${branch} ${row.label}${flags}`;
+      const branch =
+        row.kind === "project"
+          ? row.expanded
+            ? "▾"
+            : "▸"
+          : ({ attention: "A", working: "W", idle: "I", done: "D" } as const)[
+              row.activity ?? "idle"
+            ];
+      return `${marker}${"  ".repeat(row.depth)}${branch} ${row.label}`;
     }),
   ];
   const selected = state.directory.agents.find((agent) => agent.id === state.selectedAgentId);

@@ -324,13 +324,13 @@ describe("runCli", () => {
       treeWidth: 36,
       treeOrder: "alphabetical",
       showArchived: true,
-      expandedIds: ["project", "workspace"],
+      expandedIds: ["project"],
     });
     expect(parsed.targets[targetScope({ type: "host", value: "b:1" })]).toMatchObject({
       treeWidth: 32,
       treeOrder: "attention",
       showArchived: false,
-      expandedIds: ["project", "workspace"],
+      expandedIds: ["project"],
     });
   });
 });

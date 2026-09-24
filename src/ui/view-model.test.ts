@@ -6,6 +6,7 @@ import { terminalDisplayWidth } from "./text-safety.js";
 import {
   activityForAgent,
   activityForAgents,
+  activityForWorkspace,
   deriveTreeRows,
   renderDashboard,
   timelineDisplay,
@@ -73,245 +74,140 @@ describe("tree view model", () => {
   ] as const)("derives %s session activity", (expected, overrides) => {
     const base = state().directory.agents[0];
     if (!base) throw new Error("fixture requires an agent");
-    const agent = { ...base, ...overrides };
-    expect(activityForAgent(agent)).toBe(expected);
+    expect(activityForAgent({ ...base, ...overrides })).toBe(expected);
   });
 
-  it("gives workspace attention precedence over working activity", () => {
+  it("aggregates sessions and terminals with attention, working, idle, done priority", () => {
     const base = state().directory.agents[0];
     if (!base) throw new Error("fixture requires an agent");
-    expect(
-      activityForAgents([
-        { ...base, status: "running", needsAttention: false },
-        { ...base, id: "attention", status: "idle", needsAttention: true },
-      ]),
-    ).toBe("attention");
-  });
-
-  it("keeps orphaned workspaces at the sidebar root", () => {
-    const rows = deriveTreeRows(state());
-
-    expect(rows.map((row) => `${row.kind}:${row.label}`)).toEqual([
-      "project:Deck",
-      "workspace:Main",
-      "agent:Build UI [agent-12]",
-      "workspace:Loose",
-    ]);
-    expect(rows[1]).toMatchObject({ id: "w", depth: 1 });
-    expect(rows[2]).toMatchObject({ selected: true, attention: true });
-  });
-
-  it("keeps remote-backed workspaces keyboard-reachable without a synthetic project", () => {
-    const remoteState: AppState = {
-      ...state(),
-      directory: {
-        ...emptyDirectory(),
-        projects: [{ id: "remote:github.com/acme/paseo-deck", name: "acme/paseo-deck" }],
-        workspaces: [
-          {
-            id: "workspace-remote",
-            projectId: "remote:github.com/acme/paseo-deck",
-            title: "Remote workspace",
-            directory: "/tmp/paseo-deck",
-            archived: false,
-          },
-          {
-            id: "workspace-orphan",
-            projectId: "remote:unknown",
-            title: "Orphan workspace",
-            directory: "/tmp/orphan",
-            archived: false,
-          },
-        ],
-        agents: [
-          {
-            id: "agent-orphan",
-            workspaceId: "workspace-orphan",
-            title: "Needs review",
-            status: "idle",
-            availableModeIds: [],
-            availableThinkingLevels: [],
-            pendingPermissions: [],
-            needsAttention: true,
-            archived: false,
-          },
-        ],
-      },
-      expandedIds: new Set([
-        "remote:github.com/acme/paseo-deck",
-        "workspace-remote",
-        "workspace-orphan",
-      ]),
-      selectedAgentId: "agent-orphan",
-      selectedWorkspaceId: "workspace-orphan",
+    const working = {
+      id: "t",
+      workspaceId: "w",
+      cwd: "/w",
+      name: "build",
+      activity: "working" as const,
     };
-
-    expect(deriveTreeRows(remoteState)).toMatchObject([
-      { kind: "project", id: "remote:github.com/acme/paseo-deck", label: "acme/paseo-deck" },
-      { kind: "workspace", id: "workspace-remote" },
-      { kind: "workspace", id: "workspace-orphan", depth: 0 },
-      { kind: "agent", id: "agent-orphan", depth: 1, selected: true, attention: true },
-    ]);
-    expect(deriveTreeRows(remoteState).map((row) => row.label)).not.toContain(
-      "remote:github.com/acme/paseo-deck",
-    );
-
-    const remoteFilterRows = deriveTreeRows({ ...remoteState, filter: "remote" });
-    expect(remoteFilterRows).toMatchObject([
-      { kind: "project", label: "acme/paseo-deck", expanded: true },
-      { kind: "workspace", id: "workspace-remote", expanded: true },
-    ]);
-
-    const orphanFilterRows = deriveTreeRows({ ...remoteState, filter: "needs" });
-    expect(orphanFilterRows).toMatchObject([
-      { kind: "workspace", id: "workspace-orphan", depth: 0, expanded: true },
-      { kind: "agent", id: "agent-orphan", depth: 1, attention: true },
-    ]);
-    expect(deriveTreeRows(remoteState).map((row) => row.label)).not.toContain("Other");
-  });
-
-  it("orders attention work deterministically and exposes compact triage summaries", () => {
-    const baseAgent = state().directory.agents[0];
-    if (baseAgent === undefined) throw new Error("fixture requires an agent");
-    const triageState: AppState = {
-      ...state(),
-      directory: {
-        ...state().directory,
-        agents: [
-          {
-            ...baseAgent,
-            id: "running",
-            title: "Zulu running",
-            needsAttention: false,
-            lastActivityAt: "2026-09-18T10:00:00.000Z",
-          },
-          {
-            ...baseAgent,
-            id: "failed",
-            title: "Beta failed",
-            status: "failed",
-            needsAttention: false,
-            lastActivityAt: "2026-09-18T09:00:00.000Z",
-          },
-          {
-            ...baseAgent,
-            id: "permission",
-            title: "Alpha permission",
-            status: "idle",
-            needsAttention: true,
-            pendingPermissions: [{ id: "p", agentId: "permission", title: "Approve" }],
-            lastActivityAt: "2026-09-18T08:00:00.000Z",
-          },
-          {
-            ...baseAgent,
-            id: "recent",
-            title: "Gamma recent",
-            status: "idle",
-            needsAttention: false,
-            lastActivityAt: "2026-09-18T11:00:00.000Z",
-          },
-          {
-            ...baseAgent,
-            id: "older",
-            title: "Delta older",
-            status: "idle",
-            needsAttention: false,
-            lastActivityAt: "2026-09-18T07:00:00.000Z",
-          },
-        ],
-      },
-    };
-
-    const rows = deriveTreeRows(triageState);
-    expect(rows.filter((row) => row.kind === "agent").map((row) => row.id)).toEqual([
-      "permission",
-      "failed",
-      "running",
-      "recent",
-      "older",
-    ]);
-    expect(rows[0]).toMatchObject({ agentCount: 5, attentionCount: 2 });
-    expect(rows.find((row) => row.id === "permission")).toMatchObject({
-      status: "idle",
-      providerModel: "openai/gpt-5",
-      activityLabel: "09/18 08:00",
-    });
-
+    expect(activityForAgents([])).toBe("idle");
+    expect(activityForWorkspace([], [])).toBe("idle");
+    expect(activityForWorkspace([], [], new Set(), true)).toBe("done");
     expect(
-      deriveTreeRows({ ...triageState, treeOrder: "alphabetical" })
-        .filter((row) => row.kind === "agent")
-        .map((row) => row.id),
-    ).toEqual(["permission", "failed", "older", "recent", "running"]);
+      activityForWorkspace([{ ...base, status: "stopped", needsAttention: false }], [working]),
+    ).toBe("working");
+    expect(activityForWorkspace([{ ...base, needsAttention: true }], [working])).toBe("attention");
+    expect(
+      activityForWorkspace(
+        [{ ...base, status: "archived", archived: true }],
+        [working],
+        new Set(["t"]),
+      ),
+    ).toBe("done");
   });
 
-  it("derives workspace activity with attention taking precedence and groups sessions", () => {
-    const base = state().directory.agents[0];
-    if (!base) throw new Error("fixture requires an agent");
+  it("contains project and workspace rows only, sorted by activity and title", () => {
+    const base = state();
+    const agent = base.directory.agents[0];
+    if (!agent) throw new Error("fixture requires an agent");
     const rows = deriveTreeRows({
-      ...state(),
+      ...base,
+      focus: "composer",
       directory: {
-        ...state().directory,
-        projects: [{ id: "p", name: "Project" }],
+        ...base.directory,
+        projects: [
+          { id: "z", name: "Zulu" },
+          { id: "a", name: "Alpha" },
+        ],
         workspaces: [
-          { id: "w", projectId: "p", title: "Workspace", directory: "/w", archived: false },
+          { id: "idle", projectId: "a", title: "A idle", directory: "/idle", archived: false },
+          {
+            id: "working",
+            projectId: "a",
+            title: "Z working",
+            directory: "/working",
+            archived: false,
+          },
+          { id: "done", projectId: "z", title: "Done", directory: "/done", archived: false },
         ],
         agents: [
-          { ...base, id: "working", status: "running", needsAttention: false },
-          { ...base, id: "attention", status: "idle", needsAttention: true },
+          { ...agent, workspaceId: "working", needsAttention: false },
+          { ...agent, id: "ended", workspaceId: "done", status: "stopped", needsAttention: false },
         ],
       },
-      expandedIds: new Set(["p", "w"]),
+      expandedIds: new Set(["a", "z"]),
     });
-    expect(rows.find((row) => row.kind === "workspace")).toMatchObject({
-      activity: "attention",
-    });
-    expect(
-      rows
-        .filter((row) => row.kind === "agent")
-        .slice(1)
-        .every((row) => row.gapBefore === 1),
-    ).toBe(true);
+    expect(rows.map((row) => `${row.kind}:${row.id}`)).toEqual([
+      "project:a",
+      "workspace:working",
+      "workspace:idle",
+      "project:z",
+      "workspace:done",
+    ]);
+    expect(rows.find((row) => row.id === "idle")?.activity).toBe("idle");
+    expect(rows.find((row) => row.id === "done")?.activity).toBe("done");
   });
 
-  it("filters to attention while retaining context, hides archived records, and omits empty groups", () => {
-    const baseAgent = state().directory.agents[0];
-    if (baseAgent === undefined) throw new Error("fixture requires an agent");
-    const filteredState: AppState = {
-      ...state(),
-      directory: {
-        ...state().directory,
-        projects: [
-          { id: "p", name: "Deck" },
-          { id: "empty", name: "Empty" },
-        ],
-        workspaces: [
-          ...state().directory.workspaces,
-          { id: "quiet", projectId: "p", title: "Quiet", directory: "/quiet", archived: false },
-        ],
-        agents: [
-          ...state().directory.agents,
-          {
-            ...baseAgent,
-            id: "archived",
-            title: "Archived alert",
-            archived: true,
-            status: "failed",
-          },
-        ],
-      },
-      attentionOnly: true,
-    };
-
-    expect(deriveTreeRows(filteredState).map((row) => row.id)).toEqual(["p", "w", "agent-123456"]);
-    expect(deriveTreeRows({ ...filteredState, showArchived: true }).map((row) => row.id)).toEqual([
+  it("filters by project and workspace identity, never by a hidden session", () => {
+    const base = state();
+    expect(deriveTreeRows({ ...base, filter: "Build UI" })).toEqual([]);
+    expect(deriveTreeRows({ ...base, filter: "deck" }).map((row) => row.id)).toEqual(["p", "w"]);
+    expect(deriveTreeRows({ ...base, filter: "Main" }).map((row) => row.id)).toEqual(["p", "w"]);
+    expect(deriveTreeRows({ ...base, attentionOnly: true }).map((row) => row.id)).toEqual([
       "p",
       "w",
-      "archived",
-      "agent-123456",
+    ]);
+  });
+
+  it("holds row order while the sidebar is focused and applies the new order after leaving", () => {
+    const base = state();
+    const agent = base.directory.agents[0];
+    if (!agent) throw new Error("fixture requires an agent");
+    const workspace = { id: "b", projectId: "p", title: "Beta", directory: "/b", archived: false };
+    const changed: AppState = {
+      ...base,
+      sidebarOrder: ["p", "w", "b", "other"],
+      sidebarSelection: { kind: "workspace", id: "w" },
+      directory: {
+        ...base.directory,
+        workspaces: [...base.directory.workspaces, workspace],
+        agents: [{ ...agent, workspaceId: "b", needsAttention: true }],
+      },
+    };
+    expect(deriveTreeRows(changed).map((row) => row.id)).toEqual(["p", "w", "b", "other"]);
+    expect(deriveTreeRows(changed).find((row) => row.selected)?.id).toBe("w");
+    expect(deriveTreeRows({ ...changed, focus: "composer" }).map((row) => row.id)).toEqual([
+      "p",
+      "b",
+      "w",
+      "other",
     ]);
     expect(
-      deriveTreeRows({ ...filteredState, attentionOnly: false }).map((row) => row.id),
-    ).not.toContain("empty");
+      deriveTreeRows({ ...changed, focus: "composer", treeOrder: "alphabetical" }).map(
+        (row) => row.id,
+      ),
+    ).toEqual(["p", "b", "w", "other"]);
+  });
+
+  it("keeps newly revealed workspaces under their project without applying pending reorder", () => {
+    const base = state();
+    const agent = base.directory.agents[0];
+    if (!agent) throw new Error("fixture requires an agent");
+    const changed: AppState = {
+      ...base,
+      sidebarOrder: ["p", "w", "other"],
+      directory: {
+        ...base.directory,
+        workspaces: [
+          ...base.directory.workspaces,
+          { id: "new", projectId: "p", title: "New", directory: "/new", archived: false },
+        ],
+        agents: [{ ...agent, workspaceId: "new", needsAttention: true }],
+      },
+    };
+    expect(deriveTreeRows(changed).map((row) => row.id)).toEqual(["p", "w", "new", "other"]);
+    expect(deriveTreeRows({ ...changed, expandedIds: new Set() }).map((row) => row.id)).toEqual([
+      "p",
+      "other",
+    ]);
+    expect(deriveTreeRows(changed).find((row) => row.id === "w")?.selected).toBe(true);
   });
 });
 

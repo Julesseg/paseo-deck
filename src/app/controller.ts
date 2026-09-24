@@ -14,7 +14,7 @@ import {
 } from "../state/store.js";
 import type { UiIntent } from "../ui/controller.js";
 import { sanitizeTerminalText } from "../ui/text-safety.js";
-import { deriveTreeRows, type TreeRow } from "../ui/view-model.js";
+import { deriveTreeRows, type TreeRow, workspaceTabs } from "../ui/view-model.js";
 
 export interface ApplicationControllerOptions {
   onQuit?: () => void | Promise<void>;
@@ -156,7 +156,11 @@ export class ApplicationController {
   }
 
   async selectAgent(agentId: string, preserveSidebar = false): Promise<void> {
-    if (this.#state.selectedAgentId === agentId && this.#timelineObservation !== undefined) {
+    if (
+      this.#state.selectedAgentId === agentId &&
+      this.#timelineObservation !== undefined &&
+      !this.#state.activeTerminalId
+    ) {
       // Explicit activation of the already-active session still returns the
       // user to its timeline after browsing in the sidebar.
       this.apply({ type: "set-focus", focus: "timeline" });
@@ -328,13 +332,25 @@ export class ApplicationController {
         return;
       case "switch-tab":
         {
-          this.apply({
-            type: "switch-session-tab",
-            direction: intent.direction,
-            ...(intent.count ? { count: intent.count } : {}),
-          });
-          const next = this.#state.activeSessionId;
-          if (next) await this.selectAgent(next, true);
+          const workspaceId = this.#state.selectedWorkspaceId;
+          if (!workspaceId) return;
+          const tabs = workspaceTabs(this.#state);
+          if (!tabs.length) return;
+          const current = tabs.findIndex(
+            (tab) => tab.id === (this.#state.activeTerminalId ?? this.#state.activeSessionId),
+          );
+          const index =
+            intent.count === undefined
+              ? current === -1
+                ? intent.direction === 1
+                  ? 0
+                  : tabs.length - 1
+                : (current + intent.direction + tabs.length) % tabs.length
+              : Math.min(tabs.length - 1, Math.max(0, intent.count - 1));
+          const next = tabs[index];
+          if (next?.kind === "session") await this.selectAgent(next.id, true);
+          else if (next?.kind === "terminal")
+            await this.handleIntent({ type: "open-terminal", terminalId: next.id });
         }
         return;
       case "close-tab":
@@ -638,7 +654,6 @@ export class ApplicationController {
     if (rows.length === 0) return;
     const selectedId =
       this.#state.sidebarSelection?.id ??
-      this.#state.selectedAgentId ??
       this.#state.selectedWorkspaceId ??
       this.#state.selectedProjectId;
     const current = rows.findIndex((row) => row.id === selectedId);
@@ -649,15 +664,15 @@ export class ApplicationController {
 
   private beginSidebarNavigation(): void {
     const rows = deriveTreeRows(this.#state);
-    const active = this.#state.activeSessionId;
     const row =
-      (active ? rows.find((item) => item.kind === "agent" && item.id === active) : undefined) ??
-      rows.find((item) => item.kind === "agent") ??
-      rows[0];
+      rows.find(
+        (item) => item.kind === "workspace" && item.id === this.#state.selectedWorkspaceId,
+      ) ?? rows[0];
     if (row) {
       this.apply({
         type: "select-sidebar",
-        selection: { kind: row.kind === "agent" ? "session" : row.kind, id: row.id },
+        selection: { kind: row.kind, id: row.id },
+        order: rows.map((item) => item.id),
       });
       return;
     }
@@ -674,18 +689,16 @@ export class ApplicationController {
     this.apply({
       type: "select-sidebar",
       selection: {
-        kind: row.kind === "agent" ? "session" : row.kind,
+        kind: row.kind,
         id: row.id,
       },
+      order: deriveTreeRows(this.#state).map((item) => item.id),
     });
   }
 
   private collapseOrExpand(direction: -1 | 1): void {
     const selection = this.#state.sidebarSelection;
-    const id =
-      selection?.kind === "workspace" || selection?.kind === "project"
-        ? selection.id
-        : (this.#state.selectedWorkspaceId ?? this.#state.selectedProjectId);
+    const id = selection?.kind === "project" ? selection.id : undefined;
     if (!id) return;
     const expanded = this.#state.expandedIds.has(id);
     if ((direction === 1 && !expanded) || (direction === -1 && expanded)) {
@@ -695,19 +708,15 @@ export class ApplicationController {
 
   private async openSelection(): Promise<void> {
     const selection = this.#state.sidebarSelection;
-    if (selection?.kind === "session") {
-      await this.selectAgent(selection.id);
+    if (selection?.kind === "workspace") {
+      this.#focusGeneration += 1;
+      const previous = this.#timelineObservation;
+      this.#timelineObservation = undefined;
+      void previous?.release();
+      this.apply({ type: "activate-workspace", workspaceId: selection.id });
       return;
     }
-    if (selection?.kind === "workspace") {
-      const terminal = this.#state.workspaceTerminals?.[selection.id]?.[0];
-      if (terminal) {
-        await this.handleIntent({ type: "open-terminal", terminalId: terminal.id });
-        return;
-      }
-    }
-    const id = selection?.id ?? this.#state.selectedWorkspaceId ?? this.#state.selectedProjectId;
-    if (id) this.apply({ type: "toggle-expanded", id });
+    if (selection?.kind === "project") this.apply({ type: "toggle-expanded", id: selection.id });
   }
 
   private activeWorkspace(workspaceId: string): boolean {
@@ -717,6 +726,7 @@ export class ApplicationController {
   }
 
   private async refresh(): Promise<void> {
+    this.apply({ type: "refresh-sidebar-order" });
     if (this.#state.connection === "disconnected") {
       const selectedAgentId = this.#state.selectedAgentId;
       await this.releaseObservations();
