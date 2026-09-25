@@ -374,6 +374,7 @@ describe("composer controls", () => {
     expect(lines[selectedRow]).not.toContain("> Agent");
     expect(lines.join("\n")).not.toContain("Filter:");
     expect(backgrounds[inputRow]?.[left + 2]).toBeDefined();
+    expect(terminal.viewportInverseCells()[inputRow]?.[left + 2]).toBe(true);
     expect(backgrounds[selectedRow]?.[left + 2]).toBeDefined();
     expect(backgrounds[inputRow]?.[left + 2]).not.toBe(backgrounds[terminalRow]?.[left + 2]);
     expect(backgrounds[selectedRow]?.[left + 2]).not.toBe(backgrounds[terminalRow]?.[left + 2]);
@@ -384,6 +385,12 @@ describe("composer controls", () => {
     const movedBackgrounds = terminal.viewportBackgrounds();
     expect(movedBackgrounds[selectedRow]?.[left + 2]).toBe(backgrounds[terminalRow]?.[left + 2]);
     expect(movedBackgrounds[terminalRow]?.[left + 2]).toBe(backgrounds[selectedRow]?.[left + 2]);
+    terminal.sendInput("co");
+    await terminal.waitForRender();
+    const filteredLines = terminal.viewport();
+    const filteredInputRow = filteredLines.findIndex((line) => line.includes("New Tab")) + 1;
+    expect(filteredLines[filteredInputRow]).toContain("co");
+    expect(terminal.viewportInverseCells()[filteredInputRow]?.[left + 4]).toBe(true);
     await deck.stop();
   });
 

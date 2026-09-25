@@ -834,6 +834,13 @@ for (const shot of shots) {
   await terminal.waitForRender();
   const viewport = terminal.viewport();
   const backgrounds = terminal.viewportBackgrounds();
+  const inputRow = shot.name.startsWith("new-tab-")
+    ? viewport.findIndex((line) => line.includes("New Tab")) + 1
+    : -1;
+  const cursorColumn = inputRow > 0 ? terminal.viewportInverseCells()[inputRow]?.indexOf(true) : -1;
+  if (inputRow > 0 && (cursorColumn === undefined || cursorColumn < 0)) {
+    throw new Error(`No visible New Tab input cursor in ${shot.name}`);
+  }
   await deck.stop();
   await writeFile(
     join(outputDirectory, `${shot.name}.svg`),
@@ -845,6 +852,9 @@ for (const shot of shots) {
       `Paseo Deck ${shot.name.replaceAll("-", " ")}`,
       shot.columns >= NARROW_SIDEBAR_BREAKPOINT && (shot.appearance?.theme ?? "ember") === "ember"
         ? { columns: 34, color: "#1f1d1b" }
+        : undefined,
+      inputRow > 0 && cursorColumn !== undefined && cursorColumn >= 0
+        ? { row: inputRow, column: cursorColumn }
         : undefined,
     ),
     "utf8",
@@ -1091,6 +1101,7 @@ function terminalSvg(
   rows: number,
   title: string,
   sidebar?: { columns: number; color: string },
+  cursor?: { row: number; column: number },
 ): string {
   const cellWidth = 9;
   const lineHeight = 18;
@@ -1137,6 +1148,9 @@ function terminalSvg(
       return rectangles;
     })
     .join("\n");
+  const cursorSvg = cursor
+    ? `<rect x="${padding + cursor.column * cellWidth + 1}" y="${chromeHeight + padding + cursor.row * lineHeight + 2}" width="2" height="${lineHeight - 4}" fill="#f5f5f4"/>`
+    : "";
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">
   <title>${escapeXml(title)}</title>
   <rect width="${width}" height="${height}" rx="12" fill="#1c1917"/>
@@ -1150,6 +1164,7 @@ function terminalSvg(
 ${text}
   </g>
   <g>${pillCaps}</g>
+  <g>${cursorSvg}</g>
 </svg>`;
 }
 
