@@ -23,6 +23,25 @@ function output() {
 }
 
 describe("runCli", () => {
+  it("starts an existing session in composer normal mode", async () => {
+    const terminal = new RecordingTerminal(100, 30);
+    const running = runInteractive({ type: "default" }, output().io, {
+      ...testRuntimeDependencies(),
+      gateway: new FakePaseoGateway(treeDirectory()),
+      terminal,
+      bindExitHandlers: () => () => undefined,
+    });
+    await tick();
+    await terminal.waitForRender();
+    expect(terminal.viewport().join("\n")).toContain("NORMAL Prompt");
+    terminal.sendInput("i");
+    await terminal.waitForRender();
+    expect(terminal.viewport().join("\n")).toContain("INSERT Prompt");
+    terminal.sendInput("\u001b");
+    terminal.sendInput("q");
+    await expect(running).resolves.toBe(0);
+  });
+
   it("creates a session through the New Tab picker and normal-mode composer", async () => {
     const terminal = new RecordingTerminal(100, 30);
     const directory = {

@@ -18,6 +18,20 @@ describe("normalizeDirectory", () => {
     ]);
   });
 
+  it("reads the SDK project display name and root path", () => {
+    const directory = normalizeDirectory({
+      projects: [
+        {
+          projectId: "prj_123",
+          projectDisplayName: "Paseo Deck",
+          projectRootPath: "/repo",
+        },
+      ],
+    });
+
+    expect(directory.projects).toEqual([{ id: "prj_123", name: "Paseo Deck", path: "/repo" }]);
+  });
+
   it("normalizes incomplete directory data without losing stable identities", () => {
     const directory = normalizeDirectory({
       projects: [{ id: "project-1", name: "Deck" }],

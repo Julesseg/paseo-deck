@@ -651,7 +651,11 @@ async function directorySnapshot(
 function projectRecord(value: UnknownRecord): ProjectRecord | undefined {
   const id = nonBlankString(value.projectId ?? value.id ?? value.projectKey);
   if (id === undefined) return undefined;
-  const sourceName = nonBlankString(value.name ?? value.projectName);
+  const sourceName =
+    nonBlankString(value.projectDisplayName) ??
+    nonBlankString(value.projectCustomName) ??
+    nonBlankString(value.name) ??
+    nonBlankString(value.projectName);
   const remoteName = readableRemoteProjectName(id);
   const name = id.startsWith("remote:")
     ? sourceName?.startsWith("remote:")
@@ -662,9 +666,9 @@ function projectRecord(value: UnknownRecord): ProjectRecord | undefined {
   return {
     id,
     name,
-    ...(stringValue(value.path ?? value.directory) === undefined
+    ...(stringValue(value.projectRootPath ?? value.path ?? value.directory) === undefined
       ? {}
-      : { path: stringValue(value.path ?? value.directory) as string }),
+      : { path: stringValue(value.projectRootPath ?? value.path ?? value.directory) as string }),
   };
 }
 

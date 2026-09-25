@@ -72,6 +72,7 @@ export class ApplicationController {
   }
 
   async start(): Promise<void> {
+    const initialStart = this.#state.selectedWorkspaceId === undefined;
     this.apply({
       type: "directory",
       update: { type: "connection-changed", state: "connecting" },
@@ -114,6 +115,10 @@ export class ApplicationController {
         if (first) this.apply({ type: "activate-workspace", workspaceId: first.id });
       }
       await this.showActiveResource();
+      if (initialStart && !this.#state.activeTerminalId) {
+        this.apply({ type: "set-composer-mode", mode: "normal" });
+        this.apply({ type: "set-focus", focus: "composer" });
+      }
     } catch (error) {
       await this.#directoryObservation?.release();
       this.#directoryObservation = undefined;

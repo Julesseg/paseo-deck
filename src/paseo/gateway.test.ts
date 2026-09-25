@@ -238,6 +238,24 @@ describe("ProductionPaseoGateway", () => {
     });
   });
 
+  it("uses the SDK project display name for the sidebar", async () => {
+    const fixture = testClient();
+    fixture.client.projects.list.mockResolvedValueOnce({
+      projects: [
+        { projectId: "prj_123", projectDisplayName: "Paseo Deck", projectRootPath: "/repo" },
+      ],
+    } as never);
+    const gateway = new ProductionPaseoGateway({
+      host: "127.0.0.1:6767",
+      createClient: () => fixture.client as never,
+    });
+
+    await gateway.connect();
+    await expect(gateway.getDirectorySnapshot()).resolves.toMatchObject({
+      projects: [{ id: "prj_123", name: "Paseo Deck", path: "/repo" }],
+    });
+  });
+
   it("projects the SDK updatedAt activity timestamp without manufacturing one", async () => {
     const fixture = testClient();
     fixture.client.agents.list.mockResolvedValueOnce({
