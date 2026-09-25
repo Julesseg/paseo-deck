@@ -1145,9 +1145,10 @@ describe("terminal appearance", () => {
     expect(output).toContain("\u001b[48;2;232;222;212m");
     expect(output).toContain("\u001b[48;2;226;216;207m");
     expect(output).not.toContain("\u001b[43m");
+    const sidebarRow = lines.findIndex((line) => line.includes("Projects / workspaces"));
     const composerRow = lines.findIndex((line) => line.includes("Prompt →"));
-    expect(backgrounds[5]?.[0]).toBe("#e8ded4");
-    expect(backgrounds[5]?.[40]).toBeUndefined();
+    expect(backgrounds[sidebarRow]?.[lines[sidebarRow]?.indexOf("Projects") ?? -1]).toBe("#e8ded4");
+    expect(backgrounds[sidebarRow]?.[40]).toBeUndefined();
     expect(backgrounds[composerRow]?.[40]).toBe("#e2d8cf");
     expect(lines[composerRow]).not.toMatch(/[┌┐└┘│]/u);
   });

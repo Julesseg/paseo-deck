@@ -74,7 +74,7 @@ The ordered, live record of messages, reasoning, tool activity, permissions, tur
 _Avoid_: Transcript, log, output
 
 **Main pane**:
-The bordered region beside the sidebar that contains the Active workspace's Tab row and the Active tab's content.
+The region beside the sidebar that contains the Active workspace's Tab row and the Active tab's content.
 _Avoid_: Timeline window, right-side region
 
 **Composer**:
@@ -94,7 +94,7 @@ A centered, bordered list for choosing a provider, model, thinking level, or ope
 _Avoid_: Ticker, selection dialog
 
 **Active region**:
-The composer, sidebar, timeline, or terminal currently receiving keyboard commands. Its border is brighter than the other regions.
+The composer, sidebar, timeline, or terminal currently receiving keyboard commands. Its heading or selection styling indicates where keyboard commands go.
 _Avoid_: Pane focus, focus area
 
 **Normal mode**:
