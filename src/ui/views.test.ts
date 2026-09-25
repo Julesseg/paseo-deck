@@ -415,7 +415,7 @@ describe("composer controls", () => {
     await deck.stop();
   });
 
-  it("labels only the active terminal main pane border with its Vim mode", async () => {
+  it("labels the active terminal content with its Vim mode", async () => {
     const terminal = new RecordingTerminal(100, 24);
     const deck = new DeckTui(
       terminal,
@@ -696,11 +696,11 @@ describe("composer controls", () => {
     await deck.stop();
     expect(tabRow).toBeDefined();
     expect(tabRow?.match(/…/g)).toHaveLength(2);
-    expect(tabRow).toMatch(/….*VeryLong.*…│/);
+    expect(tabRow).toMatch(/….*VeryLong.*…/);
     expect(tabRow).not.toContain("Next");
   });
 
-  it("places the tab strip, timeline, and one-piece composer inside the main-pane frame", async () => {
+  it("places the tab strip, timeline, and composer without a main-pane frame", async () => {
     const terminal = new RecordingTerminal(160, 28);
     const current = {
       ...state(),
@@ -733,8 +733,8 @@ describe("composer controls", () => {
     const lines = terminal.viewport();
     await deck.stop();
 
-    expect(lines[0]).toContain("┌");
-    expect(lines.at(-1)).toContain("└");
+    expect(lines[0]).not.toContain("┌");
+    expect(lines.at(-1)).not.toContain("└");
     expect(lines.join("\n")).toContain("Agent");
     expect(lines.join("\n")).toContain("NORMAL Prompt");
     expect(lines.join("\n")).not.toMatch(/\n─{8,}\n/);
@@ -1055,7 +1055,7 @@ describe("terminal appearance", () => {
     expect(sidebar).not.toContain("/working");
   });
 
-  it("paints an unlabeled sidebar frame through unused viewport rows", async () => {
+  it("paints the sidebar background through unused viewport rows without a frame", async () => {
     const terminal = new RecordingTerminal(100, 22);
     const deck = new DeckTui(terminal, state(), () => undefined, {
       appearance: { color: "truecolor", unicode: true, theme: "ember", symbols: "unicode" },
@@ -1068,7 +1068,7 @@ describe("terminal appearance", () => {
     const backgrounds = terminal.viewportBackgrounds();
     await deck.stop();
 
-    expect(lines.every((line) => line.startsWith("│"))).toBe(true);
+    expect(lines.every((line) => !line.startsWith("│"))).toBe(true);
     expect(
       backgrounds.every((line) => line.slice(0, 34).every((color) => color === "#1f1d1b")),
     ).toBe(true);
@@ -1137,12 +1137,20 @@ describe("terminal appearance", () => {
 
     deck.start();
     await terminal.waitForRender();
+    const lines = terminal.viewport();
+    const backgrounds = terminal.viewportBackgrounds();
     await deck.stop();
 
     const output = terminal.writes.join("");
     expect(output).toContain("\u001b[48;2;232;222;212m");
     expect(output).toContain("\u001b[48;2;226;216;207m");
     expect(output).not.toContain("\u001b[43m");
+    const sidebarRow = lines.findIndex((line) => line.includes("Projects / workspaces"));
+    const composerRow = lines.findIndex((line) => line.includes("Prompt →"));
+    expect(backgrounds[sidebarRow]?.[lines[sidebarRow]?.indexOf("Projects") ?? -1]).toBe("#e8ded4");
+    expect(backgrounds[sidebarRow]?.[40]).toBeUndefined();
+    expect(backgrounds[composerRow]?.[40]).toBe("#e2d8cf");
+    expect(lines[composerRow]).not.toMatch(/[┌┐└┘│]/u);
   });
 
   it("renders the connected host and dismisses the narrow sidebar overlay on main-pane focus", async () => {

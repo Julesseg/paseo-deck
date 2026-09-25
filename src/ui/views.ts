@@ -148,19 +148,7 @@ class TreeView implements Component {
   }
   invalidate(): void {}
   render(width: number): string[] {
-    const innerWidth = Math.max(1, width - 2);
-    const borderTone = this.state.focus === "tree" ? "focus" : "border";
-    const border = this.theme.appearance.symbols === "unicode" ? "│" : "|";
-    const frame = (line: string): string => {
-      const padding = " ".repeat(Math.max(0, innerWidth - terminalDisplayWidth(line)));
-      return this.theme.styleRenderedBackground(
-        "sidebar",
-        `${this.theme.styleRendered(borderTone, border)}${line}${padding}${this.theme.styleRendered(borderTone, border)}`,
-      );
-    };
-    const sidebarLine = (line: string): string => {
-      return frame(line);
-    };
+    const innerWidth = Math.max(1, width);
     const rows = deriveTreeRows(this.state);
     const header = this.theme.style(
       this.state.focus === "tree" ? "focus" : "header",
@@ -233,7 +221,12 @@ class TreeView implements Component {
     }
     while (output.length < Math.max(0, this.viewportHeight - 1)) output.push("");
     output.push("");
-    return output.map(sidebarLine);
+    return output.map((line) =>
+      this.theme.styleRenderedBackground(
+        "sidebar",
+        `${line}${" ".repeat(Math.max(0, width - terminalDisplayWidth(line)))}`,
+      ),
+    );
   }
 
   selectedLineRange(_width: number): { start: number; end: number } | undefined {
@@ -427,64 +420,19 @@ class ContentPane implements Component {
         ? " STALE"
         : "";
       return [
-        this.theme.styleRendered("header", this.theme.clipRendered(`Terminal${stale}`, width)),
+        this.theme.styleRendered(
+          this.state.focus === "timeline" ? "focus" : "header",
+          this.theme.clipRendered(
+            `${(this.state.terminalMode ?? "normal").toUpperCase()} Terminal${stale}`,
+            width,
+          ),
+        ),
         ...(this.state.terminalLines?.[this.state.activeTerminalId] ?? [])
           .slice(this.state.terminalScrollTop?.[this.state.activeTerminalId] ?? 0)
           .map((line) => clipTerminalLine(line, width)),
       ];
     }
     return this.timeline.render(width);
-  }
-}
-
-/** Paints one vertical edge of the main pane. The layout engine stretches the
- * adjacent content, while this component makes the shell boundary visible in
- * every otherwise-empty row. */
-class MainPaneEdge implements Component {
-  constructor(
-    private readonly terminal: Terminal,
-    private readonly theme: DeckTheme,
-    private readonly side: "left" | "right",
-  ) {}
-  invalidate(): void {}
-  render(_width: number): string[] {
-    const unicode = this.theme.appearance.symbols === "unicode";
-    const top = unicode ? (this.side === "left" ? "┌" : "┐") : "+";
-    const bottom = unicode ? (this.side === "left" ? "└" : "┘") : "+";
-    const middle = unicode ? "│" : "|";
-    return Array.from({ length: this.terminal.rows }, (_, row) =>
-      this.theme.styleRendered(
-        "border",
-        row === 0 ? top : row === this.terminal.rows - 1 ? bottom : middle,
-      ),
-    );
-  }
-}
-
-class MainPaneRule implements Component {
-  constructor(
-    private readonly theme: DeckTheme,
-    private readonly state: () => AppState,
-    private readonly kind: "top" | "bottom",
-  ) {}
-  invalidate(): void {}
-  render(width: number): string[] {
-    const unicode = this.theme.appearance.symbols === "unicode";
-    const line = unicode ? "─" : "-";
-    const state = this.state();
-    const label =
-      this.kind === "top"
-        ? state.activeTerminalId
-          ? ` ${(state.terminalMode ?? "normal").toUpperCase()} `
-          : state.focus === "timeline"
-            ? ` ${(state.timelineMode ?? "normal").toUpperCase()} `
-            : ""
-        : "";
-    const content = label
-      ? `${label}${line.repeat(Math.max(0, width - terminalDisplayWidth(label)))}`
-      : line.repeat(width);
-    const tone = this.kind === "top" && state.focus === "timeline" ? "focus" : "border";
-    return [this.theme.styleRendered(tone, content)];
   }
 }
 
@@ -973,8 +921,7 @@ class TimelineScrollView extends ScrollView {
 class BorderlessEditor extends Editor {
   override render(width: number): string[] {
     const lines = super.render(width);
-    // Editor's stock chrome is a pair of horizontal rules. ComposerView owns
-    // the one enclosing border so prompt and controls remain one region.
+    // The stock editor draws horizontal rules; the composer uses a background.
     return lines.length >= 2 ? lines.slice(1, -1) : lines;
   }
 }
@@ -1060,36 +1007,18 @@ class ComposerView implements Component, Focusable {
       : "";
     const heading =
       `${this.state.focus === "composer" ? mode.toUpperCase() : ""} ${destination}${status}${selectionCue}`.trim();
-    const innerWidth = Math.max(1, width - 2);
+    const innerWidth = Math.max(1, width);
     const controlRow = composerControlRow(this.state, this.theme, innerWidth);
     const controls =
       innerWidth < 55 ? this.theme.clipRendered(`Prompt ${controlRow}`, innerWidth) : controlRow;
-    const unicode = this.theme.appearance.symbols === "unicode";
-    const topLeft = unicode ? "┌" : "+";
-    const topRight = unicode ? "┐" : "+";
-    const bottomLeft = unicode ? "└" : "+";
-    const bottomRight = unicode ? "┘" : "+";
-    const horizontal = unicode ? "─" : "-";
-    const vertical = unicode ? "│" : "|";
-    const topLabel = ` ${heading} `;
-    const top = `${topLeft}${this.theme.clipRendered(`${topLabel}${horizontal.repeat(Math.max(0, innerWidth - terminalDisplayWidth(topLabel)))}`, innerWidth)}${topRight}`;
-    const body = this.editor
-      .render(innerWidth)
-      .map(
-        (line) =>
-          `${vertical}${this.theme.clipRendered(`${line}${" ".repeat(Math.max(0, innerWidth - terminalDisplayWidth(line)))}`, innerWidth)}${vertical}`,
-      );
+    const body = this.editor.render(innerWidth);
     const lines = [
-      this.theme.styleRendered(this.focused ? "focus" : "muted", top),
+      this.theme.styleRendered(
+        this.focused ? "focus" : "muted",
+        ` ${this.theme.clipRendered(heading, Math.max(1, innerWidth - 1))}`,
+      ),
       ...body,
-      this.theme.styleRendered(
-        this.focused ? "focus" : "muted",
-        `${vertical}${controls}${" ".repeat(Math.max(0, innerWidth - terminalDisplayWidth(controls)))}${vertical}`,
-      ),
-      this.theme.styleRendered(
-        this.focused ? "focus" : "muted",
-        `${bottomLeft}${horizontal.repeat(innerWidth)}${bottomRight}`,
-      ),
+      ` ${this.theme.clipRendered(controls, Math.max(1, innerWidth - 1))}`,
     ];
     return lines.map((line) =>
       this.theme.styleRenderedBackground(
@@ -1983,14 +1912,8 @@ export class DeckTui {
       shellLayout(viewport.width, viewport.height, this.treeWidth).supported;
     const mainPane = new HStack(
       [
-        { component: new MainPaneEdge(this.terminal, this.theme, "left"), basis: 1, minSize: 1 },
         {
           component: new VStack([
-            {
-              component: new MainPaneRule(this.theme, () => this.state, "top"),
-              basis: 1,
-              minSize: 1,
-            },
             { component: this.tabs, basis: 1, minSize: 1 },
             {
               component: new HStack(
@@ -2061,17 +1984,12 @@ export class DeckTui {
               minSize: 7,
             },
             { component: this.status, basis: 1, minSize: 1 },
-            {
-              component: new MainPaneRule(this.theme, () => this.state, "bottom"),
-              basis: 1,
-              minSize: 1,
-            },
           ]),
           basis: 0,
           grow: 1,
           minSize: 8,
         },
-        { component: new MainPaneEdge(this.terminal, this.theme, "right"), basis: 1, minSize: 1 },
+        { component: new Spacer(1), basis: 1, minSize: 1 },
       ],
       { align: "stretch" },
     );
