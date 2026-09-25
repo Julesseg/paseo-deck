@@ -37,12 +37,19 @@ function testClient(
     timeline,
   };
   const create = vi.fn(async () => ({ id: "new-agent" }));
+  const getConfig = vi.fn(async () => ({
+    requestId: "config",
+    config: {
+      terminalProfiles: [{ id: "build", name: "Build", command: "npm", args: ["run", "build"] }],
+    },
+  }));
   let agentDirectoryListener: ((message: Record<string, unknown>) => void) | undefined;
   let workspaceDirectoryListener: ((message: Record<string, unknown>) => void) | undefined;
   return {
     client: {
       connect: vi.fn(),
       close: vi.fn(),
+      config: { get: getConfig },
       projects: {
         list: vi.fn(async () => ({
           projects: [{ projectKey: "project-1", projectName: "Project" }],
@@ -102,6 +109,7 @@ function testClient(
     },
     agent,
     create,
+    getConfig,
     timeline,
     release,
     emitAgentDirectory: (message: Record<string, unknown>) => agentDirectoryListener?.(message),
@@ -112,6 +120,31 @@ function testClient(
 }
 
 describe("ProductionPaseoGateway", () => {
+  it("reads configured profiles, daemon defaults, and an explicitly empty profile list", async () => {
+    const fixture = testClient();
+    const gateway = new ProductionPaseoGateway({
+      host: "127.0.0.1:6767",
+      createClient: () => fixture.client as never,
+    });
+    await gateway.connect();
+    expect(await gateway.listTerminalProfiles()).toEqual([
+      { id: "build", name: "Build", command: "npm", args: ["run", "build"] },
+    ]);
+    fixture.getConfig.mockResolvedValueOnce({ requestId: "config", config: {} as never });
+    expect((await gateway.listTerminalProfiles()).map((profile) => profile.id)).toEqual([
+      "claude",
+      "codex",
+      "opencode",
+      "pi",
+    ]);
+    fixture.getConfig.mockResolvedValueOnce({
+      requestId: "config",
+      config: { terminalProfiles: [] },
+    });
+    expect(await gateway.listTerminalProfiles()).toEqual([]);
+    expect(fixture.getConfig).toHaveBeenCalledTimes(3);
+    await gateway.close();
+  });
   it("connects and closes the stable SDK surface without private connection hooks", async () => {
     const fixture = testClient();
     const gateway = new ProductionPaseoGateway({

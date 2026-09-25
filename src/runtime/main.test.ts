@@ -69,6 +69,54 @@ describe("runCli", () => {
     await expect(running).resolves.toBe(0);
   });
 
+  it("launches and terminates a blank terminal without losing the session draft", async () => {
+    const terminal = new RecordingTerminal(100, 30);
+    const gateway = new FakePaseoGateway({ ...treeDirectory(), agents: [] });
+    const running = runInteractive({ type: "default" }, output().io, {
+      ...testRuntimeDependencies(),
+      gateway,
+      terminal,
+      bindExitHandlers: () => () => undefined,
+    });
+    await tick();
+    terminal.sendInput("\u001b");
+    terminal.sendInput("T");
+    await terminal.waitForRender();
+    terminal.sendInput("\r");
+    await terminal.waitForRender();
+    terminal.sendInput("i");
+    for (const key of "Keep this text") terminal.sendInput(key);
+    await terminal.waitForRender();
+    terminal.sendInput("\u001b");
+    terminal.sendInput("T");
+    await terminal.waitForRender();
+    terminal.sendInput("\u001b[B");
+    terminal.sendInput("\r");
+    await terminal.waitForRender();
+    expect(gateway.createdTerminals).toEqual([{ workspaceId: "workspace", options: undefined }]);
+    expect(terminal.viewport().join("\n")).toContain("NORMAL");
+    terminal.sendInput("i");
+    terminal.sendInput("x");
+    await terminal.waitForRender();
+    expect(gateway.terminalInput).toEqual([{ terminalId: "fake-terminal-1", data: "x" }]);
+    expect(terminal.viewport().join("\n")).toContain("INSERT");
+    terminal.sendInput("\u001b");
+    terminal.sendInput("g");
+    terminal.sendInput("k");
+    await terminal.waitForRender();
+    expect(terminal.viewport().join("\n")).toContain("Terminate terminal?");
+    terminal.sendInput("\u001b[B");
+    terminal.sendInput("\r");
+    await terminal.waitForRender();
+    expect(gateway.terminals).toHaveLength(0);
+    expect(terminal.viewport().join("\n")).toContain("Keep this text");
+    terminal.sendInput("q");
+    await terminal.waitForRender();
+    terminal.sendInput("\u001b[B");
+    terminal.sendInput("\r");
+    await expect(running).resolves.toBe(0);
+  });
+
   it("keeps a dirty draft when quit is declined and exits after confirmation", async () => {
     const terminal = new RecordingTerminal(100, 30);
     const gateway = new FakePaseoGateway({ ...treeDirectory(), agents: [] });

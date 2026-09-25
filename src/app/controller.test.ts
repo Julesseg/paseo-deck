@@ -1195,7 +1195,7 @@ describe("New Tab session draft", () => {
   async function openDraft(app: ApplicationController, workspaceId = "workspace-1") {
     await app.handleIntent({ type: "open-new-tab", workspaceId });
     expect(app.state.modal.type).toBe("new-tab");
-    await app.handleIntent({ type: "new-tab-choice", choice: "session" });
+    await app.handleIntent({ type: "new-tab-choice", choice: { kind: "session" } });
   }
 
   it("keeps one draft per workspace and resumes its message and settings", async () => {
@@ -1401,5 +1401,64 @@ describe("New Tab session draft", () => {
     expect(quits).toBe(1);
     await app.handleIntent({ type: "quit-confirmed" });
     expect(quits).toBe(2);
+  });
+});
+
+describe("New Tab terminals", () => {
+  it("selects an existing terminal without changing a session draft", async () => {
+    const gateway = new FakePaseoGateway(snapshot);
+    gateway.terminals = [
+      { id: "existing", workspaceId: "workspace-1", cwd: "/deck", name: "build" },
+    ];
+    const app = new ApplicationController(gateway);
+    await app.start();
+    await app.handleIntent({ type: "open-new-tab", workspaceId: "workspace-1" });
+    await app.handleIntent({ type: "new-tab-choice", choice: { kind: "session" } });
+    app.setComposerText("Keep this text");
+    await app.handleIntent({ type: "open-terminal", terminalId: "existing" });
+    expect(app.state.activeTerminalId).toBe("existing");
+    expect(app.state.sessionDrafts["workspace-1"]?.prompt).toBe("Keep this text");
+    expect(app.state.tabOrder["workspace-1"]).toContain("draft:workspace-1");
+  });
+
+  it("creates a blank terminal with daemon defaults and preserves the session draft", async () => {
+    const gateway = new FakePaseoGateway(snapshot);
+    const app = new ApplicationController(gateway);
+    await app.start();
+    await app.handleIntent({ type: "open-new-tab", workspaceId: "workspace-1" });
+    await app.handleIntent({ type: "new-tab-choice", choice: { kind: "session" } });
+    app.setComposerText("Keep this draft");
+    await app.handleIntent({ type: "open-new-tab", workspaceId: "workspace-1" });
+    await app.handleIntent({ type: "new-tab-choice", choice: { kind: "terminal" } });
+    expect(gateway.createdTerminals).toEqual([{ workspaceId: "workspace-1", options: undefined }]);
+    expect(app.state.activeTerminalId).toBe("fake-terminal-1");
+    expect(app.state.terminalMode).toBe("normal");
+    expect(app.state.sessionDrafts["workspace-1"]?.prompt).toBe("Keep this draft");
+    await app.handleIntent({ type: "open-new-tab", workspaceId: "workspace-1" });
+    await app.handleIntent({ type: "new-tab-choice", choice: { kind: "session" } });
+    expect(app.state.activeTabIds["workspace-1"]).toBe("draft:workspace-1");
+    expect(app.state.sessionDrafts["workspace-1"]?.prompt).toBe("Keep this draft");
+  });
+
+  it("launches a daemon profile with its resolved command and args", async () => {
+    const gateway = new FakePaseoGateway(snapshot);
+    gateway.terminalProfiles = [
+      { id: "codex", name: "Codex", command: "codex", args: ["--profile", "work", "{{{prompt}}}"] },
+    ];
+    const app = new ApplicationController(gateway);
+    await app.start();
+    await app.handleIntent({ type: "open-new-tab", workspaceId: "workspace-1" });
+    await app.handleIntent({
+      type: "new-tab-choice",
+      choice: { kind: "profile", profileId: "codex" },
+    });
+    expect(gateway.createdTerminals).toEqual([
+      {
+        workspaceId: "workspace-1",
+        options: { name: "Codex", command: "codex", args: ["--profile", "work"] },
+      },
+    ]);
+    expect(app.state.activeTabIds["workspace-1"]).toBe("terminal:fake-terminal-1");
+    expect(app.state.modal.type).toBe("none");
   });
 });

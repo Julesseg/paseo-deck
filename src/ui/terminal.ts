@@ -111,4 +111,14 @@ export class RecordingTerminal implements Terminal {
       });
     });
   }
+  /** Captures reverse-video cells, including pi-tui's fake text cursor. */
+  viewportInverseCells(): boolean[][] {
+    const buffer = this.xterm.buffer.active;
+    return Array.from({ length: this.xterm.rows }, (_, row) => {
+      const line = buffer.getLine(buffer.viewportY + row);
+      return Array.from({ length: this.xterm.cols }, (_, column) =>
+        Boolean(line?.getCell(column)?.isInverse()),
+      );
+    });
+  }
 }
