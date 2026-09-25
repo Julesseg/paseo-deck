@@ -256,15 +256,35 @@ describe("DeckController keyboard seam", () => {
     }
   });
 
-  it("keeps quit and recovery precedence over composer insert text", () => {
+  it("keeps ordinary text literal in composer insert mode", () => {
     const intents: unknown[] = [];
     const controller = new DeckController(
       () => ({ ...makeState(), focus: "composer", composerMode: "insert" }),
       (intent) => intents.push(intent),
     );
-    expect(controller.handleKey("q")).toBe(true);
-    expect(controller.handleKey("r")).toBe(true);
-    expect(intents).toEqual([{ type: "quit" }, { type: "refresh" }]);
+    expect(controller.handleKey("q")).toBe(false);
+    expect(controller.handleKey("r")).toBe(false);
+    expect(controller.handleKey("?")).toBe(false);
+    expect(intents).toEqual([]);
+    expect(controller.handleKey("\u0003")).toBe(true);
+    expect(intents).toEqual([{ type: "quit" }]);
+  });
+
+  it("routes composer Vim editing keys to its buffer before session commands", () => {
+    for (const mode of ["normal", "visual"] as const) {
+      const intents: unknown[] = [];
+      const controller = new DeckController(
+        () => ({ ...makeState(), focus: "composer", composerMode: mode }),
+        (intent) => intents.push(intent),
+      );
+      for (const key of ["h", "j", "k", "l", "w", "b", "0", "$", "x", "d", "a", "A", "I", "O"])
+        expect(controller.handleKey(key)).toBe(false);
+      if (mode === "visual") {
+        for (const key of ["i", "n", "t", "d", "c", "y"])
+          expect(controller.handleKey(key)).toBe(false);
+      }
+      expect(intents).toEqual([]);
+    }
   });
 
   it("enters and exits composer visual mode without changing active region", () => {
@@ -476,7 +496,7 @@ describe("DeckController keyboard seam", () => {
     expect(intents).toEqual([{ type: "quit" }]);
   });
 
-  it("keeps ordinary insert text local while preserving global quit", () => {
+  it("keeps ordinary insert text local while preserving Ctrl-C quit", () => {
     const intents: unknown[] = [];
     const controller = new DeckController(
       () => ({ ...makeState(), focus: "composer" }),
@@ -484,7 +504,8 @@ describe("DeckController keyboard seam", () => {
     );
 
     expect(controller.handleKey("x")).toBe(false);
-    expect(controller.handleKey("q")).toBe(true);
+    expect(controller.handleKey("q")).toBe(false);
+    expect(controller.handleKey("\u0003")).toBe(true);
     expect(intents).toEqual([{ type: "quit" }]);
   });
 

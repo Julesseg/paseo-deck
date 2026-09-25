@@ -1108,22 +1108,57 @@ class ComposerView implements Component, Focusable {
       this.handleVisualInput(data);
       return;
     }
+    if (this.state.composerMode === "normal") {
+      this.handleNormalInput(data);
+      return;
+    }
     // pi-tui's editor treats Enter as submit. In Insert mode the composer is
     // a multiline buffer, so normalize the terminal's Enter byte to the
     // editor's explicit newline path. Normal mode owns submission instead.
     if (data === "\r" || data === "\n") {
-      if (this.state.composerMode === "normal") {
-        const prompt = this.editor.getText();
-        if (this.draftWorkspaceId)
-          this.emit({ type: "submit-session-draft", workspaceId: this.draftWorkspaceId, prompt });
-        else if (this.selectedAgentId && prompt.trim())
-          this.emit({ type: "submit-composer", agentId: this.selectedAgentId, prompt });
-        return;
-      }
       this.editor.handleInput("\n");
       return;
     }
     this.editor.handleInput(data);
+  }
+
+  private handleNormalInput(data: string): void {
+    if (data === "\r" || data === "\n") {
+      const prompt = this.editor.getText();
+      if (this.draftWorkspaceId)
+        this.emit({ type: "submit-session-draft", workspaceId: this.draftWorkspaceId, prompt });
+      else if (this.selectedAgentId && prompt.trim())
+        this.emit({ type: "submit-composer", agentId: this.selectedAgentId, prompt });
+      return;
+    }
+    const motion: Record<string, string> = {
+      h: "\u001b[D",
+      l: "\u001b[C",
+      j: "\u001b[B",
+      k: "\u001b[A",
+      "0": "\u0001",
+      $: "\u0005",
+      w: "\u001b[1;5C",
+      b: "\u001b[1;5D",
+    };
+    if (motion[data]) {
+      this.editor.handleInput(motion[data]);
+      return;
+    }
+    if (data === "x") {
+      this.editor.handleInput("\u001b[3~");
+      return;
+    }
+    if (data === "a" || data === "A" || data === "I" || data === "O") {
+      if (data === "a") this.editor.handleInput("\u001b[C");
+      if (data === "A") this.editor.handleInput("\u0005");
+      if (data === "I" || data === "O") this.editor.handleInput("\u0001");
+      if (data === "O") {
+        this.editor.handleInput("\n");
+        this.editor.handleInput("\u001b[A");
+      }
+      this.emit({ type: "set-composer-mode", mode: "insert" });
+    }
   }
 
   private handleVisualInput(data: string): void {
@@ -1910,7 +1945,11 @@ export class DeckTui {
       // available above an editor/dialog without handing ordinary keys through.
       if (data === "\u0003") return this.controller.handleKey(data) ? { consume: true } : undefined;
       const global = commandForKey(this.state, data);
-      if (global?.id === "command-palette" || global?.id === "help")
+      if (
+        global?.id === "command-palette" ||
+        (global?.id === "help" &&
+          !(this.state.focus === "composer" && this.state.composerMode === "insert"))
+      )
         return this.controller.handleKey(data) ? { consume: true } : undefined;
       if (this.localOverlayKey.startsWith("__timeline-")) {
         if (data === "\u0003")
