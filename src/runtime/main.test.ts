@@ -327,10 +327,10 @@ describe("runCli", () => {
     await expect(running).resolves.toBe(0);
   });
 
-  it("retains saved rich choices on a low-capability launch and restores them on a capable one", async () => {
+  it("retains the saved theme but ignores an old symbol preference", async () => {
     let bytes = JSON.stringify({
       version: 1,
-      global: { theme: "ember", symbolSet: "unicode" },
+      global: { theme: "ember", symbolSet: "ascii" },
       targets: {},
     });
     const preferences: PreferenceFileSystem = {
@@ -355,7 +355,7 @@ describe("runCli", () => {
     expect(lowTerminal.writes.join("")).not.toContain("·");
     lowTerminal.sendInput("q");
     await expect(low).resolves.toBe(0);
-    expect(JSON.parse(bytes).global).toEqual({ theme: "ember", symbolSet: "unicode" });
+    expect(JSON.parse(bytes).global).toEqual({ theme: "ember", symbolSet: "ascii" });
 
     const richTerminal = new RecordingTerminal();
     const rich = runInteractive({ type: "default" }, output().io, {
@@ -436,10 +436,6 @@ describe("runCli", () => {
     firstA.terminal.sendInput("toggle theme");
     firstA.terminal.sendInput("\r");
     await firstA.terminal.waitForRender();
-    firstA.terminal.sendInput("\u000b");
-    firstA.terminal.sendInput("toggle symbol set");
-    firstA.terminal.sendInput("\r");
-    await firstA.terminal.waitForRender();
     firstA.terminal.sendInput("q");
     await expect(firstA.running).resolves.toBe(0);
 
@@ -458,7 +454,7 @@ describe("runCli", () => {
       global: unknown;
       targets: Record<string, unknown>;
     };
-    expect(parsed.global).toEqual({ theme: "plain", symbolSet: "ascii" });
+    expect(parsed.global).toEqual({ theme: "plain" });
     expect(parsed.targets).toHaveProperty(targetScope({ type: "host", value: "a:1" }));
     expect(parsed.targets).toHaveProperty(targetScope({ type: "host", value: "b:1" }));
     expect(parsed.targets[targetScope({ type: "host", value: "a:1" })]).toMatchObject({

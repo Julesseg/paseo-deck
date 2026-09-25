@@ -9,8 +9,10 @@ import { DeckTui } from "../src/ui/views.js";
 
 const itemCount = Number(process.argv[2] ?? 1_000);
 const keyCount = Number(process.argv[3] ?? 20);
+const symbols = process.argv[4] ?? "unicode";
 if (!Number.isSafeInteger(itemCount) || itemCount < 0) throw new Error("Invalid item count");
 if (!Number.isSafeInteger(keyCount) || keyCount < 1) throw new Error("Invalid key count");
+if (symbols !== "unicode" && symbols !== "ascii") throw new Error("Invalid symbol set");
 
 const projects = [{ id: "project", name: "Deck" }];
 const workspaces = Array.from({ length: 30 }, (_, index) => ({
@@ -67,7 +69,7 @@ const deck = new DeckTui(
   (intent) => {
     void app.handleIntent(intent);
   },
-  { appearance: { color: "none", unicode: false, theme: "plain", symbols: "ascii" } },
+  { appearance: { color: "none", unicode: true, theme: "plain", symbols } },
 );
 const unsubscribe = app.subscribe((next) => deck.update(next));
 deck.start();
@@ -110,6 +112,7 @@ try {
     JSON.stringify({
       itemCount,
       keyCount,
+      symbols,
       keyToWriteMs: { median: percentile(keyToWrite, 0.5), p95: percentile(keyToWrite, 0.95) },
       dispatchMs: { median: percentile(dispatch, 0.5), p95: percentile(dispatch, 0.95) },
     }),

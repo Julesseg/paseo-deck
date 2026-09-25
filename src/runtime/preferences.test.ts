@@ -258,15 +258,10 @@ describe("preferences", () => {
         { id: 1, message: "NOTIFICATION_MARKER", detail: "ERROR_MARKER", kind: "error" as const },
       ],
     };
-    const value = preferenceProjection(
-      state,
-      33,
-      { theme: "ember", symbolSet: "unicode" },
-      "scope",
-    );
+    const value = preferenceProjection(state, 33, { theme: "ember" }, "scope");
     expect(value).toEqual({
       version: 1,
-      global: { theme: "ember", symbolSet: "unicode" },
+      global: { theme: "ember" },
       targets: {
         scope: {
           treeWidth: 33,
@@ -319,7 +314,7 @@ describe("preferences", () => {
       }),
     ).toEqual({
       version: 1,
-      global: { symbolSet: "ascii" },
+      global: {},
       targets: { [validScope]: { showArchived: true } },
     });
   });
@@ -434,15 +429,15 @@ describe("preferences", () => {
         },
       },
     );
-    session.present({ treeWidth: 30, theme: "ember", symbolSet: "unicode" });
+    session.present({ treeWidth: 30, theme: "ember" });
     const first = session.flush();
-    session.present({ treeWidth: 42, theme: "plain", symbolSet: "ascii" });
+    session.present({ treeWidth: 42, theme: "plain" });
     const shutdown = session.flush();
     release?.();
     await Promise.all([first, shutdown]);
     expect(writes).toHaveLength(2);
     expect(JSON.parse(writes[1] ?? "{}")).toMatchObject({
-      global: { theme: "plain", symbolSet: "ascii" },
+      global: { theme: "plain" },
       targets: expect.any(Object),
     });
     expect(writes[1]).toContain('"treeWidth":42');
@@ -549,7 +544,7 @@ describe("preferences", () => {
       remove: async () => undefined,
     };
     const a = await PreferenceSession.open({ type: "host", value: "a:1" }, { fs, path: "/p" });
-    a.present({ treeWidth: 26, theme: "plain", symbolSet: "ascii" });
+    a.present({ treeWidth: 26, theme: "plain" });
     a.observe({
       ...a.initialState(),
       treeOrder: "alphabetical",
@@ -558,7 +553,7 @@ describe("preferences", () => {
     });
     await a.flush();
     const b = await PreferenceSession.open({ type: "host", value: "b:1" }, { fs, path: "/p" });
-    b.present({ treeWidth: 44, theme: "plain", symbolSet: "ascii" });
+    b.present({ treeWidth: 44, theme: "plain" });
     b.observe({ ...b.initialState(), expandedIds: new Set(["pb"]) });
     await b.flush();
     const restored = await PreferenceSession.open(

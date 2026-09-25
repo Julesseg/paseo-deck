@@ -123,7 +123,7 @@ through the command palette for the selected workspace.
 
 Paseo Deck stores preferences at `$XDG_CONFIG_HOME/paseo-deck/preferences.json`, or `~/.config/paseo-deck/preferences.json` when `XDG_CONFIG_HOME` is unset. Delete that file while Paseo Deck is closed to reset all preferences.
 
-The file contains only the global theme and symbol set plus, for each hashed daemon target, tree width, ordering, archived visibility, and expanded project/workspace IDs. Tab order and active tabs exist only during the current run. Corrupt or newer unsupported files produce a short warning and fall back to defaults.
+The file contains only the global theme plus, for each hashed daemon target, tree width, ordering, archived visibility, and expanded project/workspace IDs. Tab order and active tabs exist only during the current run. Corrupt or newer unsupported files produce a short warning and fall back to defaults.
 
 With no theme configured, Deck uses ANSI terminal role escapes for semantic roles at every colour tier. Set `PASEO_DECK_THEME=ember` to opt into the built-in Ember palette, or `PASEO_DECK_THEME=terminal` to force the native palette. Configuration takes precedence over the saved interactive preference; otherwise the saved preference is used, followed by the terminal-native default. `NO_COLOR` and `TERM=dumb` always suppress colour while retaining textual and symbolic distinctions.
 

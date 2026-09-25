@@ -55,7 +55,15 @@ const shots: Array<{
   rows: number;
   state: AppState;
   appearance?: TerminalAppearance;
+  input?: string[];
 }> = [
+  {
+    name: "command-palette-appearance",
+    columns: 100,
+    rows: 28,
+    state: baseState,
+    input: ["\u000b", "toggle"],
+  },
   {
     name: "new-tab-picker",
     columns: 100,
@@ -831,6 +839,10 @@ for (const shot of shots) {
   deck.update(shot.state);
   deck.start();
   await terminal.waitForRender();
+  for (const input of shot.input ?? []) {
+    terminal.sendInput(input);
+    await terminal.waitForRender();
+  }
   await terminal.waitForRender();
   const viewport = terminal.viewport();
   const backgrounds = terminal.viewportBackgrounds();

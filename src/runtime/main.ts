@@ -117,7 +117,7 @@ export async function runInteractive(
     ...detected,
     theme: detected.color === "none" ? "plain" : (requestedTheme ?? detected.theme),
     palette,
-    symbols: detected.unicode ? (requested.symbolSet ?? detected.symbols) : "ascii",
+    symbols: detected.symbols,
   } as const;
   let requestShutdown: (code?: number, error?: unknown) => Promise<void> = async () => undefined;
   let deck: DeckTui;
@@ -139,7 +139,6 @@ export async function runInteractive(
       treeWidth: preferenceSession.treeWidth(),
       ...(target.type === "host" ? { paseoHost: target.value } : {}),
       ...(requestedTheme ? { requestedTheme } : {}),
-      ...(requested.symbolSet ? { requestedSymbolSet: requested.symbolSet } : {}),
       onPreferencesChanged: (value) => {
         preferenceSession.present(value);
       },
