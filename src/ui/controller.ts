@@ -210,7 +210,10 @@ export class DeckController {
     const global = commandForKey(state, data);
     // These two overlays are safe global escapes. They are intercepted before
     // every dialog/editor so opening and closing them cannot mutate its draft.
-    if (global?.id === "command-palette" || global?.id === "help")
+    if (
+      global?.id === "command-palette" ||
+      (global?.id === "help" && !(state.focus === "composer" && state.composerMode === "insert"))
+    )
       return this.send(global.intent(state));
     if (state.modal.type === "permission") {
       if (state.modal.submitting) return true;
@@ -251,10 +254,6 @@ export class DeckController {
       }
       if (global?.id === "command-palette") return this.send(global.intent(state));
       if (mode === "insert") {
-        // Recovery and quit commands are global even while the editor owns
-        // ordinary text input. This keeps a stuck composer recoverable.
-        if (global && ["quit", "refresh", "retry"].includes(global.id))
-          return this.sendResolved(global, state);
         if (global?.id === "composer-history-previous" || global?.id === "composer-history-next")
           return this.send(global.intent(state));
         if (data === "\u0015" || data === "\u0004" || data === "\u001b[5~" || data === "\u001b[6~")
@@ -266,6 +265,7 @@ export class DeckController {
           return this.send({ type: "scroll-timeline", direction: data === "\u001b[1;5A" ? -1 : 1 });
         return false;
       }
+      if (mode === "visual") return false;
       if (data === "i") return this.send({ type: "set-composer-mode", mode: "insert" });
       if (data === "v") return this.send({ type: "set-composer-mode", mode: "visual" });
       if (data === "n") return this.send({ type: "set-focus", focus: "tree" });
@@ -281,6 +281,7 @@ export class DeckController {
         });
       if (data === "\u001b[1;5A" || data === "\u001b[1;5B")
         return this.send({ type: "scroll-timeline", direction: data === "\u001b[1;5A" ? -1 : 1 });
+      if (/^[hjklwb0$xdaAIO]$/.test(data)) return false;
       if (global) return this.sendResolved(global, state);
       return false;
     }

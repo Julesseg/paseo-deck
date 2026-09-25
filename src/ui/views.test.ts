@@ -807,7 +807,7 @@ describe("composer controls", () => {
     expect(terminal.viewport().join("\n")).not.toMatch(/j\/k browse|Enter select|Esc close/);
   });
 
-  it("submits in Normal mode and preserves a multiline draft in Insert mode", async () => {
+  it("keeps Normal mode read only, submits the existing draft, and inserts multiline text only in Insert mode", async () => {
     const base = state();
     const current: AppState = {
       ...base,
@@ -838,15 +838,118 @@ describe("composer controls", () => {
     deck.update(current);
     await terminal.waitForRender();
     terminal.sendInput("hello");
+    terminal.sendInput("\u007f");
     terminal.sendInput("\r");
     await terminal.waitForRender();
-    expect(intents).toContainEqual({ type: "submit-composer", agentId: "agent", prompt: "hello" });
+    expect(intents).not.toContainEqual(expect.objectContaining({ type: "set-composer-text" }));
+    expect(intents).not.toContainEqual(expect.objectContaining({ type: "submit-composer" }));
     deck.update({ ...current, composerMode: "insert" });
     terminal.sendInput("line one");
     terminal.sendInput("\r");
     terminal.sendInput("line two");
     await terminal.waitForRender();
     expect(intents).toContainEqual({ type: "set-composer-text", text: "line one\nline two" });
+    await deck.stop();
+  });
+
+  it("applies Vim motions and edits to the Normal mode composer", async () => {
+    const base = state();
+    let current: AppState = {
+      ...base,
+      focus: "composer",
+      composerMode: "normal",
+      selectedAgentId: "agent",
+      composer: { ...base.composer, drafts: { agent: "one two" } },
+    };
+    const intents: unknown[] = [];
+    const terminal = new RecordingTerminal();
+    let deck: DeckTui;
+    deck = new DeckTui(terminal, current, (intent) => {
+      intents.push(intent);
+      if (intent.type === "set-composer-text") {
+        current = {
+          ...current,
+          composer: {
+            ...current.composer,
+            drafts: { ...current.composer.drafts, agent: intent.text },
+          },
+        };
+        deck.update(current);
+      }
+      if (intent.type === "set-composer-mode") {
+        current = { ...current, composerMode: intent.mode };
+        deck.update(current);
+      }
+    });
+    deck.start();
+    deck.update(current);
+    for (const key of ["0", "l", "x", "w", "b", "$", "h", "a", "!"]) terminal.sendInput(key);
+    await terminal.waitForRender();
+    expect(intents).toContainEqual({ type: "set-composer-text", text: "oe two!" });
+    expect(current.composerMode).toBe("insert");
+    await deck.stop();
+  });
+
+  it("keeps Visual mode input out of the draft and deletes the selected text", async () => {
+    const base = state();
+    let current: AppState = {
+      ...base,
+      focus: "composer",
+      composerMode: "normal",
+      selectedAgentId: "agent",
+      composer: { ...base.composer, drafts: { agent: "abc" } },
+    };
+    const intents: unknown[] = [];
+    const terminal = new RecordingTerminal();
+    let deck: DeckTui;
+    deck = new DeckTui(terminal, current, (intent) => {
+      intents.push(intent);
+      if (intent.type === "set-composer-text") {
+        current = {
+          ...current,
+          composer: {
+            ...current.composer,
+            drafts: { ...current.composer.drafts, agent: intent.text },
+          },
+        };
+        deck.update(current);
+      }
+      if (intent.type === "set-composer-mode") {
+        current = { ...current, composerMode: intent.mode };
+        deck.update(current);
+      }
+    });
+    deck.start();
+    deck.update(current);
+    terminal.sendInput("0");
+    terminal.sendInput("v");
+    terminal.sendInput("Z");
+    terminal.sendInput("l");
+    terminal.sendInput("d");
+    await terminal.waitForRender();
+    expect(intents).not.toContainEqual({
+      type: "set-composer-text",
+      text: expect.stringContaining("Z"),
+    });
+    expect(intents).toContainEqual({ type: "set-composer-text", text: "c" });
+    expect(current.composerMode).toBe("normal");
+    await deck.stop();
+  });
+
+  it("renders a visible composer cursor in Normal, Insert, and Visual modes", async () => {
+    const terminal = new RecordingTerminal();
+    const base: AppState = { ...state(), focus: "composer", composerMode: "normal" };
+    const deck = new DeckTui(terminal, base, () => undefined);
+    deck.start();
+    for (const mode of ["normal", "insert", "visual"] as const) {
+      deck.update({ ...base, composerMode: mode });
+      await terminal.waitForRender();
+      const headingRow = terminal
+        .viewport()
+        .findIndex((line) => line.includes(`${mode.toUpperCase()} Prompt`));
+      expect(headingRow).toBeGreaterThanOrEqual(0);
+      expect(terminal.viewportInverseCells()[headingRow + 1]?.some(Boolean)).toBe(true);
+    }
     await deck.stop();
   });
 
