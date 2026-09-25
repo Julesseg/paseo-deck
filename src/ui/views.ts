@@ -608,6 +608,19 @@ class TimelineView implements Component {
   private searchQuery = "";
   private selectionFeedback = "";
   private layout: TimelineLayout | undefined;
+  private readonly rendered = new Map<
+    number,
+    {
+      width: number;
+      layout: TimelineLayout;
+      buffer: TimelineBufferState;
+      heading: string;
+      focused: boolean;
+      mode: string;
+      selectionFeedback: string;
+      lines: string[];
+    }
+  >();
   constructor(private readonly theme: DeckTheme) {}
   updateSelection(state: AppState): void {
     this.state = state;
@@ -621,6 +634,7 @@ class TimelineView implements Component {
     if (events === this.events) return;
     this.events = events;
     this.layout = undefined;
+    this.rendered.clear();
     const ids = new Set(events.map((event) => event.item.id));
     for (const id of this.itemViews.keys()) if (!ids.has(id)) this.itemViews.delete(id);
     for (const event of events) {
@@ -704,6 +718,8 @@ class TimelineView implements Component {
       const view = this.itemViews.get(item.id);
       view?.update(item, true);
       view?.invalidate();
+      this.layout = undefined;
+      this.rendered.clear();
     }
     return true;
   }
@@ -741,11 +757,13 @@ class TimelineView implements Component {
     if (event) {
       this.itemViews.get(id)?.update(event.item, this.expanded.has(id));
       this.layout = undefined;
+      this.rendered.clear();
     }
   }
   invalidate(): void {
     for (const item of this.itemViews.values()) item.invalidate();
     this.layout = undefined;
+    this.rendered.clear();
   }
   render(width: number): string[] {
     this.renderedWidth = width;
@@ -784,13 +802,23 @@ class TimelineView implements Component {
         ),
       ];
     }
+    const cached = this.rendered.get(width);
+    if (
+      cached?.width === width &&
+      cached.heading === heading &&
+      cached.focused === this.focused &&
+      cached.mode === mode &&
+      cached.selectionFeedback === this.selectionFeedback &&
+      (!this.focused || (cached.layout === this.layout && cached.buffer === this.buffer))
+    )
+      return cached.lines;
     const layout = this.timelineLayout(width);
     const bodyLines = layout.lines;
     const wasVisual = this.buffer.mode === "visual";
     this.buffer = replaceTimelineBuffer(this.buffer, bodyLines);
     if (wasVisual && this.buffer.mode !== "visual")
       this.selectionFeedback = "Selection cleared: timeline changed";
-    return [
+    const lines = [
       this.theme.styleRendered(
         "header",
         this.theme.clipRendered(
@@ -815,6 +843,18 @@ class TimelineView implements Component {
         });
       }),
     ];
+    this.rendered.set(width, {
+      width,
+      layout,
+      buffer: this.buffer,
+      heading,
+      focused: this.focused,
+      mode,
+      selectionFeedback: this.selectionFeedback,
+      lines,
+    });
+    if (this.rendered.size > 8) this.rendered.delete(this.rendered.keys().next().value ?? width);
+    return lines;
   }
 
   private eventBodyLine(index: number): number {
@@ -2254,6 +2294,7 @@ export class DeckTui {
       this.requestedTheme =
         (this.requestedTheme ?? this.detectedAppearance.theme) === "ember" ? "plain" : "ember";
       this.theme.setAppearance(this.effectiveAppearance());
+      this.timeline.invalidate();
       this.emitPreferences();
       this.renderScheduler.requestImmediate();
       return;
@@ -2266,6 +2307,7 @@ export class DeckTui {
       this.requestedSymbolSet =
         this.effectiveAppearance().symbols === "unicode" ? "ascii" : "unicode";
       this.theme.setAppearance(this.effectiveAppearance());
+      this.timeline.invalidate();
       this.emitPreferences();
       this.renderScheduler.requestImmediate();
       return;
@@ -2323,6 +2365,7 @@ export class DeckTui {
     if (!background || !this.started) return;
     this.terminalBackground = [background.r, background.g, background.b];
     this.theme.setAppearance(this.effectiveAppearance());
+    this.timeline.invalidate();
     this.tui.requestRender();
   }
 

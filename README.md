@@ -45,6 +45,7 @@ npm run smoke:package # install the packed tarball and test both executable name
 npm run typecheck  # check strict TypeScript
 npm run lint       # run Biome lint rules
 npm run format     # format the project
+npm run bench:navigation -- 1000 20 # measure sidebar input with a long timeline
 npm run check      # formatting, lint, types, coverage, packed executables, and build
 ```
 

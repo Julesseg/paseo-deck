@@ -1,0 +1,3 @@
+# Measure rendering before a Rust rewrite
+
+Paseo Deck remains a TypeScript client using the public Paseo SDK while we make common idle interactions meet a p95 key-to-screen target of 50 ms, including with long timelines. A 1,000-item synthetic session showed that repeated full timeline rendering, not input dispatch, caused multi-second sidebar lag; caching unchanged rendered lines brought that path under the target. A full Rust port would also replace the current SDK integration and would not remove redundant rendering by itself, so revisit the language choice only if measured bottlenecks remain after focused fixes. See [performance measurements](../performance.md).
