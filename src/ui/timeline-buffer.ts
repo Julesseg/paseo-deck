@@ -5,7 +5,7 @@
  * in cursor, search, or yank calculations.
  */
 export type TimelineBufferMode = "normal" | "visual";
-export type TimelineSelectionMode = "character" | "line";
+export type TimelineSelectionMode = "character" | "line" | "block";
 
 export interface TimelineBufferState {
   readonly lines: readonly string[];
@@ -113,6 +113,16 @@ export function timelineSelection(
 }
 
 export function selectedTimelineText(state: TimelineBufferState): string {
+  if (state.anchor && state.selectionMode === "block") {
+    const firstLine = Math.min(state.anchor.line, state.line);
+    const lastLine = Math.max(state.anchor.line, state.line);
+    const firstColumn = Math.min(state.anchor.column, state.column);
+    const lastColumn = Math.max(state.anchor.column, state.column) + 1;
+    return state.lines
+      .slice(firstLine, lastLine + 1)
+      .map((line) => printableTimelineText(line.slice(firstColumn, lastColumn)))
+      .join("\n");
+  }
   const selection = timelineSelection(state);
   if (!selection) return "";
   return printableTimelineText(flattenLines(state.lines).slice(selection.start, selection.end));
@@ -122,6 +132,21 @@ export function timelineSelectionColumns(
   state: TimelineBufferState,
   line: number,
 ): { start: number; end: number } | undefined {
+  if (state.anchor && state.selectionMode === "block") {
+    if (
+      line < Math.min(state.anchor.line, state.line) ||
+      line > Math.max(state.anchor.line, state.line)
+    )
+      return undefined;
+    const start = Math.min(state.anchor.column, state.column);
+    return {
+      start,
+      end: Math.min(
+        (state.lines[line] ?? "").length,
+        Math.max(state.anchor.column, state.column) + 1,
+      ),
+    };
+  }
   const selection = timelineSelection(state);
   if (!selection) return undefined;
   const lineStart = offsetAt(state.lines, { line, column: 0 });
@@ -170,22 +195,40 @@ export function searchTimelineBuffer(
   };
 }
 
-/** Preserve a cursor across streaming/recovery replacement by line identity. */
+/** Keep the closest matching rendered line when history changes or reflows. */
 export function replaceTimelineBuffer(
   state: TimelineBufferState,
   lines: readonly string[],
 ): TimelineBufferState {
   const nextLines = lines.length ? [...lines] : [""];
   const old = state.lines[state.line] ?? "";
-  const matching = nextLines.indexOf(old);
+  const matching = nextLines.reduce<number>(
+    (closest, value, index) =>
+      value !== old ||
+      (closest >= 0 && Math.abs(closest - state.line) <= Math.abs(index - state.line))
+        ? closest
+        : index,
+    -1,
+  );
   const line = matching >= 0 ? matching : clamp(state.line, 0, nextLines.length - 1);
   const next = {
     ...state,
     lines: nextLines,
     line,
     column: clamp(state.column, 0, cursorLimit(nextLines[line] ?? "")),
+    ...(state.anchor
+      ? {
+          anchor: {
+            line: clamp(state.anchor.line, 0, nextLines.length - 1),
+            column: clamp(
+              state.anchor.column,
+              0,
+              cursorLimit(nextLines[clamp(state.anchor.line, 0, nextLines.length - 1)] ?? ""),
+            ),
+          },
+        }
+      : {}),
   };
-  if (state.mode === "visual" && matching < 0) return leaveTimelineVisual(next);
   return next;
 }
 

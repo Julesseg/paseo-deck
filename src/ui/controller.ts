@@ -76,10 +76,12 @@ export type UiIntent =
       key: "g" | "h" | "j" | "k" | "l" | "w" | "b" | "e" | "0" | "^" | "$" | "G";
     }
   | { type: "timeline-page"; direction: -1 | 1 }
-  | { type: "timeline-visual"; line: boolean }
+  | { type: "timeline-visual"; selection: "character" | "line" | "block" }
   | { type: "timeline-search-text"; query: string; direction: -1 | 1 }
   | { type: "timeline-repeat-search"; direction: -1 | 1 }
   | { type: "timeline-yank" }
+  | { type: "timeline-yank-object"; object: "line" | "event" }
+  | { type: "timeline-open-link" }
   | { type: "timeline-fold" }
   | { type: "move-timeline-landmark"; direction: -1 | 1; kind: "turn" | "error" }
   | {
@@ -289,13 +291,22 @@ export class DeckController {
     // before resolving the broader command registry (where j/k/g/G/Enter/y
     // also have unrelated meanings in other regions).
     if (state.modal.type === "none" && state.focus === "timeline") {
-      if (data === "g" || (data === "z" && state.timeline.agentId)) {
-        this.#timelinePrefix = data;
-        if (data === "g") {
-          this.#tabPrefix = "g";
-          return this.send({ type: "move-timeline-selection-boundary", boundary: "start" });
-        }
+      if (this.#timelinePrefix === "y" && data === "i") {
+        this.#timelinePrefix = "yi";
         return true;
+      }
+      if (this.#timelinePrefix === "yi" && data === "v") {
+        this.#timelinePrefix = "";
+        return this.send({ type: "timeline-yank-object", object: "event" });
+      }
+      if (this.#timelinePrefix === "y" && data === "y") {
+        this.#timelinePrefix = "";
+        return this.send({ type: "timeline-yank-object", object: "line" });
+      }
+      if (this.#timelinePrefix === "g" && data === "x") {
+        this.#timelinePrefix = "";
+        this.#tabPrefix = "";
+        return this.send({ type: "timeline-open-link" });
       }
       if (this.#timelinePrefix === "g") {
         this.#timelinePrefix = "";
@@ -312,10 +323,16 @@ export class DeckController {
               : { type: "move-timeline-selection-boundary", boundary: "end" },
           );
       }
+      if (data === "g" || (data === "z" && state.timeline.agentId)) {
+        this.#timelinePrefix = data;
+        if (data === "g") this.#tabPrefix = "g";
+        return true;
+      }
       if (this.#timelinePrefix === "z") {
         this.#timelinePrefix = "";
         if (data === "a") return this.send({ type: "timeline-fold" });
       }
+      this.#timelinePrefix = "";
       if (state.timeline.agentId && (data === "j" || data === "k"))
         return this.send({ type: "move-timeline-text", key: data });
       if (state.timeline.agentId && (timelineTextMotionKeys as readonly string[]).includes(data))
@@ -328,16 +345,24 @@ export class DeckController {
             ? { type: "timeline-fold" }
             : { type: "toggle-selected-timeline-item" },
         );
-      if (data === "y" && state.timeline.items.length)
+      if (data === "y" && state.timeline.items.length) {
+        if ((state.timelineMode ?? "normal") === "visual")
+          return this.send({ type: "timeline-yank" });
+        this.#timelinePrefix = "y";
+        return true;
+      }
+      if (data === "Y" && state.timeline.items.length)
         return this.send({ type: "open-timeline-copy" });
       if (data === "n" || data === "N")
         return this.send({ type: "timeline-repeat-search", direction: data === "n" ? 1 : -1 });
       if (data === "\u0015" || data === "\u0004")
         return this.send({ type: "scroll-timeline", direction: data === "\u0015" ? -1 : 1 });
       if (state.timeline.agentId && state.timeline.items.length && data === "V")
-        return this.send({ type: "timeline-visual", line: true });
+        return this.send({ type: "timeline-visual", selection: "line" });
       if (state.timeline.agentId && state.timeline.items.length && data === "v")
-        return this.send({ type: "timeline-visual", line: false });
+        return this.send({ type: "timeline-visual", selection: "character" });
+      if (state.timeline.agentId && state.timeline.items.length && data === "\u0016")
+        return this.send({ type: "timeline-visual", selection: "block" });
     }
     if (state.modal.type === "none" && state.focus === "timeline" && data === "\u001b") {
       if ((state.timelineMode ?? "normal") === "visual")
@@ -359,7 +384,7 @@ export class DeckController {
     if (state.focus === "timeline" && !global && data === "/")
       return this.send({ type: "open-timeline-search" });
     if (state.focus === "timeline" && data === "V")
-      return this.send({ type: "timeline-visual", line: true });
+      return this.send({ type: "timeline-visual", selection: "line" });
     if (state.focus === "timeline" && data === "za") return this.send({ type: "timeline-fold" });
     if (
       state.focus === "timeline" &&
@@ -384,7 +409,7 @@ export class DeckController {
     if (data === "\u001b[1;5A" || data === "\u001b[1;5B")
       return this.send({ type: "scroll-timeline", direction: data === "\u001b[1;5A" ? -1 : 1 });
     if (state.focus === "timeline" && state.timelineMode !== undefined && data === "v")
-      return this.send({ type: "timeline-visual", line: false });
+      return this.send({ type: "timeline-visual", selection: "character" });
     if (global) {
       if (data === "g") this.#tabPrefix = "g";
       return this.sendResolved(global, state);

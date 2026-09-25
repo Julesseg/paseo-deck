@@ -104,14 +104,14 @@ The default Vim mode for the composer, timeline, or terminal. Composer normal mo
 The Vim mode for entering prompt text in the composer or sending literal input to a terminal. Pressing Escape returns that region to normal mode.
 
 **Visual mode**:
-The Vim mode for selecting text in the composer or read-only timeline. Pressing Escape clears the selection and returns that region to normal mode.
+The Vim mode for selecting text in the composer or read-only timeline. Timeline Visual mode supports character, line, and rectangular block selections. Pressing Escape clears the selection and returns that region to normal mode.
 
 **Sidebar navigation**:
 The temporary active region for moving the Sidebar selection and activating Workspaces. Pressing Escape returns to composer normal mode.
 _Avoid_: Sidebar mode, tree focus
 
 **Timeline navigation**:
-The temporary active region that presents the rendered timeline as a read-only Vim buffer with a text cursor. Escape from timeline normal mode returns to composer normal mode.
+The temporary active region that presents the rendered timeline as a read-only Vim buffer. Its cursor moves through rendered text; the current line is highlighted. Escape from timeline normal mode returns to composer normal mode.
 _Avoid_: Cursor mode, timeline mode, timeline selection
 
 **Activity indicator**:

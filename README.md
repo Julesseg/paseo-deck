@@ -62,15 +62,15 @@ CI enforces one required `check` result backed by:
 | --- | --- |
 | `j` / `k`, `Up` / `Down` | Move through the active list, timeline, or dialog |
 | `h` / `l`, `Left` / `Right` | Collapse or expand a tree node; move through permission requests |
-| `g` / `G` | Jump to the first or last tree/timeline item |
+| `g` / `G` | Jump to the first or last sidebar row; use `gg` / `G` for the timeline buffer |
 | `[` / `]` | Resize the tree, or jump between turns when the timeline is focused |
 | `{` / `}` | Jump between timeline errors |
 | `Enter` | Select, open, expand, run, or confirm |
 | `gt` / `gT` | Select the next or previous session or terminal tab (`3gt` selects tab 3) |
-| `Tab` / `Shift+Tab` | Move focus between tree, timeline, and composer |
-| `i` | Focus the prompt composer |
+| `n` / `t` / `Esc` | Enter sidebar or timeline navigation; return to composer normal mode |
+| `i` | Enter composer Insert mode |
 | `Ctrl-P` / `Ctrl-N` | Move through prompt history while composing |
-| `n` | Create a session in the selected workspace |
+| `c` | Create from the highlighted workspace while the sidebar is active |
 | `/` | Filter sessions |
 | `o` | Toggle alphabetical or attention-first tree ordering |
 | `v` | Show or hide archived sessions |
@@ -82,9 +82,13 @@ CI enforces one required `check` result backed by:
 | `d` | Detach the selected session after confirmation |
 | `e` | Rename the selected session |
 | `m` | Choose an available mode |
-| `t` | Choose an available thinking level |
+| `z` | Choose an available thinking level |
 | `Ctrl-F` | Search the selected timeline |
-| `y` | Copy the selected timeline item |
+| `Ctrl-U` / `Ctrl-D` | Page through the timeline buffer |
+| `v` / `V` / `Ctrl-V` | Select characters, lines, or a block in the timeline |
+| `y` / `yy` / `yiv` | Yank a Visual selection, the current line, or the current timeline event |
+| `Y` | Choose source text to copy from the current timeline event |
+| `gx` | Open the link under the timeline cursor |
 | `r` | Refresh and reconnect |
 | `R` | Retry the selected failure |
 | `E` | Expand the current error details |

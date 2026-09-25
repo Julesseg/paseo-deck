@@ -582,6 +582,7 @@ describe("DeckController keyboard seam", () => {
       (intent) => timelineIntents.push(intent),
     );
     timeline.handleKey("g");
+    timeline.handleKey("g");
     timeline.handleKey("G");
     timeline.handleKey("\u001b[A");
 
@@ -595,6 +596,31 @@ describe("DeckController keyboard seam", () => {
       { type: "move-timeline-selection-boundary", boundary: "start" },
       { type: "move-timeline-selection-boundary", boundary: "end" },
       { type: "move-timeline-selection", direction: -1 },
+    ]);
+  });
+
+  it("routes buffer yank, Visual Block, and link commands", () => {
+    const intents: unknown[] = [];
+    const controller = new DeckController(
+      () => ({
+        ...makeState(),
+        focus: "timeline",
+        timeline: {
+          recoveryRevision: 0,
+          loading: false,
+          agentId: "agent",
+          items: [
+            { epoch: "e", sequence: 1, item: { id: "one", type: "user-message", text: "link" } },
+          ],
+        },
+      }),
+      (intent) => intents.push(intent),
+    );
+    for (const key of ["y", "i", "v", "g", "x", "\u0016"]) controller.handleKey(key);
+    expect(intents).toEqual([
+      { type: "timeline-yank-object", object: "event" },
+      { type: "timeline-open-link" },
+      { type: "timeline-visual", selection: "block" },
     ]);
   });
 

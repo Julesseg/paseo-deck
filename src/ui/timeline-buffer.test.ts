@@ -39,16 +39,30 @@ describe("rendered timeline buffer", () => {
     expect(toggleTimelineFold(state).folded.has(1)).toBe(true);
   });
 
-  it("preserves meaningful streaming position and cancels impossible selections", () => {
+  it("preserves meaningful streaming position and a Visual selection through reflow", () => {
     const state = enterTimelineVisual(createTimelineBuffer({ lines: ["stable", "old"] }));
     expect(replaceTimelineBuffer(state, ["stable", "new"])).toMatchObject({
       mode: "visual",
       line: 0,
     });
     expect(replaceTimelineBuffer(state, ["new history"])).toMatchObject({
-      mode: "normal",
+      mode: "visual",
       line: 0,
     });
+  });
+
+  it("does not jump to the first repeated line when history grows", () => {
+    const state = createTimelineBuffer({ lines: ["same", "middle", "same"], line: 2 });
+    expect(replaceTimelineBuffer(state, ["same", "middle", "same", "new"]).line).toBe(2);
+  });
+
+  it("yanks a rectangular Visual Block selection", () => {
+    const state = moveTimelineBuffer(
+      enterTimelineVisual(createTimelineBuffer({ lines: ["abcdef", "abXYZf"] }), "block"),
+      "j",
+    );
+    const selected = moveTimelineBuffer(state, "l", 3);
+    expect(selectedTimelineText(selected)).toBe("abcd\nabXY");
   });
 
   it("yanks printable text through OSC 52 without ANSI controls", () => {
