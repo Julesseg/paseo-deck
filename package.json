@@ -23,6 +23,7 @@
     "test:coverage": "vitest run --coverage",
     "smoke:package": "npm run build --silent && tsx scripts/smoke-package.ts",
     "smoke:daemon": "tsx scripts/smoke-daemon.ts",
+    "bench:navigation": "tsx scripts/bench-navigation.ts",
     "typecheck": "tsc --noEmit",
     "lint": "biome lint .",
     "format": "biome format --write .",

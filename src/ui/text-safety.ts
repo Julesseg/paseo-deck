@@ -162,6 +162,8 @@ function safeStyledText(value: string): string {
 }
 
 function graphemes(value: string): string[] {
+  // Printable ASCII is always one grapheme per code unit.
+  if (/^[\x20-\x7e]*$/.test(value)) return value.split("");
   const segments = new Intl.Segmenter(undefined, { granularity: "grapheme" }).segment(value);
   return Array.from(segments, (segment) => segment.segment);
 }
@@ -189,6 +191,7 @@ function isSgr(value: string): boolean {
 }
 
 function graphemeWidth(value: string): number {
+  if (value.length === 1 && value >= " " && value <= "~") return 1;
   if (isZeroWidthGrapheme(value)) return 0;
   if (/\p{Regional_Indicator}/u.test(value) || /^[0-9#*]\ufe0f?\u20e3$/u.test(value)) return 2;
   if (/\p{Extended_Pictographic}/u.test(value) || value.includes("\u200d")) return 2;
