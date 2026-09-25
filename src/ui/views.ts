@@ -110,12 +110,7 @@ export interface DeckTuiOptions {
   appearance?: TerminalAppearance;
   treeWidth?: number;
   requestedTheme?: "ember" | "plain";
-  requestedSymbolSet?: "unicode" | "ascii";
-  onPreferencesChanged?: (preference: {
-    treeWidth: number;
-    theme?: "ember" | "plain";
-    symbolSet?: "unicode" | "ascii";
-  }) => void;
+  onPreferencesChanged?: (preference: { treeWidth: number; theme?: "ember" | "plain" }) => void;
   paseoHost?: string;
 }
 
@@ -1892,7 +1887,6 @@ export class DeckTui {
   private readonly detectedAppearance: TerminalAppearance;
   private readonly onPreferencesChanged?: DeckTuiOptions["onPreferencesChanged"];
   private requestedTheme: "ember" | "plain" | undefined;
-  private requestedSymbolSet: "unicode" | "ascii" | undefined;
   private terminalBackground: TerminalAppearance["background"];
 
   constructor(
@@ -1905,7 +1899,6 @@ export class DeckTui {
     this.state = initialState;
     this.detectedAppearance = options.appearance ?? defaultTerminalAppearance;
     this.requestedTheme = options.requestedTheme;
-    this.requestedSymbolSet = options.requestedSymbolSet;
     this.onPreferencesChanged = options.onPreferencesChanged;
     this.theme = new DeckTheme(this.effectiveAppearance());
     this.reconnectClock = options.renderClock ?? systemRenderClock;
@@ -2338,19 +2331,6 @@ export class DeckTui {
       this.renderScheduler.requestImmediate();
       return;
     }
-    if (intent.type === "toggle-symbol-set") {
-      if (!this.detectedAppearance.unicode) {
-        this.emit({ type: "notify", message: "ASCII symbols are required by this terminal." });
-        return;
-      }
-      this.requestedSymbolSet =
-        this.effectiveAppearance().symbols === "unicode" ? "ascii" : "unicode";
-      this.theme.setAppearance(this.effectiveAppearance());
-      this.timeline.invalidate();
-      this.emitPreferences();
-      this.renderScheduler.requestImmediate();
-      return;
-    }
     if (intent.type === "open-timeline-search") {
       this.openTimelineSearch();
       return;
@@ -2379,7 +2359,6 @@ export class DeckTui {
     this.onPreferencesChanged?.({
       treeWidth: this.treeWidth,
       ...(this.requestedTheme ? { theme: this.requestedTheme } : {}),
-      ...(this.requestedSymbolSet ? { symbolSet: this.requestedSymbolSet } : {}),
     });
   }
 
@@ -2393,9 +2372,7 @@ export class DeckTui {
       palette:
         this.requestedTheme === "ember" ? "ember" : (this.detectedAppearance.palette ?? "ember"),
       ...(this.terminalBackground ? { background: this.terminalBackground } : {}),
-      symbols: this.detectedAppearance.unicode
-        ? (this.requestedSymbolSet ?? this.detectedAppearance.symbols)
-        : "ascii",
+      symbols: this.detectedAppearance.symbols,
     };
   }
 

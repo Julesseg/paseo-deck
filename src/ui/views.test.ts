@@ -3468,7 +3468,6 @@ describe("DeckTui viewport and focus", () => {
     const preferences: Array<{
       treeWidth: number;
       theme?: "ember" | "plain";
-      symbolSet?: "unicode" | "ascii";
     }> = [];
     const deck = new DeckTui(terminal, state(), () => undefined, {
       treeWidth: 999,
@@ -3488,7 +3487,6 @@ describe("DeckTui viewport and focus", () => {
     const preferences: Array<{
       treeWidth: number;
       theme?: "ember" | "plain";
-      symbolSet?: "unicode" | "ascii";
     }> = [];
     const deck = new DeckTui(terminal, state(), () => undefined, {
       onPreferencesChanged: (value) => preferences.push(value),
@@ -3499,19 +3497,12 @@ describe("DeckTui viewport and focus", () => {
     terminal.sendInput("toggle theme");
     terminal.sendInput("\r");
     await terminal.waitForRender();
-    terminal.sendInput("\u000b");
-    terminal.sendInput("toggle symbol set");
-    terminal.sendInput("\r");
-    await terminal.waitForRender();
     await deck.stop();
 
-    expect(preferences).toEqual([
-      { treeWidth: 34, theme: "plain" },
-      { treeWidth: 34, theme: "plain", symbolSet: "ascii" },
-    ]);
+    expect(preferences).toEqual([{ treeWidth: 34, theme: "plain" }]);
   });
 
-  it("keeps saved rich choices requested while rendering safe low-capability chrome", async () => {
+  it("renders chrome appropriate to detected terminal capabilities", async () => {
     const lowAppearance: TerminalAppearance = {
       color: "none",
       unicode: false,
@@ -3522,7 +3513,6 @@ describe("DeckTui viewport and focus", () => {
     const lowDeck = new DeckTui(lowTerminal, state(), () => undefined, {
       appearance: lowAppearance,
       requestedTheme: "ember",
-      requestedSymbolSet: "unicode",
     });
     lowDeck.start();
     await lowTerminal.waitForRender();
@@ -3536,7 +3526,6 @@ describe("DeckTui viewport and focus", () => {
     const richDeck = new DeckTui(richTerminal, state(), () => undefined, {
       appearance: { color: "truecolor", unicode: true, theme: "ember", symbols: "unicode" },
       requestedTheme: "ember",
-      requestedSymbolSet: "unicode",
     });
     richDeck.start();
     await richTerminal.waitForRender();
@@ -3571,25 +3560,16 @@ describe("DeckTui viewport and focus", () => {
     expect(terminal.writes.join("")).not.toContain("\u001b[38;");
   });
 
-  it("explains why Unicode cannot be selected and never renders it on an ASCII terminal", async () => {
+  it("never renders Unicode chrome on an ASCII terminal", async () => {
     const terminal = new RecordingTerminal(100, 16);
-    const intents: unknown[] = [];
-    const deck = new DeckTui(terminal, state(), (intent) => intents.push(intent), {
+    const deck = new DeckTui(terminal, state(), () => undefined, {
       appearance: { color: "none", unicode: false, theme: "plain", symbols: "ascii" },
-      requestedSymbolSet: "unicode",
     });
 
     deck.start();
-    terminal.sendInput("\u000b");
-    terminal.sendInput("toggle symbol set");
-    terminal.sendInput("\r");
     await terminal.waitForRender();
     await deck.stop();
 
-    expect(intents).toContainEqual({
-      type: "notify",
-      message: "ASCII symbols are required by this terminal.",
-    });
     expect(terminal.writes.join("")).not.toContain("·");
     expect(terminal.writes.join("")).not.toContain("•");
   });

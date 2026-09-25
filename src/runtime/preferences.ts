@@ -4,7 +4,7 @@ import { homedir } from "node:os";
 import { dirname, join, normalize, resolve } from "node:path";
 import type { AppState, TreeOrder } from "../contracts/app-state.js";
 import { createInitialState } from "../state/store.js";
-import type { SymbolSet, ThemeId } from "../ui/capabilities.js";
+import type { ThemeId } from "../ui/capabilities.js";
 import { adjustTreeWidth } from "../ui/layout.js";
 import type { TargetArgument } from "./arguments.js";
 
@@ -16,7 +16,7 @@ export interface TargetPreferences {
 }
 export interface Preferences {
   version: 1;
-  global: { theme?: ThemeId; symbolSet?: SymbolSet };
+  global: { theme?: ThemeId };
   targets: Record<string, TargetPreferences>;
 }
 export interface LoadedPreferences {
@@ -210,18 +210,13 @@ export class PreferenceSession {
     this.#state = state;
     this.schedule();
   }
-  present(value: { treeWidth: number; theme?: ThemeId; symbolSet?: SymbolSet }): void {
+  present(value: { treeWidth: number; theme?: ThemeId }): void {
     this.#treeWidth = value.treeWidth;
     this.#global = {
       ...(value.theme
         ? { theme: value.theme }
         : this.#global.theme
           ? { theme: this.#global.theme }
-          : {}),
-      ...(value.symbolSet
-        ? { symbolSet: value.symbolSet }
-        : this.#global.symbolSet
-          ? { symbolSet: this.#global.symbolSet }
           : {}),
     };
     this.schedule();
@@ -306,9 +301,6 @@ function parseGlobal(value: unknown): Preferences["global"] {
   const record = value && typeof value === "object" ? (value as Record<string, unknown>) : {};
   return {
     ...(record.theme === "ember" || record.theme === "plain" ? { theme: record.theme } : {}),
-    ...(record.symbolSet === "unicode" || record.symbolSet === "ascii"
-      ? { symbolSet: record.symbolSet }
-      : {}),
   };
 }
 function parseTargets(value: unknown): Preferences["targets"] {

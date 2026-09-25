@@ -4,6 +4,8 @@ The target for common idle actions is p95 under 50 ms from key input to the firs
 
 Run the repeatable synthetic sidebar benchmark with `npm run bench:navigation -- 1000 20`. It uses 30 workspaces, 90 idle sessions, a 120×35 headless terminal, and 1,000 short assistant messages. It waits for the first frame before alternating `j` and `k`, then records dispatch and key-to-write times. It does not measure the live daemon, a particular terminal emulator, or a cold timeline load.
 
+The third argument selects `unicode` (default) or `ascii` chrome. Six alternating runs of `npm run bench:navigation -- 1000 20 <symbols>` on 2026-09-25 gave Unicode p95 values of 17.5, 17.2, and 19.6 ms and ASCII p95 values of 16.7, 17.3, and 17.6 ms. Both meet the 50 ms target. The small difference does not justify a separate interactive symbol mode; ASCII remains available through capability detection and `PASEO_DECK_ASCII=1` for font compatibility. This comparison does not assess the separate printable ASCII text fast path.
+
 On an Apple Silicon Mac on 2026-09-25, the same benchmark script produced:
 
 | Revision | Median key to write | p95 key to write |
