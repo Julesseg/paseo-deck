@@ -78,8 +78,13 @@ export function normalizeProject(value: unknown): ProjectRecord | undefined {
   if (!id) return undefined;
   return {
     id,
-    name: text(source.name, text(source.projectName, id)),
-    ...(text(source.path) ? { path: text(source.path) } : {}),
+    name: text(
+      source.projectDisplayName,
+      text(source.projectCustomName, text(source.name, text(source.projectName, id))),
+    ),
+    ...(text(source.projectRootPath, text(source.path))
+      ? { path: text(source.projectRootPath, text(source.path)) }
+      : {}),
   };
 }
 
