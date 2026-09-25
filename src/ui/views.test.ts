@@ -306,7 +306,7 @@ describe("creation picker choices", () => {
 });
 
 describe("composer controls", () => {
-  it("shows Session, blank Terminal, and daemon profiles in one categorized New Tab picker", async () => {
+  it("shows Agent and Terminal above the named Terminal profiles section", async () => {
     const terminal = new RecordingTerminal(100, 30);
     const intents: unknown[] = [];
     const pickerState: AppState = {
@@ -326,10 +326,12 @@ describe("composer controls", () => {
     await terminal.waitForRender();
     const screen = terminal.viewport().join("\n");
     expect(screen).toContain("New Tab");
-    expect(screen).toContain("Session");
+    expect(screen).toContain("> Agent");
     expect(screen).toContain("Terminal");
-    expect(screen).toContain("Blank");
+    expect(screen).toContain("Terminal profiles");
     expect(screen).toContain("Codex");
+    expect(screen).not.toContain("Filter:");
+    expect(screen).not.toContain("Blank Terminal");
     terminal.sendInput("\u001b[B");
     terminal.sendInput("\u001b[B");
     terminal.sendInput("\r");
@@ -337,6 +339,51 @@ describe("composer controls", () => {
       type: "new-tab-choice",
       choice: { kind: "profile", profileId: "codex" },
     });
+    await deck.stop();
+  });
+
+  it("uses full-row background hierarchy for the New Tab input and selection", async () => {
+    const terminal = new RecordingTerminal(100, 30);
+    const pickerState: AppState = {
+      ...state(),
+      selectedWorkspaceId: "w",
+      modal: {
+        type: "new-tab",
+        workspaceId: "w",
+        profiles: [{ id: "codex", name: "Codex", command: "codex" }],
+      },
+    };
+    const deck = new DeckTui(terminal, pickerState, () => undefined, {
+      appearance: { color: "truecolor", unicode: true, theme: "ember", symbols: "unicode" },
+    });
+    deck.start();
+    deck.update(pickerState);
+    await terminal.waitForRender();
+    const lines = terminal.viewport();
+    const top = lines.findIndex((line) => line.includes("New Tab"));
+    const left = lines[top]?.indexOf("┌") ?? -1;
+    const inputRow = top + 1;
+    const selectedRow = lines.findIndex((line) => line.includes("Agent") && line.includes("│"));
+    const terminalRow = lines.findIndex((line) => line.includes("Terminal") && line.includes("│"));
+    const backgrounds = terminal.viewportBackgrounds();
+
+    expect(top).toBeGreaterThanOrEqual(0);
+    expect(left).toBeGreaterThanOrEqual(0);
+    expect(selectedRow).toBeGreaterThan(inputRow);
+    expect(terminalRow).toBeGreaterThan(selectedRow);
+    expect(lines[selectedRow]).not.toContain("> Agent");
+    expect(lines.join("\n")).not.toContain("Filter:");
+    expect(backgrounds[inputRow]?.[left + 2]).toBeDefined();
+    expect(backgrounds[selectedRow]?.[left + 2]).toBeDefined();
+    expect(backgrounds[inputRow]?.[left + 2]).not.toBe(backgrounds[terminalRow]?.[left + 2]);
+    expect(backgrounds[selectedRow]?.[left + 2]).not.toBe(backgrounds[terminalRow]?.[left + 2]);
+    expect(backgrounds[inputRow]?.[left + 2]).not.toBe(backgrounds[selectedRow]?.[left + 2]);
+
+    terminal.sendInput("\u001b[B");
+    await terminal.waitForRender();
+    const movedBackgrounds = terminal.viewportBackgrounds();
+    expect(movedBackgrounds[selectedRow]?.[left + 2]).toBe(backgrounds[terminalRow]?.[left + 2]);
+    expect(movedBackgrounds[terminalRow]?.[left + 2]).toBe(backgrounds[selectedRow]?.[left + 2]);
     await deck.stop();
   });
 

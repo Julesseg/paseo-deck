@@ -154,6 +154,14 @@ export class DeckTheme {
     this._appearance = appearance;
   }
 
+  supportsBackground(): boolean {
+    return (
+      this.appearance.color !== "none" &&
+      this.appearance.theme !== "plain" &&
+      (this.paletteId() !== "terminal" || Boolean(this.appearance.background))
+    );
+  }
+
   /** Styles a Deck-owned label after making it inert and normalising its symbols. */
   style(tone: SemanticTone, value: string): string {
     return this.styleRendered(tone, this.label(sanitizeTerminalText(value)));
@@ -174,12 +182,7 @@ export class DeckTheme {
     const safe = value;
     // A terminal palette belongs to its owner. Do not turn semantic surfaces
     // into bright ANSI swatches on a background we cannot inspect.
-    if (
-      this.appearance.color === "none" ||
-      this.appearance.theme === "plain" ||
-      (this.paletteId() === "terminal" && !this.appearance.background)
-    )
-      return safe;
+    if (!this.supportsBackground()) return safe;
     const prefix = this.backgroundPrefix(tone);
     // Nested foreground styling resets SGR. Reapply the surface so an outer
     // panel background survives its labels without leaking beyond the line.
