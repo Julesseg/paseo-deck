@@ -91,7 +91,7 @@ CI enforces one required `check` result backed by:
 | Number + motion | Repeat a timeline motion, such as `5j` or `3w`; `5gg` / `5G` go to line 5 |
 | `v` / `V` / `Ctrl-V` | Select characters, lines, or a block in the timeline |
 | `y` / `yy` / `yiv` | Yank a Visual selection, the current line, or the current timeline event |
-| `Y` | Choose source text to copy from the current timeline event |
+| `Y` | Yank the current rendered line, like `yy` |
 | `gx` | Open the link under the timeline cursor |
 | `r` | Refresh and reconnect |
 | `R` | Retry the selected failure |

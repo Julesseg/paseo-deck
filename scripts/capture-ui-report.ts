@@ -650,25 +650,6 @@ const shots: Array<{
     input: ["g", "g", "j", "\u0016", "j", "l", "l", "l", "l", "l"],
   },
   {
-    name: "timeline-buffer-copy-dialog",
-    columns: 100,
-    rows: 28,
-    state: withTimeline(baseState, "timeline-buffer", [
-      {
-        id: "buffer-user",
-        type: "user-message",
-        text: "Read the [docs](https://example.test/docs) before the release.",
-      },
-      {
-        id: "buffer-reply",
-        type: "assistant-message",
-        messageId: "buffer-reply",
-        text: "The release is ready.\nReview the notes and publish.",
-      },
-    ]),
-    input: ["Y"],
-  },
-  {
     name: "active-turn",
     columns: 100,
     rows: 28,
@@ -1001,10 +982,9 @@ for (const shot of shots) {
     ? viewport.findIndex((line) => line.includes("New Tab")) + 1
     : -1;
   const cursorColumn = inputRow > 0 ? terminal.viewportInverseCells()[inputRow]?.indexOf(true) : -1;
-  const timelineCursor =
-    shot.name.startsWith("timeline-buffer-") && shot.name !== "timeline-buffer-copy-dialog"
-      ? terminal.viewportCursor()
-      : undefined;
+  const timelineCursor = shot.name.startsWith("timeline-buffer-")
+    ? terminal.viewportCursor()
+    : undefined;
   if (inputRow > 0 && (cursorColumn === undefined || cursorColumn < 0)) {
     throw new Error(`No visible New Tab input cursor in ${shot.name}`);
   }

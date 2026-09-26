@@ -774,13 +774,13 @@ export const deckCommands: readonly DeckCommand[] = [
     intent: () => ({ type: "open-timeline-search" }),
   },
   {
-    id: "timeline-copy",
-    label: "Copy selected timeline item",
+    id: "timeline-yank-line",
+    label: "Yank line at cursor",
     group: "Timeline",
-    shortcuts: ["Y"],
+    shortcuts: ["Y", "yy"],
     contexts: ["timeline"],
     disabledReason: (state) => (state.timeline.items.length ? undefined : "Timeline is empty"),
-    intent: () => ({ type: "open-timeline-copy" }),
+    intent: () => ({ type: "timeline-yank-object", object: "line" }),
   },
   {
     id: "timeline-yank-event",
@@ -790,15 +790,6 @@ export const deckCommands: readonly DeckCommand[] = [
     contexts: ["timeline"],
     palette: false,
     intent: () => ({ type: "timeline-yank-object", object: "event" }),
-  },
-  {
-    id: "timeline-yank-line",
-    label: "Yank line at cursor",
-    group: "Timeline",
-    shortcuts: ["yy"],
-    contexts: ["timeline"],
-    palette: false,
-    intent: () => ({ type: "timeline-yank-object", object: "line" }),
   },
   {
     id: "timeline-open-link",

@@ -2003,7 +2003,7 @@ describe("DeckTui viewport and focus", () => {
     expect(transcript.isFollowingEnd).toBe(true);
   });
 
-  it("copies the selected source safely and reports unavailable copy targets", async () => {
+  it("Y yanks the current rendered line without opening an overlay", async () => {
     const terminal = new RecordingTerminal(80, 16);
     const copied: string[] = [];
     const intents: unknown[] = [];
@@ -2028,18 +2028,21 @@ describe("DeckTui viewport and focus", () => {
       },
     });
     deck.start();
+    await terminal.waitForRender();
+    terminal.sendInput("g");
+    terminal.sendInput("g");
+    terminal.sendInput("j");
     terminal.sendInput("Y");
     await terminal.waitForRender();
-    expect(terminal.viewport().join("\n")).toContain("Copy selected timeline item");
-    terminal.sendInput("\r");
+    expect(terminal.viewport().join("\n")).not.toContain("Copy selected timeline item");
     await terminal.waitForRender();
     await deck.stop();
 
-    expect(copied).toEqual(["hello"]);
+    expect(copied).toEqual(["  hello"]);
     expect(intents).toContainEqual({ type: "notify", message: "Copied." });
   });
 
-  it("offers UI-selectable code, error-detail, and tool-output copy targets", async () => {
+  it("yiv yanks message source, error detail, and tool output", async () => {
     const cases = [
       {
         item: {
@@ -2048,12 +2051,10 @@ describe("DeckTui viewport and focus", () => {
           messageId: "message",
           text: "```ts\ncode\n```",
         },
-        moveToTarget: true,
-        expected: "code\n",
+        expected: "```ts\ncode\n```",
       },
       {
         item: { id: "error", type: "error" as const, message: "failed", detail: "error detail" },
-        moveToTarget: false,
         expected: "error detail",
       },
       {
@@ -2065,11 +2066,10 @@ describe("DeckTui viewport and focus", () => {
           status: "completed" as const,
           output: "tool output",
         },
-        moveToTarget: false,
         expected: "tool output",
       },
     ];
-    for (const { item, moveToTarget, expected } of cases) {
+    for (const { item, expected } of cases) {
       const terminal = new RecordingTerminal(80, 16);
       const copied: string[] = [];
       const deck = new DeckTui(
@@ -2087,16 +2087,14 @@ describe("DeckTui viewport and focus", () => {
         { copyText: (text) => void copied.push(text) },
       );
       deck.start();
-      terminal.sendInput("Y");
-      if (moveToTarget) terminal.sendInput("\u001b[B");
-      terminal.sendInput("\r");
+      for (const key of ["y", "i", "v"]) terminal.sendInput(key);
       await terminal.waitForRender();
       await deck.stop();
       expect(copied).toEqual([expected]);
     }
   });
 
-  it("reports a non-copyable selected item without opening an overlay", async () => {
+  it("yiv reports when the current event has no source text", async () => {
     const terminal = new RecordingTerminal(80, 16);
     const intents: unknown[] = [];
     const deck = new DeckTui(
@@ -2119,14 +2117,14 @@ describe("DeckTui viewport and focus", () => {
       (intent) => intents.push(intent),
     );
     deck.start();
-    terminal.sendInput("Y");
+    for (const key of ["y", "i", "v"]) terminal.sendInput(key);
     await terminal.waitForRender();
     await deck.stop();
 
     expect(terminal.viewport().join("\n")).not.toContain("Copy selected timeline item");
     expect(intents).toContainEqual({
       type: "notify",
-      message: "Selected item has nothing to copy.",
+      message: "No timeline text at cursor.",
     });
   });
 
@@ -2218,8 +2216,8 @@ describe("DeckTui viewport and focus", () => {
       { copyText: () => Promise.reject(new Error("clipboard unavailable")) },
     );
     deck.start();
+    await terminal.waitForRender();
     terminal.sendInput("Y");
-    terminal.sendInput("\r");
     await terminal.waitForRender();
     await deck.stop();
 
@@ -2533,7 +2531,8 @@ describe("DeckTui viewport and focus", () => {
     await terminal.waitForRender();
     terminal.sendInput("Y");
     await terminal.waitForRender();
-    expect(terminal.writes.join("")).toContain("\u001b[0 q");
+    expect(copied.at(-1)).toContain("docs");
+    expect(terminal.writes.join("")).toContain("\u001b[2 q");
     terminal.sendInput("\u001b");
     await terminal.waitForRender();
     await deck.stop();

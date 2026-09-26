@@ -125,7 +125,6 @@ export type UiIntent =
   | { type: "set-composer-text"; text: string }
   | { type: "navigate-composer-history"; direction: -1 | 1 }
   | { type: "open-timeline-search" }
-  | { type: "open-timeline-copy" }
   | { type: "notify"; message: string; kind?: "info" | "error" }
   | { type: "create-choice"; choice: string };
 
@@ -465,7 +464,7 @@ export class DeckController {
         return true;
       }
       if (data === "Y" && state.timeline.items.length)
-        return this.send({ type: "open-timeline-copy" });
+        return this.send({ type: "timeline-yank-object", object: "line" });
       if (data === "n" || data === "N")
         return this.send({ type: "timeline-repeat-search", direction: data === "n" ? 1 : -1 });
       if (data === "\u0015" || data === "\u0004")

@@ -686,7 +686,8 @@ class TimelineView implements Component {
     return selectedTimelineText(this.buffer);
   }
   yankObject(object: "line" | "event"): string {
-    if (object === "line") return printableTimelineText(this.buffer.lines[this.buffer.line] ?? "");
+    if (object === "line")
+      return printableTimelineText(this.buffer.lines[this.buffer.line] ?? "").trimEnd();
     const index = this.eventIndexAtBodyLine(this.buffer.line);
     const item = this.events[index]?.item;
     return item ? (copyTargets(item)[0]?.text ?? "") : "";
@@ -2489,7 +2490,7 @@ export class DeckTui {
     }
     if (intent.type === "timeline-yank-object") {
       const value = this.timeline.yankObject(intent.object);
-      if (value) void this.copyTimelineTarget(value);
+      if (value || intent.object === "line") void this.copyTimelineTarget(value);
       else this.emit({ type: "notify", message: "No timeline text at cursor." });
       return;
     }
@@ -2574,11 +2575,6 @@ export class DeckTui {
     }
     if (intent.type === "open-timeline-search") {
       this.openTimelineSearch();
-      return;
-    }
-    if (intent.type === "open-timeline-copy") {
-      if (this.timeline.yankText()) this.handleControllerIntent({ type: "timeline-yank" });
-      else this.openTimelineCopy();
       return;
     }
     if (intent.type === "open-command-palette") {
@@ -2727,30 +2723,6 @@ export class DeckTui {
     if (match && this.timeline.selectEvent(match.event.item.id)) this.revealTimelineSelection();
     this.searchFeedback = `${this.searchMatches.length} matches · result ${this.searchIndex + 1}`;
     this.renderScheduler.requestImmediate();
-  }
-
-  private openTimelineCopy(): void {
-    const item = this.timeline.selectedItem();
-    const targets = item ? copyTargets(item) : [];
-    if (targets.length === 0) {
-      this.searchFeedback = "Selected item has nothing to copy.";
-      this.emit({ type: "notify", message: this.searchFeedback });
-      return;
-    }
-    this.captureLocalSnapshot();
-    this.showLocalOverlay(
-      "__timeline-copy",
-      new ChoiceDialog(
-        "Copy selected timeline item",
-        targets.map((target, index) => ({ value: String(index), label: target.label })),
-        (choice) => void this.copyTimelineTarget(targets[Number(choice)]?.text),
-        () => this.restoreLocalOverlay(),
-        8,
-        undefined,
-        this.theme,
-      ),
-      { width: "70%", minWidth: 28, maxHeight: "70%", margin: 1 },
-    );
   }
 
   private async copyTimelineTarget(value: string | undefined): Promise<void> {
