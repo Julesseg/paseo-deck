@@ -2573,6 +2573,98 @@ describe("DeckTui viewport and focus", () => {
     await deck.stop();
   });
 
+  it("moves one rendered line per j or k through wrapped text", async () => {
+    const terminal = new RecordingTerminal(80, 16);
+    const initial: AppState = {
+      ...state(),
+      focus: "timeline",
+      selectedAgentId: "agent",
+      timeline: {
+        recoveryRevision: 0,
+        loading: false,
+        agentId: "agent",
+        items: [
+          {
+            epoch: "e",
+            sequence: 1,
+            item: { id: "long", type: "user-message", text: "word ".repeat(60) },
+          },
+        ],
+      },
+      timelineNavigation: { agent: { following: false, unread: 0 } },
+    };
+    const deck = new DeckTui(terminal, initial, () => undefined);
+    const timeline = (deck as unknown as { timeline: { buffer: { line: number } } }).timeline;
+    deck.start();
+    await terminal.waitForRender();
+    for (const key of ["g", "g"]) terminal.sendInput(key);
+    await terminal.waitForRender();
+    const start = timeline.buffer.line;
+    terminal.sendInput("j");
+    await terminal.waitForRender();
+    expect(timeline.buffer.line).toBe(start + 1);
+    terminal.sendInput("j");
+    await terminal.waitForRender();
+    expect(timeline.buffer.line).toBe(start + 2);
+    terminal.sendInput("k");
+    await terminal.waitForRender();
+    expect(timeline.buffer.line).toBe(start + 1);
+    await deck.stop();
+  });
+
+  it("aligns the tab row with the centered timeline column on wide terminals", async () => {
+    const terminal = new RecordingTerminal(160, 28);
+    const initial: AppState = {
+      ...state(),
+      focus: "timeline",
+      selectedWorkspaceId: "w",
+      selectedAgentId: "agent",
+      activeSessionId: "agent",
+      tabOrder: { w: ["session:agent"] },
+      activeTabIds: { w: "session:agent" },
+      directory: {
+        ...state().directory,
+        agents: [
+          {
+            id: "agent",
+            workspaceId: "w",
+            title: "Aligned session",
+            status: "idle",
+            availableModeIds: [],
+            availableThinkingLevels: [],
+            pendingPermissions: [],
+            needsAttention: false,
+            archived: false,
+          },
+        ],
+      },
+      timeline: {
+        recoveryRevision: 0,
+        loading: false,
+        agentId: "agent",
+        items: [
+          {
+            epoch: "e",
+            sequence: 1,
+            item: { id: "message", type: "user-message", text: "content" },
+          },
+        ],
+      },
+    };
+    const deck = new DeckTui(terminal, initial, () => undefined);
+    deck.start();
+    await terminal.waitForRender();
+    const lines = terminal.viewport();
+    const tab = lines.find((line) => line.includes("Aligned session"));
+    const heading = lines.find((line) => line.includes("Active session timeline"));
+    await deck.stop();
+    expect(tab).toBeDefined();
+    expect(heading).toBeDefined();
+    expect(
+      Math.abs((tab?.indexOf("Aligned session") ?? 0) - (heading?.indexOf("NORMAL") ?? 0)),
+    ).toBeLessThan(6);
+  });
+
   it("keeps both ends of a Visual selection on their events when history is prepended", async () => {
     const terminal = new RecordingTerminal(80, 16);
     const items = [

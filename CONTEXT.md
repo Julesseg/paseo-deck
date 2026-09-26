@@ -75,6 +75,7 @@ _Avoid_: Transcript, log, output
 
 **Main pane**:
 The region beside the sidebar that contains the Active workspace's Tab row and the Active tab's content.
+The Tab row and timeline share the same centered reading column.
 _Avoid_: Timeline window, right-side region
 
 **Composer**:

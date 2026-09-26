@@ -10,9 +10,11 @@ import { DeckTui } from "../src/ui/views.js";
 const itemCount = Number(process.argv[2] ?? 1_000);
 const keyCount = Number(process.argv[3] ?? 20);
 const symbols = process.argv[4] ?? "unicode";
+const focus = process.argv[5] ?? "tree";
 if (!Number.isSafeInteger(itemCount) || itemCount < 0) throw new Error("Invalid item count");
 if (!Number.isSafeInteger(keyCount) || keyCount < 1) throw new Error("Invalid key count");
 if (symbols !== "unicode" && symbols !== "ascii") throw new Error("Invalid symbol set");
+if (focus !== "tree" && focus !== "timeline") throw new Error("Invalid focus");
 
 const projects = [{ id: "project", name: "Deck" }];
 const workspaces = Array.from({ length: 30 }, (_, index) => ({
@@ -56,7 +58,7 @@ const state: AppState = {
   activeSessionId: "session-0",
   tabOrder: { "workspace-0": ["session:session-0"] },
   activeTabIds: { "workspace-0": "session:session-0" },
-  focus: "tree",
+  focus,
   sidebarSelection: { kind: "workspace", id: "workspace-0" },
   sidebarOrder: ["project", ...workspaces.map((workspace) => workspace.id)],
   timeline: { agentId: "session-0", items, loading: false, recoveryRevision: 0 },
@@ -72,6 +74,9 @@ const deck = new DeckTui(
   { appearance: { color: "none", unicode: true, theme: "plain", symbols } },
 );
 const unsubscribe = app.subscribe((next) => deck.update(next));
+const timelineView = deck as unknown as {
+  timeline: { buffer: { line: number } };
+};
 deck.start();
 
 function percentile(values: readonly number[], fraction: number): number {
@@ -90,6 +95,7 @@ try {
   };
   const keyToWrite: number[] = [];
   const dispatch: number[] = [];
+  const initialLine = timelineView.timeline.buffer.line;
   for (let index = 0; index < keyCount; index++) {
     const nextWrite = new Promise<void>((resolve, reject) => {
       const timeout = setTimeout(() => reject(new Error("Render timed out")), 5_000);
@@ -99,12 +105,20 @@ try {
       };
     });
     const start = performance.now();
-    terminal.sendInput(index % 2 === 0 ? "j" : "k");
+    terminal.sendInput(
+      focus === "timeline" ? (index % 2 === 0 ? "k" : "j") : index % 2 === 0 ? "j" : "k",
+    );
     dispatch.push(performance.now() - start);
     await nextWrite;
-    const expected = index % 2 === 0 ? "workspace-1" : "workspace-0";
-    if (app.state.sidebarSelection?.id !== expected)
-      throw new Error(`Sidebar selection did not move to ${expected}`);
+    if (focus === "timeline") {
+      const expected = initialLine - (index % 2 === 0 ? 1 : 0);
+      if (timelineView.timeline.buffer.line !== expected)
+        throw new Error(`Timeline cursor did not move to line ${expected}`);
+    } else {
+      const expected = index % 2 === 0 ? "workspace-1" : "workspace-0";
+      if (app.state.sidebarSelection?.id !== expected)
+        throw new Error(`Sidebar selection did not move to ${expected}`);
+    }
     keyToWrite.push(performance.now() - start);
     await terminal.flush();
   }
@@ -113,6 +127,7 @@ try {
       itemCount,
       keyCount,
       symbols,
+      focus,
       keyToWriteMs: { median: percentile(keyToWrite, 0.5), p95: percentile(keyToWrite, 0.95) },
       dispatchMs: { median: percentile(dispatch, 0.5), p95: percentile(dispatch, 0.95) },
     }),

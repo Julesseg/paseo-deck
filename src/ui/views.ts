@@ -60,6 +60,7 @@ import { type BackgroundTone, DeckTheme } from "./theme.js";
 import {
   createTimelineBuffer,
   enterTimelineVisual,
+  findTimelineCharacter,
   leaveTimelineVisual,
   moveTimelineBuffer,
   osc52,
@@ -562,8 +563,10 @@ class TimelineView implements Component {
     | undefined;
   private keepCursorAtEnd = true;
   private searchQuery = "";
+  private lastFind: { key: "f" | "F" | "t" | "T"; character: string } | undefined;
   private selectionFeedback = "";
   private layout: TimelineLayout | undefined;
+  private readonly layouts = new Map<number, TimelineLayout>();
   private readonly rendered = new Map<
     number,
     {
@@ -606,6 +609,7 @@ class TimelineView implements Component {
     this.captureBufferAnchor();
     this.events = events;
     this.layout = undefined;
+    this.layouts.clear();
     this.rendered.clear();
     const ids = new Set(events.map((event) => event.item.id));
     for (const id of this.itemViews.keys()) if (!ids.has(id)) this.itemViews.delete(id);
@@ -620,9 +624,37 @@ class TimelineView implements Component {
     }
     this.selectedIndex = Math.min(this.selectedIndex, Math.max(0, events.length - 1));
   }
-  moveText(key: Parameters<typeof moveTimelineBuffer>[1]): void {
-    this.buffer = moveTimelineBuffer(this.buffer, key === "g" ? "gg" : key);
-    this.keepCursorAtEnd = key === "G";
+  moveText(key: string, count = 0): void {
+    this.buffer = moveTimelineBuffer(this.buffer, key, count);
+    this.keepCursorAtEnd = key === "G" && count === 0;
+    this.syncSelectedIndex();
+  }
+  findCharacter(key: "f" | "F" | "t" | "T", character: string, count: number): void {
+    this.buffer = findTimelineCharacter(this.buffer, key, character, count);
+    this.lastFind = { key, character };
+    this.keepCursorAtEnd = false;
+  }
+  repeatFind(reverse: boolean): void {
+    if (!this.lastFind) return;
+    const key = reverse
+      ? ({ f: "F", F: "f", t: "T", T: "t" } as const)[this.lastFind.key]
+      : this.lastFind.key;
+    const start =
+      key === "t"
+        ? moveTimelineBuffer(this.buffer, "l")
+        : key === "T"
+          ? moveTimelineBuffer(this.buffer, "h")
+          : this.buffer;
+    const found = findTimelineCharacter(start, key, this.lastFind.character);
+    if (found !== start) this.buffer = found;
+    this.keepCursorAtEnd = false;
+  }
+  moveToVisibleLine(line: number): void {
+    this.buffer = moveTimelineBuffer(
+      { ...this.buffer, line: Math.max(0, Math.min(this.buffer.lines.length - 1, line)) },
+      "^",
+    );
+    this.keepCursorAtEnd = false;
     this.syncSelectedIndex();
   }
   pageText(direction: -1 | 1, height: number): void {
@@ -732,6 +764,7 @@ class TimelineView implements Component {
       view?.update(item, true);
       view?.invalidate();
       this.layout = undefined;
+      this.layouts.clear();
       this.rendered.clear();
     }
     return true;
@@ -771,12 +804,14 @@ class TimelineView implements Component {
     if (event) {
       this.itemViews.get(id)?.update(event.item, this.expanded.has(id));
       this.layout = undefined;
+      this.layouts.clear();
       this.rendered.clear();
     }
   }
   invalidate(): void {
     for (const item of this.itemViews.values()) item.invalidate();
     this.layout = undefined;
+    this.layouts.clear();
     this.rendered.clear();
   }
   render(width: number): string[] {
@@ -828,9 +863,10 @@ class TimelineView implements Component {
     )
       return cached.lines;
     const layout = this.timelineLayout(width);
-    const bodyLines = layout.lines;
+    const bodyLines = layout.plainLines;
     const wasVisual = this.buffer.mode === "visual";
-    this.buffer = replaceTimelineBuffer(this.buffer, bodyLines);
+    if (this.buffer.lines !== bodyLines)
+      this.buffer = replaceTimelineBuffer(this.buffer, bodyLines, true);
     if (this.bufferAnchor) {
       const cursorLine = this.resolveBufferAnchor(this.bufferAnchor.cursor, layout);
       const selectionLine = this.bufferAnchor.selection
@@ -853,6 +889,24 @@ class TimelineView implements Component {
     this.syncSelectedIndex();
     if (wasVisual && this.buffer.mode !== "visual")
       this.selectionFeedback = "Selection cleared: timeline changed";
+    if (
+      cached?.layout === layout &&
+      cached.heading === heading &&
+      cached.focused &&
+      this.focused &&
+      cached.mode === "normal" &&
+      mode === "normal" &&
+      cached.buffer.mode === "normal" &&
+      this.buffer.mode === "normal" &&
+      cached.selectionFeedback === this.selectionFeedback
+    ) {
+      const lines = cached.lines.slice();
+      const previous = cached.buffer.line;
+      lines[previous + 1] = this.paintBodyLine(layout, previous, width, false);
+      lines[this.buffer.line + 1] = this.paintBodyLine(layout, this.buffer.line, width, true);
+      this.rendered.set(width, { ...cached, buffer: this.buffer, lines });
+      return lines;
+    }
     const lines = [
       this.theme.styleRendered(
         "header",
@@ -862,29 +916,14 @@ class TimelineView implements Component {
         ),
       ),
       ...layout.events.flatMap(({ lines, start }) => {
-        return lines.map((line, offset) => {
-          const bodyLine = start + offset;
-          let rendered = line;
-          if (this.focused && this.buffer.mode === "visual") {
-            const range = timelineSelectionColumns(this.buffer, bodyLine);
-            if (range) {
-              const plain = printableTimelineText(rendered);
-              rendered = `${plain.slice(0, range.start)}${this.theme.styleBackground("tab-active", plain.slice(range.start, range.end))}${plain.slice(range.end)}`;
-            }
-          }
-          const clipped = clipTerminalLine(rendered, width, this.theme.glyph("ellipsis"));
-          if (!this.focused || this.buffer.line !== bodyLine) return clipped;
-          const padded = `${clipped}${" ".repeat(Math.max(0, width - terminalDisplayWidth(clipped)))}`;
-          const cursorColumn = Math.min(
-            Math.max(
-              0,
-              terminalDisplayWidth(printableTimelineText(line).slice(0, this.buffer.column)),
-            ),
-            Math.max(0, width - 1),
-          );
-          const withCursor = `${sliceByColumn(padded, 0, cursorColumn)}${CURSOR_MARKER}${sliceByColumn(padded, cursorColumn, width - cursorColumn)}`;
-          return this.theme.styleRenderedBackground("selection", withCursor);
-        });
+        return lines.map((_, offset) =>
+          this.paintBodyLine(
+            layout,
+            start + offset,
+            width,
+            this.focused && this.buffer.line === start + offset,
+          ),
+        );
       }),
     ];
     this.rendered.set(width, {
@@ -899,6 +938,33 @@ class TimelineView implements Component {
     });
     if (this.rendered.size > 8) this.rendered.delete(this.rendered.keys().next().value ?? width);
     return lines;
+  }
+
+  private paintBodyLine(
+    layout: TimelineLayout,
+    bodyLine: number,
+    width: number,
+    active: boolean,
+  ): string {
+    const line = layout.lines[bodyLine] ?? "";
+    let rendered = line;
+    if (this.focused && this.buffer.mode === "visual") {
+      const range = timelineSelectionColumns(this.buffer, bodyLine);
+      if (range) {
+        const plain = layout.plainLines[bodyLine] ?? "";
+        rendered = `${plain.slice(0, range.start)}${this.theme.styleBackground("tab-active", plain.slice(range.start, range.end))}${plain.slice(range.end)}`;
+      }
+    }
+    const clipped = clipTerminalLine(rendered, width, this.theme.glyph("ellipsis"));
+    if (!active) return clipped;
+    const padded = `${clipped}${" ".repeat(Math.max(0, width - terminalDisplayWidth(clipped)))}`;
+    const plain = layout.plainLines[bodyLine] ?? "";
+    const cursorColumn = Math.min(
+      Math.max(0, terminalDisplayWidth(plain.slice(0, this.buffer.column))),
+      Math.max(0, width - 1),
+    );
+    const withCursor = `${sliceByColumn(padded, 0, cursorColumn)}${CURSOR_MARKER}${sliceByColumn(padded, cursorColumn, width - cursorColumn)}`;
+    return this.theme.styleRenderedBackground("selection", withCursor);
   }
 
   private eventBodyLine(index: number): number {
@@ -987,6 +1053,11 @@ class TimelineView implements Component {
   /** Build event lines and turn headers once per width instead of repeatedly walking history. */
   private timelineLayout(width: number): TimelineLayout {
     if (this.layout?.width === width) return this.layout;
+    const cached = this.layouts.get(width);
+    if (cached) {
+      this.layout = cached;
+      return cached;
+    }
     let group = "implicit:0";
     let priorGroup: string | undefined;
     let ordinal = 0;
@@ -1029,7 +1100,10 @@ class TimelineView implements Component {
       start += lines.length;
       return layout;
     });
-    this.layout = { width, lines: events.flatMap((event) => event.lines), events };
+    const lines = events.flatMap((event) => event.lines);
+    this.layout = { width, lines, plainLines: lines.map(printableTimelineText), events };
+    this.layouts.set(width, this.layout);
+    if (this.layouts.size > 8) this.layouts.delete(this.layouts.keys().next().value ?? width);
     return this.layout;
   }
 }
@@ -1037,6 +1111,7 @@ class TimelineView implements Component {
 type TimelineLayout = {
   width: number;
   lines: readonly string[];
+  plainLines: readonly string[];
   events: readonly { start: number; bodyStart: number; lines: readonly string[] }[];
 };
 
@@ -2081,11 +2156,19 @@ export class DeckTui {
   private setShellLayout(): void {
     const supported = (viewport: { width: number; height: number }): boolean =>
       shellLayout(viewport.width, viewport.height, this.treeWidth).supported;
+    const centeredTabs = new HStack(
+      [
+        { component: new Spacer(1), basis: 4, grow: 1, shrink: 1, minSize: 1 },
+        { component: this.tabs, basis: 100, shrink: 1, minSize: 1 },
+        { component: new Spacer(1), basis: 4, grow: 1, shrink: 1, minSize: 1 },
+      ],
+      { align: "stretch" },
+    );
     const mainPane = new HStack(
       [
         {
           component: new VStack([
-            { component: this.tabs, basis: 1, minSize: 1 },
+            { component: centeredTabs, basis: 1, minSize: 1 },
             {
               component: new HStack(
                 [
@@ -2337,15 +2420,39 @@ export class DeckTui {
 
   private handleControllerIntent(intent: UiIntent): void {
     if (intent.type === "move-timeline-text") {
-      this.timeline.moveText(intent.key);
+      this.timeline.moveText(intent.key, intent.count);
       this.revealTimelineCursor();
-      if (intent.key === "G") {
+      if (intent.key === "G" && intent.count === undefined) {
         this.transcript.scrollToEnd();
         this.setTimelineFollowing(true);
       } else {
         this.transcript.scrollTo(this.transcript.scrollTop, { disableFollow: true });
         this.pauseTimeline();
       }
+      this.renderScheduler.requestImmediate();
+      return;
+    }
+    if (intent.type === "timeline-find-character" || intent.type === "timeline-repeat-find") {
+      if (intent.type === "timeline-find-character")
+        this.timeline.findCharacter(intent.key, intent.character, intent.count);
+      else this.timeline.repeatFind(intent.reverse);
+      this.revealTimelineCursor();
+      this.pauseTimeline();
+      this.renderScheduler.requestImmediate();
+      return;
+    }
+    if (intent.type === "timeline-viewport-motion") {
+      const top = Math.max(0, this.transcript.scrollTop - 1);
+      const height = Math.max(1, this.transcript.viewportHeight);
+      const line =
+        intent.key === "H"
+          ? top + intent.count - 1
+          : intent.key === "M"
+            ? top + Math.floor(height / 2)
+            : top + height - intent.count;
+      this.timeline.moveToVisibleLine(line);
+      this.revealTimelineCursor();
+      this.pauseTimeline();
       this.renderScheduler.requestImmediate();
       return;
     }

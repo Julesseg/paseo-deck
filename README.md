@@ -45,7 +45,7 @@ npm run smoke:package # install the packed tarball and test both executable name
 npm run typecheck  # check strict TypeScript
 npm run lint       # run Biome lint rules
 npm run format     # format the project
-npm run bench:navigation -- 1000 20 # measure sidebar input with a long timeline
+npm run bench:navigation -- 1000 20 unicode timeline # measure timeline input with a long timeline
 npm run check      # formatting, lint, types, coverage, packed executables, and build
 ```
 
@@ -60,8 +60,8 @@ CI enforces one required `check` result backed by:
 
 | Key | Action |
 | --- | --- |
-| `j` / `k`, `Up` / `Down` | Move through the active list, timeline, or dialog |
-| `h` / `l`, `Left` / `Right` | Collapse or expand a tree node; move through permission requests |
+| `j` / `k`, `Up` / `Down` | Move through the active list, rendered timeline lines, or dialog |
+| `h` / `l`, `Left` / `Right` | Collapse or expand a tree node; move by character in the timeline |
 | `g` / `G` | Jump to the first or last sidebar row; use `gg` / `G` for the timeline buffer |
 | `[` / `]` | Resize the tree, or jump between turns when the timeline is focused |
 | `{` / `}` | Jump between timeline errors |
@@ -85,6 +85,10 @@ CI enforces one required `check` result backed by:
 | `z` | Choose an available thinking level |
 | `Ctrl-F` | Search the selected timeline |
 | `Ctrl-U` / `Ctrl-D` | Page through the timeline buffer |
+| `w` / `b` / `e`, `W` / `B` / `E`, `ge` / `gE` | Move by word across timeline lines; uppercase uses whitespace-separated words |
+| `f` / `F` / `t` / `T` + character, `;` / `,` | Find a character on the line and repeat the find |
+| `^` / `0` / `$`, `H` / `M` / `L`, `%` | Move to line columns, visible window positions, or a matching bracket |
+| Number + motion | Repeat a timeline motion, such as `5j` or `3w`; `5gg` / `5G` go to line 5 |
 | `v` / `V` / `Ctrl-V` | Select characters, lines, or a block in the timeline |
 | `y` / `yy` / `yiv` | Yank a Visual selection, the current line, or the current timeline event |
 | `Y` | Choose source text to copy from the current timeline event |

@@ -272,7 +272,8 @@ export const deckCommands: readonly DeckCommand[] = [
     shortcuts: ["Enter"],
     contexts: ["timeline"],
     palette: false,
-    intent: () => ({ type: "toggle-selected-timeline-item" }),
+    disabledReason: (state) => (state.timeline.items.length ? undefined : "Timeline is empty"),
+    intent: () => ({ type: "timeline-fold" }),
   },
   {
     id: "quit",
@@ -459,21 +460,23 @@ export const deckCommands: readonly DeckCommand[] = [
   },
   {
     id: "timeline-previous",
-    label: "Move timeline selection up",
+    label: "Move timeline cursor up",
     group: "Timeline",
     shortcuts: ["k", "Up"],
     contexts: ["timeline"],
     palette: false,
-    intent: () => ({ type: "move-timeline-selection", direction: -1 }),
+    disabledReason: (state) => (state.timeline.items.length ? undefined : "Timeline is empty"),
+    intent: () => ({ type: "move-timeline-text", key: "k" }),
   },
   {
     id: "timeline-next",
-    label: "Move timeline selection down",
+    label: "Move timeline cursor down",
     group: "Timeline",
     shortcuts: ["j", "Down"],
     contexts: ["timeline"],
     palette: false,
-    intent: () => ({ type: "move-timeline-selection", direction: 1 }),
+    disabledReason: (state) => (state.timeline.items.length ? undefined : "Timeline is empty"),
+    intent: () => ({ type: "move-timeline-text", key: "j" }),
   },
   {
     id: "timeline-start",
@@ -482,7 +485,8 @@ export const deckCommands: readonly DeckCommand[] = [
     shortcuts: ["gg"],
     contexts: ["timeline"],
     palette: false,
-    intent: () => ({ type: "move-timeline-selection-boundary", boundary: "start" }),
+    disabledReason: (state) => (state.timeline.items.length ? undefined : "Timeline is empty"),
+    intent: () => ({ type: "move-timeline-text", key: "gg" }),
   },
   {
     id: "timeline-end",
@@ -491,7 +495,8 @@ export const deckCommands: readonly DeckCommand[] = [
     shortcuts: ["G"],
     contexts: ["timeline"],
     palette: false,
-    intent: () => ({ type: "move-timeline-selection-boundary", boundary: "end" }),
+    disabledReason: (state) => (state.timeline.items.length ? undefined : "Timeline is empty"),
+    intent: () => ({ type: "move-timeline-text", key: "G" }),
   },
   {
     id: "previous-turn",
@@ -806,6 +811,8 @@ export const deckCommands: readonly DeckCommand[] = [
   },
 ];
 
+const timelineBufferKeys = new Set(["T", "v", "e", "t", "N", "/", "E", "z"]);
+
 export function resolvedCommands(
   state: AppState,
   context: CommandContext = commandContext(state),
@@ -815,7 +822,11 @@ export function resolvedCommands(
     .map((command) => {
       const { disabledReason: availability, ...definition } = command;
       const disabledReason = availability?.(state);
-      return { ...definition, ...(disabledReason ? { disabledReason } : {}) };
+      const shortcuts =
+        context === "timeline" && !state.activeTerminalId && command.group !== "Timeline"
+          ? command.shortcuts.filter((shortcut) => !timelineBufferKeys.has(shortcut))
+          : command.shortcuts;
+      return { ...definition, shortcuts, ...(disabledReason ? { disabledReason } : {}) };
     });
 }
 

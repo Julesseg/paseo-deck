@@ -537,6 +537,25 @@ const shots: Array<{
     input: ["g", "g", "j"],
   },
   {
+    name: "timeline-buffer-wide",
+    columns: 160,
+    rows: 30,
+    state: withTimeline(baseState, "timeline-buffer", [
+      {
+        id: "buffer-user",
+        type: "user-message",
+        text: "Read the [docs](https://example.test/docs) before the release.",
+      },
+      {
+        id: "buffer-reply",
+        type: "assistant-message",
+        messageId: "buffer-reply",
+        text: "The release is ready.\nReview the notes and publish.",
+      },
+    ]),
+    input: ["g", "g", "j"],
+  },
+  {
     name: "timeline-buffer-normal-light",
     columns: 100,
     rows: 28,
