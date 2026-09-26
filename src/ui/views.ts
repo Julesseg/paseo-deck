@@ -2161,7 +2161,8 @@ export class DeckTui {
       if (
         global?.id === "command-palette" ||
         (global?.id === "help" &&
-          !(this.state.focus === "composer" && this.state.composerMode === "insert"))
+          !(this.state.focus === "composer" && this.state.composerMode === "insert") &&
+          !(this.state.focus === "timeline" && this.state.terminalMode === "insert"))
       )
         return this.controller.handleKey(data) ? { consume: true } : undefined;
       if (this.localOverlayKey.startsWith("__timeline-")) {

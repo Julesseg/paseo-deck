@@ -469,6 +469,31 @@ describe("composer controls", () => {
     expect(sidebarLines.filter((line) => line.includes("NORMAL"))).toHaveLength(1);
   });
 
+  it("forwards question marks to a terminal in Insert mode", async () => {
+    const terminal = new RecordingTerminal(100, 24);
+    const intents: unknown[] = [];
+    const terminalState: AppState = {
+      ...state(),
+      selectedWorkspaceId: "w",
+      activeTerminalId: "term",
+      terminalMode: "insert",
+      terminalLines: { term: ["terminal input"] },
+      workspaceTerminals: {
+        w: [{ id: "term", workspaceId: "w", cwd: "/workspace", name: "build" }],
+      },
+      tabOrder: { w: ["terminal:term"] },
+      activeTabIds: { w: "terminal:term" },
+      focus: "timeline",
+    };
+    const deck = new DeckTui(terminal, terminalState, (intent) => intents.push(intent));
+    deck.start();
+    terminal.sendInput("?");
+    await terminal.waitForRender();
+    expect(terminal.viewport().join("\n")).not.toContain("Paseo Deck keys");
+    await deck.stop();
+    expect(intents).toContainEqual({ type: "terminal-input", data: "?" });
+  });
+
   it("shows draft parameters in the composer without repeating them in the timeline", async () => {
     const terminal = new RecordingTerminal(100, 28);
     const base = state();
