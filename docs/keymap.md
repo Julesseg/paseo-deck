@@ -85,7 +85,7 @@ These work in composer and timeline Normal/Visual modes unless the context colum
 | Timeline | `[t`, `]t`; `[e`, `]e` | Previous/next turn boundary or timeline error. |
 | Composer | `i`, `a`, `A`, `I`, `o`, `O` | Enter Insert mode at cursor, after cursor, line end, first nonblank, or on a new line. |
 | Composer | `x`, `X`, `s`, `S`, `D`, `C` | Delete/substitute a character or line, or delete/change through line end. |
-| Composer | `d{motion}`, `c{motion}`, `y{motion}`, `dd`, `cc`, `yy`, `di{object}`, `da{object}`, `ci{object}`, `ca{object}`, `yi{object}`, `ya{object}` | Delete, change, or yank by motion, line, or object. |
+| Composer | `d{motion}`, `c{motion}`, `y{motion}`, `dd`, `cc`, `yy`, `Y`, `di{object}`, `da{object}`, `ci{object}`, `ca{object}`, `yi{object}`, `ya{object}` | Delete, change, or yank by motion, line, or object. |
 | Composer | Visual `d`, `x`, `c`, `y` | Delete, change, or yank selection. |
 | Composer | `r{char}`, `p`, `P`, `u`, `Ctrl-R`, `J`, `~` | Replace a character, put the register, undo/redo, join lines, or toggle case. |
 | Composer Insert | Type, `Enter`, `Ctrl-U`, `Ctrl-W`, `Esc` | Enter text/newline, delete to line start/previous word, or return to Normal. |
