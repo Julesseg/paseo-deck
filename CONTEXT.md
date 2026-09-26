@@ -101,6 +101,12 @@ _Avoid_: Pane focus, focus area
 **Normal mode**:
 The default Vim mode for the composer, timeline, or terminal. Composer normal mode is the application's resting state, timeline normal mode navigates its read-only buffer, and terminal normal mode handles Deck commands.
 
+**Application leader**:
+The backslash key (`\\`) followed by a mnemonic key in composer or timeline Normal and Visual modes. It opens a Deck action without taking a Vim buffer key. Sidebar, dialogs, and terminals retain their own bindings.
+
+**Buffer cursor**:
+The position in rendered timeline text or editable composer text that Vim motions move. Timeline text is read-only; composer operators may change it.
+
 **Insert mode**:
 The Vim mode for entering prompt text in the composer or sending literal input to a terminal. Pressing Escape returns that region to normal mode.
 

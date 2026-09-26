@@ -499,10 +499,10 @@ describe("composer controls", () => {
     const screen = terminal.viewport().join("\n");
     await deck.stop();
     expect(screen).toContain("✎ New session");
-    expect(screen).toContain("[p] ready");
-    expect(screen).toContain("[m] one");
-    expect(screen).toContain("[z] low");
-    expect(screen).toContain("[o] plan");
+    expect(screen).toContain("[\\p] ready");
+    expect(screen).toContain("[\\m] one");
+    expect(screen).toContain("[\\z] low");
+    expect(screen).toContain("[\\o] plan");
     expect(screen).not.toContain("Provider:");
     expect(screen).not.toContain("Press i to edit");
     expect(screen).toContain("First message");
@@ -750,9 +750,9 @@ describe("composer controls", () => {
       new DeckTheme({ color: "none", unicode: false, theme: "plain", symbols: "ascii" }),
       18,
     );
-    expect(row).toContain("[m]");
-    expect(row).toContain("[z]");
-    expect(row).toContain("[o]");
+    expect(row).toContain("[\\m]");
+    expect(row).toContain("[\\z]");
+    expect(row).toContain("[\\o]");
     expect(terminalDisplayWidth(row)).toBeLessThanOrEqual(18);
   });
 
@@ -772,9 +772,9 @@ describe("composer controls", () => {
     const rendered = terminal.viewport().join("\n");
     await deck.stop();
 
-    expect(rendered).toContain("[m]");
-    expect(rendered).toContain("[z]");
-    expect(rendered).toContain("[o]");
+    expect(rendered).toContain("[\\m]");
+    expect(rendered).toContain("[\\z]");
+    expect(rendered).toContain("[\\o]");
     expect(rendered).not.toContain("Composer NORMAL:");
     expect(rendered).not.toContain("Sidebar:");
     expect(rendered).not.toContain("Timeline NORMAL:");
@@ -885,7 +885,7 @@ describe("composer controls", () => {
     deck.update(current);
     for (const key of ["0", "l", "x", "w", "b", "$", "h", "a", "!"]) terminal.sendInput(key);
     await terminal.waitForRender();
-    expect(intents).toContainEqual({ type: "set-composer-text", text: "oe two!" });
+    expect(intents).toContainEqual({ type: "set-composer-text", text: "oe tw!o" });
     expect(current.composerMode).toBe("insert");
     await deck.stop();
   });
@@ -1801,7 +1801,7 @@ describe("DeckTui viewport and focus", () => {
     };
     const deck = new DeckTui(terminal, searchState, () => undefined);
     deck.start();
-    terminal.sendInput("\u0006");
+    terminal.sendInput("/");
     terminal.sendInput("needle");
     await terminal.waitForRender();
     expect(terminal.viewport().join("\n")).toContain("1 match · result 1");
@@ -1836,7 +1836,7 @@ describe("DeckTui viewport and focus", () => {
     };
     const deck = new DeckTui(terminal, base, () => undefined);
     deck.start();
-    terminal.sendInput("\u0006");
+    terminal.sendInput("/");
     terminal.sendInput("needle");
     await terminal.waitForRender();
     expect(terminal.viewport().join("\n")).toContain("1 match · result 1");
@@ -1903,7 +1903,7 @@ describe("DeckTui viewport and focus", () => {
       () => undefined,
     );
     deck.start();
-    terminal.sendInput("\u0006");
+    terminal.sendInput("/");
     terminal.sendInput("missing");
     await terminal.waitForRender();
     expect(terminal.viewport().join("\n")).toContain("No matches.");
@@ -1954,7 +1954,7 @@ describe("DeckTui viewport and focus", () => {
     ).transcript;
     transcript.scrollTo(4, { disableFollow: true });
     const pausedTop = transcript.scrollTop;
-    terminal.sendInput("\u0006");
+    terminal.sendInput("/");
     terminal.sendInput("event");
     deck.update({
       ...base,
@@ -1981,7 +1981,7 @@ describe("DeckTui viewport and focus", () => {
     });
 
     transcript.scrollToEnd();
-    terminal.sendInput("\u0006");
+    terminal.sendInput("/");
     deck.update({
       ...base,
       timeline: {
@@ -2148,7 +2148,7 @@ describe("DeckTui viewport and focus", () => {
     const intents: unknown[] = [];
     const deck = new DeckTui(terminal, base, (intent) => intents.push(intent));
     deck.start();
-    terminal.sendInput("\u0006");
+    terminal.sendInput("/");
     terminal.sendInput("needle");
     deck.update({ ...base, modal: { type: "help" } });
     await terminal.waitForRender();
@@ -2184,7 +2184,7 @@ describe("DeckTui viewport and focus", () => {
       (intent) => intents.push(intent),
     );
     deck.start();
-    terminal.sendInput("\u0006");
+    terminal.sendInput("/");
     terminal.sendInput("Y");
     terminal.sendInput("\u0003");
     await deck.stop();
@@ -2566,7 +2566,7 @@ describe("DeckTui viewport and focus", () => {
     const before = transcript.scrollTop;
     terminal.sendInput("\u0015");
     await terminal.waitForRender();
-    expect(transcript.scrollTop).toBe(before - Math.floor(transcript.viewportHeight * 0.75));
+    expect(transcript.scrollTop).toBe(before - Math.floor(transcript.viewportHeight / 2));
     const viewport = terminal.viewport().join("\n");
     expect(viewport).not.toContain("line 29");
     await deck.stop();
@@ -3360,7 +3360,7 @@ describe("DeckTui viewport and focus", () => {
     expect(terminal.viewport().join("\n")).not.toContain("Sidebar:");
   });
 
-  it("expands the selected collapsed timeline block with Enter", async () => {
+  it("expands the selected collapsed timeline block with za", async () => {
     const terminal = new RecordingTerminal(70, 16);
     const deck = new DeckTui(
       terminal,
@@ -3385,7 +3385,8 @@ describe("DeckTui viewport and focus", () => {
     deck.start();
     await terminal.waitForRender();
     expect(terminal.viewport().join("\n")).toContain("collapsed");
-    terminal.sendInput("\r");
+    terminal.sendInput("z");
+    terminal.sendInput("a");
     await terminal.waitForRender();
     await deck.stop();
 
@@ -3678,7 +3679,7 @@ describe("DeckTui viewport and focus", () => {
       terminal.sendInput("?");
       await terminal.waitForRender();
       expect(terminal.viewport().join("\n")).toContain("Paseo Deck keys");
-      terminal.sendInput("\u001b");
+      terminal.sendInput("?");
       await terminal.waitForRender();
       expect(terminal.viewport().join("\n")).toContain("Command palette");
       terminal.sendInput("\u001b");

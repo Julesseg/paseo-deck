@@ -255,7 +255,7 @@ export function timelineItemDisplay(
       const collapsed = item.collapsed ?? item.text.length > 180;
       if (collapsed && !expanded)
         return [
-          heading("Reasoning (collapsed)  [Enter to expand]"),
+          heading("Reasoning (collapsed)  [za to expand]"),
           ...body(item.text.replaceAll("\n", " ")).slice(0, 1),
         ];
       return [heading(`Reasoning${stamp}`), ...body(item.text)];
@@ -275,7 +275,7 @@ export function timelineItemDisplay(
       if (!expanded && output.length > 180)
         return [
           heading(
-            `Tool ${item.status}: ${item.name}${kindLabel ? ` ${chrome.bullet} ${kindLabel}` : ""}${duration(item.durationMs)}${item.failureSummary ? ` ${chrome.bullet} ${item.failureSummary}` : ""}  [Enter to expand]`,
+            `Tool ${item.status}: ${item.name}${kindLabel ? ` ${chrome.bullet} ${kindLabel}` : ""}${duration(item.durationMs)}${item.failureSummary ? ` ${chrome.bullet} ${item.failureSummary}` : ""}  [za to expand]`,
           ),
           ...body(displaySummary || "No output").slice(0, 1),
         ];
@@ -289,7 +289,7 @@ export function timelineItemDisplay(
     case "error":
       return [
         heading(
-          `Error: ${item.message}${item.detail && !expanded ? "  [Enter to expand]" : ""}${stamp}`,
+          `Error: ${item.message}${item.detail && !expanded ? "  [za to expand]" : ""}${stamp}`,
         ),
         ...(item.detail ? (expanded ? body(item.detail) : body(item.detail).slice(0, 1)) : []),
       ];

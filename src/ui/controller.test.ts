@@ -69,6 +69,7 @@ describe("DeckController keyboard seam", () => {
       () => state,
       (intent) => intents.push(intent),
     );
+    controller.handleKey("\\");
     controller.handleKey("T");
     expect(intents).toEqual([{ type: "open-new-tab", workspaceId: "w" }]);
     for (const variant of [
@@ -139,8 +140,8 @@ describe("DeckController keyboard seam", () => {
       () => state,
       (intent) => intents.push(intent),
     );
-    controller.handleKey("g");
-    controller.handleKey("c");
+    controller.handleKey("\\");
+    controller.handleKey("D");
     expect(intents).toEqual([{ type: "discard-session-draft", workspaceId: "w" }]);
     const backgroundState: AppState = {
       ...state,
@@ -151,8 +152,8 @@ describe("DeckController keyboard seam", () => {
       () => backgroundState,
       (intent) => intents.push(intent),
     );
-    backgroundController.handleKey("g");
-    backgroundController.handleKey("c");
+    backgroundController.handleKey("\\");
+    backgroundController.handleKey("D");
     expect(intents.at(-1)).toEqual({ type: "discard-session-draft", workspaceId: "w" });
   });
   it("recognizes tab navigation sequences and counts", () => {
@@ -215,7 +216,7 @@ describe("DeckController keyboard seam", () => {
       { type: "set-focus", focus: "timeline" },
     ]);
   });
-  it("uses direct Vim region transitions from composer normal mode", () => {
+  it("uses mnemonic buffer commands for region transitions", () => {
     const intents: unknown[] = [];
     let current: AppState = { ...makeState(), focus: "composer", composerMode: "normal" };
     const controller = new DeckController(
@@ -227,21 +228,20 @@ describe("DeckController keyboard seam", () => {
           current = { ...current, composerMode: intent.mode };
       },
     );
-    controller.handleKey("i");
-    controller.handleKey("\u001b");
+    expect(controller.handleKey("i")).toBe(false);
+    controller.handleKey("\\");
     controller.handleKey("n");
     controller.handleKey("\u001b");
+    controller.handleKey("\\");
     controller.handleKey("t");
     expect(intents).toEqual([
-      { type: "set-composer-mode", mode: "insert" },
-      { type: "set-composer-mode", mode: "normal" },
       { type: "set-focus", focus: "tree" },
       { type: "set-focus", focus: "composer" },
       { type: "set-focus", focus: "timeline" },
     ]);
   });
 
-  it("keeps Ctrl-U/Ctrl-D timeline scrolling available in every region", () => {
+  it("reserves Ctrl-U for Vim in the composer and scrolls other regions", () => {
     for (const focus of ["composer", "tree", "timeline"] as const) {
       const intents: unknown[] = [];
       new DeckController(
@@ -252,7 +252,9 @@ describe("DeckController keyboard seam", () => {
         }),
         (intent) => intents.push(intent),
       ).handleKey("\u0015");
-      expect(intents).toEqual([{ type: "scroll-timeline", direction: -1 }]);
+      expect(intents).toEqual(
+        focus === "composer" ? [] : [{ type: "scroll-timeline", direction: -1 }],
+      );
     }
   });
 
@@ -287,7 +289,7 @@ describe("DeckController keyboard seam", () => {
     }
   });
 
-  it("enters and exits composer visual mode without changing active region", () => {
+  it("lets the composer own Visual entry and returns to Normal on Escape", () => {
     let current: AppState = { ...makeState(), focus: "composer", composerMode: "normal" };
     const intents: unknown[] = [];
     const controller = new DeckController(
@@ -298,12 +300,10 @@ describe("DeckController keyboard seam", () => {
           current = { ...current, composerMode: intent.mode };
       },
     );
-    controller.handleKey("v");
+    expect(controller.handleKey("v")).toBe(false);
+    current = { ...current, composerMode: "visual" };
     controller.handleKey("\u001b");
-    expect(intents).toEqual([
-      { type: "set-composer-mode", mode: "visual" },
-      { type: "set-composer-mode", mode: "normal" },
-    ]);
+    expect(intents).toEqual([{ type: "set-composer-mode", mode: "normal" }]);
     expect(current.focus).toBe("composer");
   });
 
@@ -499,7 +499,7 @@ describe("DeckController keyboard seam", () => {
   it("keeps ordinary insert text local while preserving Ctrl-C quit", () => {
     const intents: unknown[] = [];
     const controller = new DeckController(
-      () => ({ ...makeState(), focus: "composer" }),
+      () => ({ ...makeState(), focus: "composer", composerMode: "insert" }),
       (intent) => intents.push(intent),
     );
 
@@ -534,7 +534,7 @@ describe("DeckController keyboard seam", () => {
     controller.handleKey("\r");
 
     expect(intents).toContainEqual({ type: "move-timeline-text", key: "j" });
-    expect(intents).toContainEqual({ type: "timeline-fold" });
+    expect(intents).toContainEqual({ type: "move-timeline-text", key: "+" });
     expect(intents).not.toContainEqual({ type: "select-or-open" });
   });
 
@@ -689,10 +689,7 @@ describe("DeckController keyboard seam", () => {
       () => ({ ...makeState(), focus: "timeline" }),
       (intent) => intents.push(intent),
     );
-    timeline.handleKey("[");
-    timeline.handleKey("]");
-    timeline.handleKey("{");
-    timeline.handleKey("}");
+    for (const key of ["[", "t", "]", "t", "[", "e", "]", "e"]) timeline.handleKey(key);
     const composer = new DeckController(
       () => ({ ...makeState(), focus: "composer" }),
       () => undefined,
@@ -744,7 +741,7 @@ describe("DeckController keyboard seam", () => {
   it("uses up and down for selected-agent prompt history while composing", () => {
     const intents: unknown[] = [];
     const controller = new DeckController(
-      () => ({ ...makeState(), focus: "composer" }),
+      () => ({ ...makeState(), focus: "composer", composerMode: "insert" }),
       (intent) => intents.push(intent),
     );
 

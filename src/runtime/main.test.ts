@@ -38,6 +38,7 @@ describe("runCli", () => {
     await terminal.waitForRender();
     expect(terminal.viewport().join("\n")).toContain("INSERT Prompt");
     terminal.sendInput("\u001b");
+    terminal.sendInput("\\");
     terminal.sendInput("q");
     await expect(running).resolves.toBe(0);
   });
@@ -66,6 +67,7 @@ describe("runCli", () => {
     });
     await tick();
     terminal.sendInput("\u001b");
+    terminal.sendInput("\\");
     terminal.sendInput("T");
     await terminal.waitForRender();
     expect(terminal.viewport().join("\n")).toContain("New Tab");
@@ -75,7 +77,8 @@ describe("runCli", () => {
     terminal.sendInput("i");
     for (const key of "Build this") terminal.sendInput(key);
     terminal.sendInput("\u001b");
-    terminal.sendInput("\r");
+    terminal.sendInput("\\");
+    terminal.sendInput("s");
     await terminal.waitForRender();
     expect(gateway.commands).toContainEqual({
       type: "create-agent",
@@ -84,6 +87,7 @@ describe("runCli", () => {
       modelId: "model",
       prompt: "Build this",
     });
+    terminal.sendInput("\\");
     terminal.sendInput("q");
     await expect(running).resolves.toBe(0);
   });
@@ -99,6 +103,7 @@ describe("runCli", () => {
     });
     await tick();
     terminal.sendInput("\u001b");
+    terminal.sendInput("\\");
     terminal.sendInput("T");
     await terminal.waitForRender();
     terminal.sendInput("\r");
@@ -107,6 +112,7 @@ describe("runCli", () => {
     for (const key of "Keep this text") terminal.sendInput(key);
     await terminal.waitForRender();
     terminal.sendInput("\u001b");
+    terminal.sendInput("\\");
     terminal.sendInput("T");
     await terminal.waitForRender();
     terminal.sendInput("\u001b[B");
@@ -129,6 +135,7 @@ describe("runCli", () => {
     await terminal.waitForRender();
     expect(gateway.terminals).toHaveLength(0);
     expect(terminal.viewport().join("\n")).toContain("Keep this text");
+    terminal.sendInput("\\");
     terminal.sendInput("q");
     await terminal.waitForRender();
     terminal.sendInput("\u001b[B");
@@ -147,18 +154,21 @@ describe("runCli", () => {
     });
     await tick();
     terminal.sendInput("\u001b");
+    terminal.sendInput("\\");
     terminal.sendInput("T");
     terminal.sendInput("\r");
     await terminal.waitForRender();
     terminal.sendInput("i");
     terminal.sendInput("x");
     terminal.sendInput("\u001b");
+    terminal.sendInput("\\");
     terminal.sendInput("q");
     await terminal.waitForRender();
     expect(terminal.viewport().join("\n")).toContain("Quit with unsent session drafts?");
     terminal.sendInput("\r");
     await terminal.waitForRender();
     expect(terminal.viewport().join("\n")).not.toContain("Quit with unsent session drafts?");
+    terminal.sendInput("\\");
     terminal.sendInput("q");
     terminal.sendInput("\u001b[B");
     terminal.sendInput("\r");
@@ -198,6 +208,7 @@ describe("runCli", () => {
     });
     await tick();
 
+    terminal.sendInput("\\");
     terminal.sendInput("q");
 
     await expect(running).resolves.toBe(0);
@@ -218,6 +229,7 @@ describe("runCli", () => {
     });
     await tick();
     await terminal.waitForRender();
+    terminal.sendInput("\\");
     terminal.sendInput("q");
 
     await expect(running).resolves.toBe(0);
@@ -260,6 +272,7 @@ describe("runCli", () => {
     await tick();
     gateway.emitDirectory({ type: "connection-changed", state: "reconnecting", attempt: 2 });
 
+    terminal.sendInput("\\");
     terminal.sendInput("q");
 
     await expect(running).resolves.toBe(0);
@@ -286,6 +299,7 @@ describe("runCli", () => {
     expect(capture.read().stderr).toContain("Could not load saved preferences; using defaults.");
     expect(capture.read().stderr).not.toContain("PRIVATE_");
     expect(capture.read().stderr).not.toContain("/private/preferences.json");
+    terminal.sendInput("\\");
     terminal.sendInput("q");
     await expect(running).resolves.toBe(0);
   });
@@ -323,6 +337,7 @@ describe("runCli", () => {
     await tick();
     expect(order.indexOf("read-preferences")).toBeLessThan(order.indexOf("render"));
     expect(order.indexOf("read-preferences")).toBeLessThan(order.indexOf("connect"));
+    terminal.sendInput("\\");
     terminal.sendInput("q");
     await expect(running).resolves.toBe(0);
   });
@@ -353,6 +368,7 @@ describe("runCli", () => {
     await lowTerminal.waitForRender();
     expect(lowTerminal.writes.join("")).not.toContain("\u001b[38;");
     expect(lowTerminal.writes.join("")).not.toContain("·");
+    lowTerminal.sendInput("\\");
     lowTerminal.sendInput("q");
     await expect(low).resolves.toBe(0);
     expect(JSON.parse(bytes).global).toEqual({ theme: "ember", symbolSet: "ascii" });
@@ -368,6 +384,7 @@ describe("runCli", () => {
     });
     await tick();
     await richTerminal.waitForRender();
+    richTerminal.sendInput("\\");
     richTerminal.sendInput("q");
     await expect(rich).resolves.toBe(0);
 
@@ -395,6 +412,7 @@ describe("runCli", () => {
       await tick();
       await terminal.waitForRender();
       expect(terminal.writes.join("")).toContain(marker.replace("\\u001b", "\u001b"));
+      terminal.sendInput("\\");
       terminal.sendInput("q");
       await expect(running).resolves.toBe(0);
     },
@@ -436,17 +454,20 @@ describe("runCli", () => {
     firstA.terminal.sendInput("toggle theme");
     firstA.terminal.sendInput("\r");
     await firstA.terminal.waitForRender();
+    firstA.terminal.sendInput("\\");
     firstA.terminal.sendInput("q");
     await expect(firstA.running).resolves.toBe(0);
 
     const firstB = await launch({ type: "host", value: "b:1" });
     await mutateTreePreferences(firstB.terminal, false);
+    firstB.terminal.sendInput("\\");
     firstB.terminal.sendInput("q");
     await expect(firstB.running).resolves.toBe(0);
 
     const restoredA = await launch({ type: "host", value: "a:1" });
     expect(events.indexOf("read-preferences")).toBeGreaterThanOrEqual(0);
     expect(restoredA.terminal.viewport().join("\n")).toContain("Persisted project");
+    restoredA.terminal.sendInput("\\");
     restoredA.terminal.sendInput("q");
     await expect(restoredA.running).resolves.toBe(0);
 
@@ -535,6 +556,7 @@ function treeDirectory(): DirectorySnapshot {
 
 async function mutateTreePreferences(terminal: RecordingTerminal, widen: boolean): Promise<void> {
   terminal.sendInput("\u001b");
+  terminal.sendInput("\\");
   terminal.sendInput("n");
   if (widen) {
     terminal.sendInput("o");

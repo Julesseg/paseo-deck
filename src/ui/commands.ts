@@ -1,4 +1,5 @@
 import type { AppState, FocusArea } from "../contracts/app-state.js";
+import { activeSessionDraftWorkspaceId, selectedComposerDraft } from "../state/composer.js";
 import { activeNotification, pendingPermissions } from "../state/store.js";
 import type { UiIntent } from "./controller.js";
 
@@ -71,6 +72,26 @@ export function newTabUnavailableReason(state: AppState): string | undefined {
 
 export const deckCommands: readonly DeckCommand[] = [
   {
+    id: "composer-submit",
+    label: "Send composer text",
+    group: "Agent",
+    shortcuts: ["\\s"],
+    contexts: ["composer"],
+    palette: false,
+    disabledReason: (state) =>
+      selectedComposerDraft(state).trim() &&
+      (activeSessionDraftWorkspaceId(state) || state.selectedAgentId)
+        ? undefined
+        : "No prompt to send",
+    intent: (state) => {
+      const workspaceId = activeSessionDraftWorkspaceId(state);
+      const prompt = selectedComposerDraft(state);
+      return workspaceId
+        ? { type: "submit-session-draft", workspaceId, prompt }
+        : { type: "submit-composer", agentId: state.selectedAgentId ?? "", prompt };
+    },
+  },
+  {
     id: "new-tab",
     label: "New Tab",
     group: "Tabs",
@@ -124,7 +145,7 @@ export const deckCommands: readonly DeckCommand[] = [
     label: "Next tab",
     group: "Tabs",
     shortcuts: ["gt"],
-    contexts: ["tree", "timeline"],
+    contexts: ["tree", "timeline", "composer"],
     palette: true,
     intent: () => ({ type: "switch-tab", direction: 1 }),
   },
@@ -133,7 +154,7 @@ export const deckCommands: readonly DeckCommand[] = [
     label: "Previous tab",
     group: "Tabs",
     shortcuts: ["gT"],
-    contexts: ["tree", "timeline"],
+    contexts: ["tree", "timeline", "composer"],
     palette: true,
     intent: () => ({ type: "switch-tab", direction: -1 }),
   },
@@ -243,7 +264,7 @@ export const deckCommands: readonly DeckCommand[] = [
     label: "Navigate sidebar",
     group: "Sessions",
     shortcuts: ["n"],
-    contexts: ["composer"],
+    contexts: ["composer", "timeline"],
     palette: false,
     intent: () => ({ type: "set-focus", focus: "tree" }),
   },
@@ -269,7 +290,7 @@ export const deckCommands: readonly DeckCommand[] = [
     id: "toggle-timeline-selection",
     label: "Expand selected timeline item",
     group: "Timeline",
-    shortcuts: ["Enter"],
+    shortcuts: ["za"],
     contexts: ["timeline"],
     palette: false,
     disabledReason: (state) => (state.timeline.items.length ? undefined : "Timeline is empty"),
@@ -771,7 +792,16 @@ export const deckCommands: readonly DeckCommand[] = [
     shortcuts: ["Ctrl-F"],
     contexts: ["timeline"],
     disabledReason: (state) => (state.timeline.items.length ? undefined : "Timeline is empty"),
-    intent: () => ({ type: "open-timeline-search" }),
+    intent: () => ({ type: "open-timeline-search", direction: 1 }),
+  },
+  {
+    id: "timeline-search-backward",
+    label: "Search timeline backward",
+    group: "Timeline",
+    shortcuts: ["?"],
+    contexts: ["timeline"],
+    disabledReason: (state) => (state.timeline.items.length ? undefined : "Timeline is empty"),
+    intent: () => ({ type: "open-timeline-search", direction: -1 }),
   },
   {
     id: "timeline-yank-line",
@@ -802,7 +832,45 @@ export const deckCommands: readonly DeckCommand[] = [
   },
 ];
 
-const timelineBufferKeys = new Set(["T", "v", "e", "t", "N", "/", "E", "z"]);
+// A buffer owns Vim's unmodified keys. Application actions in the composer
+// and timeline use one mnemonic backslash prefix, including disabled actions
+// so help and the palette show the same binding as input dispatch.
+const bufferShortcuts: Readonly<Record<string, readonly string[]>> = {
+  "new-tab": ["\\T"],
+  "discard-draft": ["\\D"],
+  "terminal-kill": ["\\K"],
+  "tab-next": ["\\]"],
+  "tab-previous": ["\\["],
+  quit: ["\\q", "Ctrl-C"],
+  "sidebar-navigation": ["\\n"],
+  "timeline-navigation": ["\\t"],
+  "focus-composer": ["\\i"],
+  "composer-history-previous": ["\\h"],
+  "composer-history-next": ["\\H"],
+  "scroll-timeline-up": [],
+  "scroll-timeline-down": [],
+  help: ["\\?"],
+  refresh: ["\\r"],
+  notifications: ["\\N"],
+  retry: ["\\R"],
+  "error-details": ["\\E"],
+  filter: ["\\f"],
+  permissions: ["\\P"],
+  "toggle-archived": ["\\v"],
+  "toggle-attention": ["\\!"],
+  "stop-agent": ["\\x"],
+  "archive-agent": ["\\A"],
+  "detach-agent": ["\\d"],
+  "rename-agent": ["\\e"],
+  model: ["\\m"],
+  "operational-mode": ["\\o"],
+  thinking: ["\\z"],
+  "timeline-search": ["/"],
+  "previous-turn": ["[t"],
+  "next-turn": ["]t"],
+  "previous-error": ["[e"],
+  "next-error": ["]e"],
+};
 
 export function resolvedCommands(
   state: AppState,
@@ -813,16 +881,18 @@ export function resolvedCommands(
     .map((command) => {
       const { disabledReason: availability, ...definition } = command;
       const disabledReason = availability?.(state);
-      const shortcuts =
-        context === "timeline" && !state.activeTerminalId && command.group !== "Timeline"
-          ? command.shortcuts.filter((shortcut) => !timelineBufferKeys.has(shortcut))
-          : command.shortcuts;
+      const buffer =
+        (context === "timeline" && !state.activeTerminalId) ||
+        (context === "composer" && state.composerMode !== "insert");
+      const shortcuts = buffer
+        ? (bufferShortcuts[command.id] ?? command.shortcuts)
+        : command.shortcuts;
       return { ...definition, shortcuts, ...(disabledReason ? { disabledReason } : {}) };
     });
 }
 
 export function commandForKey(state: AppState, data: string): ResolvedCommand | undefined {
-  const shortcut = shortcutForInput(data);
+  const shortcut = data.startsWith("\\") && data.length === 2 ? data : shortcutForInput(data);
   if (!shortcut) return undefined;
   return resolvedCommands(state).find((command) => command.shortcuts.includes(shortcut));
 }

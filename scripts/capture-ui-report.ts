@@ -475,19 +475,44 @@ const shots: Array<{
     name: "composer-normal",
     columns: 100,
     rows: 28,
-    state: { ...baseState, focus: "composer", composerMode: "normal" },
+    state: {
+      ...baseState,
+      focus: "composer",
+      composerMode: "normal",
+      composer: {
+        ...baseState.composer,
+        drafts: { "agent-atlas-1234": "Read the release notes before sending." },
+      },
+    },
   },
   {
     name: "composer-insert",
     columns: 100,
     rows: 28,
-    state: { ...baseState, focus: "composer", composerMode: "insert" },
+    state: {
+      ...baseState,
+      focus: "composer",
+      composerMode: "insert",
+      composer: {
+        ...baseState.composer,
+        drafts: { "agent-atlas-1234": "Read the release notes before sending." },
+      },
+    },
   },
   {
     name: "composer-visual",
     columns: 100,
     rows: 28,
-    state: { ...baseState, focus: "composer", composerMode: "visual" },
+    state: {
+      ...baseState,
+      focus: "composer",
+      composerMode: "visual",
+      composer: {
+        ...baseState.composer,
+        drafts: { "agent-atlas-1234": "Read the release notes before sending." },
+      },
+    },
+    input: ["0"],
   },
   {
     name: "composer-sending",
@@ -535,6 +560,36 @@ const shots: Array<{
       },
     ]),
     input: ["g", "g", "j"],
+  },
+  {
+    name: "timeline-search-forward",
+    columns: 100,
+    rows: 28,
+    state: withTimeline(baseState, "timeline-search", [
+      { id: "search-user", type: "user-message", text: "Read the release notes." },
+      {
+        id: "search-reply",
+        type: "assistant-message",
+        messageId: "search-reply",
+        text: "Release ready.",
+      },
+    ]),
+    input: ["/", "release"],
+  },
+  {
+    name: "timeline-search-backward",
+    columns: 100,
+    rows: 28,
+    state: withTimeline(baseState, "timeline-search", [
+      { id: "search-user", type: "user-message", text: "Read the release notes." },
+      {
+        id: "search-reply",
+        type: "assistant-message",
+        messageId: "search-reply",
+        text: "Release ready.",
+      },
+    ]),
+    input: ["?", "release"],
   },
   {
     name: "timeline-buffer-wide",
@@ -1256,12 +1311,23 @@ function terminalSvg(
   const chromeHeight = 32;
   const width = columns * cellWidth + padding * 2;
   const height = rows * lineHeight + padding * 2 + chromeHeight;
+  // SVG rasterizers disagree on preserving leading/repeated spaces in <text>.
+  // Place each terminal grapheme at its actual cell column instead.
+  const graphemes = new Intl.Segmenter(undefined, { granularity: "grapheme" });
   const text = lines
     .slice(0, rows)
-    .map(
-      (line, row) =>
-        `<text x="${padding}" y="${chromeHeight + padding + (row + 1) * lineHeight - 4}" xml:space="preserve">${escapeXml(line.replaceAll("", " ").replaceAll("", " "))}</text>`,
-    )
+    .flatMap((line, row) => {
+      const glyphs: string[] = [];
+      let column = 0;
+      for (const { segment } of graphemes.segment(line)) {
+        if (segment !== " " && segment !== "" && segment !== "")
+          glyphs.push(
+            `<text x="${padding + column * cellWidth}" y="${chromeHeight + padding + (row + 1) * lineHeight - 4}">${escapeXml(segment)}</text>`,
+          );
+        column += terminalDisplayWidth(segment);
+      }
+      return glyphs;
+    })
     .join("\n");
   const pillCaps = lines
     .slice(0, rows)

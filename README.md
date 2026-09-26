@@ -58,49 +58,9 @@ CI enforces one required `check` result backed by:
 
 ## Keymap
 
-| Key | Action |
-| --- | --- |
-| `j` / `k`, `Up` / `Down` | Move through the active list, rendered timeline lines, or dialog |
-| `h` / `l`, `Left` / `Right` | Collapse or expand a tree node; move by character in the timeline |
-| `g` / `G` | Jump to the first or last sidebar row; use `gg` / `G` for the timeline buffer |
-| `[` / `]` | Resize the tree, or jump between turns when the timeline is focused |
-| `{` / `}` | Jump between timeline errors |
-| `Enter` | Select, open, expand, run, or confirm |
-| `gt` / `gT` | Select the next or previous session or terminal tab (`3gt` selects tab 3) |
-| `n` / `t` / `Esc` | Enter sidebar or timeline navigation; return to composer normal mode |
-| `i` | Enter composer Insert mode |
-| `Ctrl-P` / `Ctrl-N` | Move through prompt history while composing |
-| `c` | Create from the highlighted workspace while the sidebar is active |
-| `/` | Filter sessions |
-| `o` | Toggle alphabetical or attention-first tree ordering |
-| `v` | Show or hide archived sessions |
-| `!` | Show only sessions that need attention |
-| `p` | Review pending permissions |
-| `a` / `d` | Allow or deny inside the permission dialog |
-| `x` | Stop the selected session after confirmation |
-| `A` | Archive the selected session after confirmation |
-| `d` | Detach the selected session after confirmation |
-| `e` | Rename the selected session |
-| `m` | Choose an available mode |
-| `z` | Choose an available thinking level |
-| `Ctrl-F` | Search the selected timeline |
-| `Ctrl-U` / `Ctrl-D` | Page through the timeline buffer |
-| `w` / `b` / `e`, `W` / `B` / `E`, `ge` / `gE` | Move by word across timeline lines; uppercase uses whitespace-separated words |
-| `f` / `F` / `t` / `T` + character, `;` / `,` | Find a character on the line and repeat the find |
-| `^` / `0` / `$`, `H` / `M` / `L`, `%` | Move to line columns, visible window positions, or a matching bracket |
-| Number + motion | Repeat a timeline motion, such as `5j` or `3w`; `5gg` / `5G` go to line 5 |
-| `v` / `V` / `Ctrl-V` | Select characters, lines, or a block in the timeline |
-| `y` / `yy` / `yiv` | Yank a Visual selection, the current line, or the current timeline event |
-| `Y` | Yank the current rendered line, like `yy` |
-| `gx` | Open the link under the timeline cursor |
-| `r` | Refresh and reconnect |
-| `R` | Retry the selected failure |
-| `E` | Expand the current error details |
-| `N` | Open notification history |
-| `Ctrl-K` / `Cmd-P` | Open the command palette, including theme and symbol preferences |
-| `?` | Show contextual help |
-| `Esc` | Close a dialog or cancel editing |
-| `q` / `Ctrl-C` | Quit and restore the terminal |
+Composer and timeline Normal and Visual modes use Vim buffer keys. Press `\` followed by a mnemonic key for Deck actions that would conflict with those motions. For example, `\n` enters the sidebar, `\t` enters the timeline, `\s` sends the composer prompt, and `\?` opens help. `Ctrl-K` or `Cmd-P` opens the command palette from any region.
+
+The [complete keymap](docs/keymap.md) lists every buffer motion, edit command, Deck action, terminal control, and dialog key by context.
 
 Each active workspace has one tab row with its sessions and terminals. Switching workspaces
 restores its last active tab during the current run. A fresh run starts at the first workspace
