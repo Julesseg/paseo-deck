@@ -118,9 +118,9 @@ describe("command registry", () => {
 
   it("uses composer-specific controls for model, thinking, and operational mode", () => {
     const current = { ...state(), focus: "composer" as const, composerMode: "normal" as const };
-    expect(commandForKey(current, "m")?.disabledReason).toContain("model switching");
-    expect(commandForKey(current, "z")?.id).toBe("thinking");
-    expect(commandForKey(current, "o")?.id).toBe("operational-mode");
+    expect(commandForKey(current, "\\m")?.disabledReason).toContain("model switching");
+    expect(commandForKey(current, "\\z")?.id).toBe("thinking");
+    expect(commandForKey(current, "\\o")?.id).toBe("operational-mode");
     expect(commandForKey({ ...current, focus: "tree" }, "o")?.id).toBe("toggle-order");
     expect(contextualHelp(current).map((command) => command.id)).toContain("operational-mode");
     expect(contextualHelp(current).map((command) => command.id)).not.toContain("mode");

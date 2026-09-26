@@ -1,4 +1,5 @@
 import type { AppState, FocusArea } from "../contracts/app-state.js";
+import { activeSessionDraftWorkspaceId, selectedComposerDraft } from "../state/composer.js";
 import { activeNotification, pendingPermissions } from "../state/store.js";
 import type { UiIntent } from "./controller.js";
 
@@ -71,6 +72,26 @@ export function newTabUnavailableReason(state: AppState): string | undefined {
 
 export const deckCommands: readonly DeckCommand[] = [
   {
+    id: "composer-submit",
+    label: "Send composer text",
+    group: "Agent",
+    shortcuts: ["\\s"],
+    contexts: ["composer"],
+    palette: false,
+    disabledReason: (state) =>
+      selectedComposerDraft(state).trim() &&
+      (activeSessionDraftWorkspaceId(state) || state.selectedAgentId)
+        ? undefined
+        : "No prompt to send",
+    intent: (state) => {
+      const workspaceId = activeSessionDraftWorkspaceId(state);
+      const prompt = selectedComposerDraft(state);
+      return workspaceId
+        ? { type: "submit-session-draft", workspaceId, prompt }
+        : { type: "submit-composer", agentId: state.selectedAgentId ?? "", prompt };
+    },
+  },
+  {
     id: "new-tab",
     label: "New Tab",
     group: "Tabs",
@@ -124,7 +145,7 @@ export const deckCommands: readonly DeckCommand[] = [
     label: "Next tab",
     group: "Tabs",
     shortcuts: ["gt"],
-    contexts: ["tree", "timeline"],
+    contexts: ["tree", "timeline", "composer"],
     palette: true,
     intent: () => ({ type: "switch-tab", direction: 1 }),
   },
@@ -133,7 +154,7 @@ export const deckCommands: readonly DeckCommand[] = [
     label: "Previous tab",
     group: "Tabs",
     shortcuts: ["gT"],
-    contexts: ["tree", "timeline"],
+    contexts: ["tree", "timeline", "composer"],
     palette: true,
     intent: () => ({ type: "switch-tab", direction: -1 }),
   },
@@ -243,7 +264,7 @@ export const deckCommands: readonly DeckCommand[] = [
     label: "Navigate sidebar",
     group: "Sessions",
     shortcuts: ["n"],
-    contexts: ["composer"],
+    contexts: ["composer", "timeline"],
     palette: false,
     intent: () => ({ type: "set-focus", focus: "tree" }),
   },
@@ -269,10 +290,11 @@ export const deckCommands: readonly DeckCommand[] = [
     id: "toggle-timeline-selection",
     label: "Expand selected timeline item",
     group: "Timeline",
-    shortcuts: ["Enter"],
+    shortcuts: ["za"],
     contexts: ["timeline"],
     palette: false,
-    intent: () => ({ type: "toggle-selected-timeline-item" }),
+    disabledReason: (state) => (state.timeline.items.length ? undefined : "Timeline is empty"),
+    intent: () => ({ type: "timeline-fold" }),
   },
   {
     id: "quit",
@@ -459,30 +481,33 @@ export const deckCommands: readonly DeckCommand[] = [
   },
   {
     id: "timeline-previous",
-    label: "Move timeline selection up",
+    label: "Move timeline cursor up",
     group: "Timeline",
     shortcuts: ["k", "Up"],
     contexts: ["timeline"],
     palette: false,
-    intent: () => ({ type: "move-timeline-selection", direction: -1 }),
+    disabledReason: (state) => (state.timeline.items.length ? undefined : "Timeline is empty"),
+    intent: () => ({ type: "move-timeline-text", key: "k" }),
   },
   {
     id: "timeline-next",
-    label: "Move timeline selection down",
+    label: "Move timeline cursor down",
     group: "Timeline",
     shortcuts: ["j", "Down"],
     contexts: ["timeline"],
     palette: false,
-    intent: () => ({ type: "move-timeline-selection", direction: 1 }),
+    disabledReason: (state) => (state.timeline.items.length ? undefined : "Timeline is empty"),
+    intent: () => ({ type: "move-timeline-text", key: "j" }),
   },
   {
     id: "timeline-start",
     label: "Go to timeline start",
     group: "Timeline",
-    shortcuts: ["g"],
+    shortcuts: ["gg"],
     contexts: ["timeline"],
     palette: false,
-    intent: () => ({ type: "move-timeline-selection-boundary", boundary: "start" }),
+    disabledReason: (state) => (state.timeline.items.length ? undefined : "Timeline is empty"),
+    intent: () => ({ type: "move-timeline-text", key: "gg" }),
   },
   {
     id: "timeline-end",
@@ -491,7 +516,8 @@ export const deckCommands: readonly DeckCommand[] = [
     shortcuts: ["G"],
     contexts: ["timeline"],
     palette: false,
-    intent: () => ({ type: "move-timeline-selection-boundary", boundary: "end" }),
+    disabledReason: (state) => (state.timeline.items.length ? undefined : "Timeline is empty"),
+    intent: () => ({ type: "move-timeline-text", key: "G" }),
   },
   {
     id: "previous-turn",
@@ -766,18 +792,85 @@ export const deckCommands: readonly DeckCommand[] = [
     shortcuts: ["Ctrl-F"],
     contexts: ["timeline"],
     disabledReason: (state) => (state.timeline.items.length ? undefined : "Timeline is empty"),
-    intent: () => ({ type: "open-timeline-search" }),
+    intent: () => ({ type: "open-timeline-search", direction: 1 }),
   },
   {
-    id: "timeline-copy",
-    label: "Copy selected timeline item",
+    id: "timeline-search-backward",
+    label: "Search timeline backward",
     group: "Timeline",
-    shortcuts: ["y"],
+    shortcuts: ["?"],
     contexts: ["timeline"],
     disabledReason: (state) => (state.timeline.items.length ? undefined : "Timeline is empty"),
-    intent: () => ({ type: "open-timeline-copy" }),
+    intent: () => ({ type: "open-timeline-search", direction: -1 }),
+  },
+  {
+    id: "timeline-yank-line",
+    label: "Yank line at cursor",
+    group: "Timeline",
+    shortcuts: ["Y", "yy"],
+    contexts: ["timeline"],
+    disabledReason: (state) => (state.timeline.items.length ? undefined : "Timeline is empty"),
+    intent: () => ({ type: "timeline-yank-object", object: "line" }),
+  },
+  {
+    id: "timeline-yank-event",
+    label: "Yank event at cursor",
+    group: "Timeline",
+    shortcuts: ["yiv"],
+    contexts: ["timeline"],
+    palette: false,
+    intent: () => ({ type: "timeline-yank-object", object: "event" }),
+  },
+  {
+    id: "timeline-open-link",
+    label: "Open link at cursor",
+    group: "Timeline",
+    shortcuts: ["gx"],
+    contexts: ["timeline"],
+    palette: false,
+    intent: () => ({ type: "timeline-open-link" }),
   },
 ];
+
+// A buffer owns Vim's unmodified keys. Application actions in the composer
+// and timeline use one mnemonic backslash prefix, including disabled actions
+// so help and the palette show the same binding as input dispatch.
+const bufferShortcuts: Readonly<Record<string, readonly string[]>> = {
+  "new-tab": ["\\T"],
+  "discard-draft": ["\\D"],
+  "terminal-kill": ["\\K"],
+  "tab-next": ["\\]"],
+  "tab-previous": ["\\["],
+  quit: ["\\q", "Ctrl-C"],
+  "sidebar-navigation": ["\\n"],
+  "timeline-navigation": ["\\t"],
+  "focus-composer": ["\\i"],
+  "composer-history-previous": ["\\h"],
+  "composer-history-next": ["\\H"],
+  "scroll-timeline-up": [],
+  "scroll-timeline-down": [],
+  help: ["\\?"],
+  refresh: ["\\r"],
+  notifications: ["\\N"],
+  retry: ["\\R"],
+  "error-details": ["\\E"],
+  filter: ["\\f"],
+  permissions: ["\\P"],
+  "toggle-archived": ["\\v"],
+  "toggle-attention": ["\\!"],
+  "stop-agent": ["\\x"],
+  "archive-agent": ["\\A"],
+  "detach-agent": ["\\d"],
+  "rename-agent": ["\\e"],
+  model: ["\\m"],
+  "operational-mode": ["\\o"],
+  thinking: ["\\z"],
+  "timeline-search": ["/"],
+  "previous-turn": ["[t"],
+  "next-turn": ["]t"],
+  "previous-error": ["[e"],
+  "next-error": ["]e"],
+};
 
 export function resolvedCommands(
   state: AppState,
@@ -788,12 +881,18 @@ export function resolvedCommands(
     .map((command) => {
       const { disabledReason: availability, ...definition } = command;
       const disabledReason = availability?.(state);
-      return { ...definition, ...(disabledReason ? { disabledReason } : {}) };
+      const buffer =
+        (context === "timeline" && !state.activeTerminalId) ||
+        (context === "composer" && state.composerMode !== "insert");
+      const shortcuts = buffer
+        ? (bufferShortcuts[command.id] ?? command.shortcuts)
+        : command.shortcuts;
+      return { ...definition, shortcuts, ...(disabledReason ? { disabledReason } : {}) };
     });
 }
 
 export function commandForKey(state: AppState, data: string): ResolvedCommand | undefined {
-  const shortcut = shortcutForInput(data);
+  const shortcut = data.startsWith("\\") && data.length === 2 ? data : shortcutForInput(data);
   if (!shortcut) return undefined;
   return resolvedCommands(state).find((command) => command.shortcuts.includes(shortcut));
 }

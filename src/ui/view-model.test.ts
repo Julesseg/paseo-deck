@@ -261,7 +261,7 @@ describe("timeline display", () => {
       },
       "git · 1.2s · denied",
     ],
-    [{ id: "error", type: "error", message: "bad", detail: "details" }, "Enter to expand"],
+    [{ id: "error", type: "error", message: "bad", detail: "details" }, "za to expand"],
     [
       { id: "permission", type: "permission", request: { id: "p", agentId: "a", title: "Read" } },
       "Permission needed",
@@ -331,11 +331,11 @@ describe("timeline display", () => {
     expect(longReasoning).toContain("thinking");
     expect(longReasoning).not.toContain("collapsed");
     expect(collapsedTool).toContain("short summary");
-    expect(collapsedTool).toContain("[Enter to expand]");
+    expect(collapsedTool).toContain("[za to expand]");
     expect(expandedTool).toContain("indented output");
     expect(expandedTool).toContain("final indented line");
     expect(expandedError).toContain("final detail");
-    expect(expandedError).not.toContain("[Enter to expand]");
+    expect(expandedError).not.toContain("[za to expand]");
   });
 
   it("keeps unsafe wide tool output inside a narrow timeline pane", () => {

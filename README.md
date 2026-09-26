@@ -45,7 +45,7 @@ npm run smoke:package # install the packed tarball and test both executable name
 npm run typecheck  # check strict TypeScript
 npm run lint       # run Biome lint rules
 npm run format     # format the project
-npm run bench:navigation -- 1000 20 # measure sidebar input with a long timeline
+npm run bench:navigation -- 1000 20 unicode timeline # measure timeline input with a long timeline
 npm run check      # formatting, lint, types, coverage, packed executables, and build
 ```
 
@@ -58,41 +58,9 @@ CI enforces one required `check` result backed by:
 
 ## Keymap
 
-| Key | Action |
-| --- | --- |
-| `j` / `k`, `Up` / `Down` | Move through the active list, timeline, or dialog |
-| `h` / `l`, `Left` / `Right` | Collapse or expand a tree node; move through permission requests |
-| `g` / `G` | Jump to the first or last tree/timeline item |
-| `[` / `]` | Resize the tree, or jump between turns when the timeline is focused |
-| `{` / `}` | Jump between timeline errors |
-| `Enter` | Select, open, expand, run, or confirm |
-| `gt` / `gT` | Select the next or previous session or terminal tab (`3gt` selects tab 3) |
-| `Tab` / `Shift+Tab` | Move focus between tree, timeline, and composer |
-| `i` | Focus the prompt composer |
-| `Ctrl-P` / `Ctrl-N` | Move through prompt history while composing |
-| `n` | Create a session in the selected workspace |
-| `/` | Filter sessions |
-| `o` | Toggle alphabetical or attention-first tree ordering |
-| `v` | Show or hide archived sessions |
-| `!` | Show only sessions that need attention |
-| `p` | Review pending permissions |
-| `a` / `d` | Allow or deny inside the permission dialog |
-| `x` | Stop the selected session after confirmation |
-| `A` | Archive the selected session after confirmation |
-| `d` | Detach the selected session after confirmation |
-| `e` | Rename the selected session |
-| `m` | Choose an available mode |
-| `t` | Choose an available thinking level |
-| `Ctrl-F` | Search the selected timeline |
-| `y` | Copy the selected timeline item |
-| `r` | Refresh and reconnect |
-| `R` | Retry the selected failure |
-| `E` | Expand the current error details |
-| `N` | Open notification history |
-| `Ctrl-K` / `Cmd-P` | Open the command palette, including theme and symbol preferences |
-| `?` | Show contextual help |
-| `Esc` | Close a dialog or cancel editing |
-| `q` / `Ctrl-C` | Quit and restore the terminal |
+Composer and timeline Normal and Visual modes use Vim buffer keys. Press `\` followed by a mnemonic key for Deck actions that would conflict with those motions. For example, `\n` enters the sidebar, `\t` enters the timeline, `\s` sends the composer prompt, and `\?` opens help. `Ctrl-K` or `Cmd-P` opens the command palette from any region.
+
+The [complete keymap](docs/keymap.md) lists every buffer motion, edit command, Deck action, terminal control, and dialog key by context.
 
 Each active workspace has one tab row with its sessions and terminals. Switching workspaces
 restores its last active tab during the current run. A fresh run starts at the first workspace

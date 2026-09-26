@@ -99,6 +99,10 @@ export class RecordingTerminal implements Terminal {
       (_, index) => buffer.getLine(buffer.viewportY + index)?.translateToString(true) ?? "",
     );
   }
+  viewportCursor(): { row: number; column: number } {
+    const buffer = this.xterm.buffer.active;
+    return { row: buffer.cursorY + buffer.baseY - buffer.viewportY, column: buffer.cursorX };
+  }
   /** Captures truecolor backgrounds from xterm cells for visual reports. */
   viewportBackgrounds(): Array<Array<string | undefined>> {
     const buffer = this.xterm.buffer.active;

@@ -739,14 +739,18 @@ export class ApplicationController {
       case "move-timeline-selection":
       case "move-timeline-selection-boundary":
       case "move-timeline-text":
+      case "timeline-find-character":
+      case "timeline-repeat-find":
+      case "timeline-viewport-motion":
       case "move-timeline-landmark":
       case "open-timeline-search":
-      case "open-timeline-copy":
       case "timeline-page":
       case "timeline-visual":
       case "timeline-search-text":
       case "timeline-repeat-search":
       case "timeline-yank":
+      case "timeline-yank-object":
+      case "timeline-open-link":
       case "timeline-fold":
       case "toggle-selected-timeline-item":
         await this.options.onTimelineIntent?.(intent);
