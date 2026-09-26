@@ -272,7 +272,8 @@ export const deckCommands: readonly DeckCommand[] = [
     shortcuts: ["Enter"],
     contexts: ["timeline"],
     palette: false,
-    intent: () => ({ type: "toggle-selected-timeline-item" }),
+    disabledReason: (state) => (state.timeline.items.length ? undefined : "Timeline is empty"),
+    intent: () => ({ type: "timeline-fold" }),
   },
   {
     id: "quit",
@@ -459,30 +460,33 @@ export const deckCommands: readonly DeckCommand[] = [
   },
   {
     id: "timeline-previous",
-    label: "Move timeline selection up",
+    label: "Move timeline cursor up",
     group: "Timeline",
     shortcuts: ["k", "Up"],
     contexts: ["timeline"],
     palette: false,
-    intent: () => ({ type: "move-timeline-selection", direction: -1 }),
+    disabledReason: (state) => (state.timeline.items.length ? undefined : "Timeline is empty"),
+    intent: () => ({ type: "move-timeline-text", key: "k" }),
   },
   {
     id: "timeline-next",
-    label: "Move timeline selection down",
+    label: "Move timeline cursor down",
     group: "Timeline",
     shortcuts: ["j", "Down"],
     contexts: ["timeline"],
     palette: false,
-    intent: () => ({ type: "move-timeline-selection", direction: 1 }),
+    disabledReason: (state) => (state.timeline.items.length ? undefined : "Timeline is empty"),
+    intent: () => ({ type: "move-timeline-text", key: "j" }),
   },
   {
     id: "timeline-start",
     label: "Go to timeline start",
     group: "Timeline",
-    shortcuts: ["g"],
+    shortcuts: ["gg"],
     contexts: ["timeline"],
     palette: false,
-    intent: () => ({ type: "move-timeline-selection-boundary", boundary: "start" }),
+    disabledReason: (state) => (state.timeline.items.length ? undefined : "Timeline is empty"),
+    intent: () => ({ type: "move-timeline-text", key: "gg" }),
   },
   {
     id: "timeline-end",
@@ -491,7 +495,8 @@ export const deckCommands: readonly DeckCommand[] = [
     shortcuts: ["G"],
     contexts: ["timeline"],
     palette: false,
-    intent: () => ({ type: "move-timeline-selection-boundary", boundary: "end" }),
+    disabledReason: (state) => (state.timeline.items.length ? undefined : "Timeline is empty"),
+    intent: () => ({ type: "move-timeline-text", key: "G" }),
   },
   {
     id: "previous-turn",
@@ -772,12 +777,41 @@ export const deckCommands: readonly DeckCommand[] = [
     id: "timeline-copy",
     label: "Copy selected timeline item",
     group: "Timeline",
-    shortcuts: ["y"],
+    shortcuts: ["Y"],
     contexts: ["timeline"],
     disabledReason: (state) => (state.timeline.items.length ? undefined : "Timeline is empty"),
     intent: () => ({ type: "open-timeline-copy" }),
   },
+  {
+    id: "timeline-yank-event",
+    label: "Yank event at cursor",
+    group: "Timeline",
+    shortcuts: ["yiv"],
+    contexts: ["timeline"],
+    palette: false,
+    intent: () => ({ type: "timeline-yank-object", object: "event" }),
+  },
+  {
+    id: "timeline-yank-line",
+    label: "Yank line at cursor",
+    group: "Timeline",
+    shortcuts: ["yy"],
+    contexts: ["timeline"],
+    palette: false,
+    intent: () => ({ type: "timeline-yank-object", object: "line" }),
+  },
+  {
+    id: "timeline-open-link",
+    label: "Open link at cursor",
+    group: "Timeline",
+    shortcuts: ["gx"],
+    contexts: ["timeline"],
+    palette: false,
+    intent: () => ({ type: "timeline-open-link" }),
+  },
 ];
+
+const timelineBufferKeys = new Set(["T", "v", "e", "t", "N", "/", "E", "z"]);
 
 export function resolvedCommands(
   state: AppState,
@@ -788,7 +822,11 @@ export function resolvedCommands(
     .map((command) => {
       const { disabledReason: availability, ...definition } = command;
       const disabledReason = availability?.(state);
-      return { ...definition, ...(disabledReason ? { disabledReason } : {}) };
+      const shortcuts =
+        context === "timeline" && !state.activeTerminalId && command.group !== "Timeline"
+          ? command.shortcuts.filter((shortcut) => !timelineBufferKeys.has(shortcut))
+          : command.shortcuts;
+      return { ...definition, shortcuts, ...(disabledReason ? { disabledReason } : {}) };
     });
 }
 

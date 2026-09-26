@@ -45,7 +45,7 @@ npm run smoke:package # install the packed tarball and test both executable name
 npm run typecheck  # check strict TypeScript
 npm run lint       # run Biome lint rules
 npm run format     # format the project
-npm run bench:navigation -- 1000 20 # measure sidebar input with a long timeline
+npm run bench:navigation -- 1000 20 unicode timeline # measure timeline input with a long timeline
 npm run check      # formatting, lint, types, coverage, packed executables, and build
 ```
 
@@ -60,17 +60,17 @@ CI enforces one required `check` result backed by:
 
 | Key | Action |
 | --- | --- |
-| `j` / `k`, `Up` / `Down` | Move through the active list, timeline, or dialog |
-| `h` / `l`, `Left` / `Right` | Collapse or expand a tree node; move through permission requests |
-| `g` / `G` | Jump to the first or last tree/timeline item |
+| `j` / `k`, `Up` / `Down` | Move through the active list, rendered timeline lines, or dialog |
+| `h` / `l`, `Left` / `Right` | Collapse or expand a tree node; move by character in the timeline |
+| `g` / `G` | Jump to the first or last sidebar row; use `gg` / `G` for the timeline buffer |
 | `[` / `]` | Resize the tree, or jump between turns when the timeline is focused |
 | `{` / `}` | Jump between timeline errors |
 | `Enter` | Select, open, expand, run, or confirm |
 | `gt` / `gT` | Select the next or previous session or terminal tab (`3gt` selects tab 3) |
-| `Tab` / `Shift+Tab` | Move focus between tree, timeline, and composer |
-| `i` | Focus the prompt composer |
+| `n` / `t` / `Esc` | Enter sidebar or timeline navigation; return to composer normal mode |
+| `i` | Enter composer Insert mode |
 | `Ctrl-P` / `Ctrl-N` | Move through prompt history while composing |
-| `n` | Create a session in the selected workspace |
+| `c` | Create from the highlighted workspace while the sidebar is active |
 | `/` | Filter sessions |
 | `o` | Toggle alphabetical or attention-first tree ordering |
 | `v` | Show or hide archived sessions |
@@ -82,9 +82,17 @@ CI enforces one required `check` result backed by:
 | `d` | Detach the selected session after confirmation |
 | `e` | Rename the selected session |
 | `m` | Choose an available mode |
-| `t` | Choose an available thinking level |
+| `z` | Choose an available thinking level |
 | `Ctrl-F` | Search the selected timeline |
-| `y` | Copy the selected timeline item |
+| `Ctrl-U` / `Ctrl-D` | Page through the timeline buffer |
+| `w` / `b` / `e`, `W` / `B` / `E`, `ge` / `gE` | Move by word across timeline lines; uppercase uses whitespace-separated words |
+| `f` / `F` / `t` / `T` + character, `;` / `,` | Find a character on the line and repeat the find |
+| `^` / `0` / `$`, `H` / `M` / `L`, `%` | Move to line columns, visible window positions, or a matching bracket |
+| Number + motion | Repeat a timeline motion, such as `5j` or `3w`; `5gg` / `5G` go to line 5 |
+| `v` / `V` / `Ctrl-V` | Select characters, lines, or a block in the timeline |
+| `y` / `yy` / `yiv` | Yank a Visual selection, the current line, or the current timeline event |
+| `Y` | Choose source text to copy from the current timeline event |
+| `gx` | Open the link under the timeline cursor |
 | `r` | Refresh and reconnect |
 | `R` | Retry the selected failure |
 | `E` | Expand the current error details |

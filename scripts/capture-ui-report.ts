@@ -55,7 +55,7 @@ const shots: Array<{
   rows: number;
   state: AppState;
   appearance?: TerminalAppearance;
-  input?: string[];
+  input?: readonly string[];
 }> = [
   {
     name: "command-palette-appearance",
@@ -518,6 +518,157 @@ const shots: Array<{
     state: { ...baseState, focus: "timeline" },
   },
   {
+    name: "timeline-buffer-normal",
+    columns: 100,
+    rows: 28,
+    state: withTimeline(baseState, "timeline-buffer", [
+      {
+        id: "buffer-user",
+        type: "user-message",
+        text: "Read the [docs](https://example.test/docs) before the release.",
+      },
+      {
+        id: "buffer-reply",
+        type: "assistant-message",
+        messageId: "buffer-reply",
+        text: "The release is ready.\nReview the notes and publish.",
+      },
+    ]),
+    input: ["g", "g", "j"],
+  },
+  {
+    name: "timeline-buffer-wide",
+    columns: 160,
+    rows: 30,
+    state: withTimeline(baseState, "timeline-buffer", [
+      {
+        id: "buffer-user",
+        type: "user-message",
+        text: "Read the [docs](https://example.test/docs) before the release.",
+      },
+      {
+        id: "buffer-reply",
+        type: "assistant-message",
+        messageId: "buffer-reply",
+        text: "The release is ready.\nReview the notes and publish.",
+      },
+    ]),
+    input: ["g", "g", "j"],
+  },
+  {
+    name: "timeline-buffer-normal-light",
+    columns: 100,
+    rows: 28,
+    state: withTimeline(baseState, "timeline-buffer", [
+      {
+        id: "buffer-user",
+        type: "user-message",
+        text: "Read the [docs](https://example.test/docs) before the release.",
+      },
+      {
+        id: "buffer-reply",
+        type: "assistant-message",
+        messageId: "buffer-reply",
+        text: "The release is ready.\nReview the notes and publish.",
+      },
+    ]),
+    appearance: { ...sampledTerminalAppearance, background: [240, 230, 220] },
+    input: ["g", "g", "j"],
+  },
+  {
+    name: "timeline-buffer-normal-plain",
+    columns: 100,
+    rows: 28,
+    state: withTimeline(baseState, "timeline-buffer", [
+      {
+        id: "buffer-user",
+        type: "user-message",
+        text: "Read the [docs](https://example.test/docs) before the release.",
+      },
+      {
+        id: "buffer-reply",
+        type: "assistant-message",
+        messageId: "buffer-reply",
+        text: "The release is ready.\nReview the notes and publish.",
+      },
+    ]),
+    appearance: { color: "none", unicode: false, theme: "plain", symbols: "ascii" },
+    input: ["g", "g", "j"],
+  },
+  {
+    name: "timeline-buffer-page",
+    columns: 100,
+    rows: 28,
+    state: withTimeline(
+      baseState,
+      "timeline-buffer-page",
+      Array.from({ length: 24 }, (_, index) => ({
+        id: `page-${index}`,
+        type: "assistant-message" as const,
+        messageId: `page-${index}`,
+        text: `Checking release step ${index + 1}.`,
+      })),
+    ),
+    input: ["\u0015"],
+  },
+  {
+    name: "timeline-buffer-visual-line",
+    columns: 100,
+    rows: 28,
+    state: withTimeline(baseState, "timeline-buffer", [
+      {
+        id: "buffer-user",
+        type: "user-message",
+        text: "Read the [docs](https://example.test/docs) before the release.",
+      },
+      {
+        id: "buffer-reply",
+        type: "assistant-message",
+        messageId: "buffer-reply",
+        text: "The release is ready.\nReview the notes and publish.",
+      },
+    ]),
+    input: ["g", "g", "j", "V", "j", "j"],
+  },
+  {
+    name: "timeline-buffer-visual-block",
+    columns: 100,
+    rows: 28,
+    state: withTimeline(baseState, "timeline-buffer", [
+      {
+        id: "buffer-user",
+        type: "user-message",
+        text: "Read the [docs](https://example.test/docs) before the release.",
+      },
+      {
+        id: "buffer-reply",
+        type: "assistant-message",
+        messageId: "buffer-reply",
+        text: "The release is ready.\nReview the notes and publish.",
+      },
+    ]),
+    input: ["g", "g", "j", "\u0016", "j", "l", "l", "l", "l", "l"],
+  },
+  {
+    name: "timeline-buffer-copy-dialog",
+    columns: 100,
+    rows: 28,
+    state: withTimeline(baseState, "timeline-buffer", [
+      {
+        id: "buffer-user",
+        type: "user-message",
+        text: "Read the [docs](https://example.test/docs) before the release.",
+      },
+      {
+        id: "buffer-reply",
+        type: "assistant-message",
+        messageId: "buffer-reply",
+        text: "The release is ready.\nReview the notes and publish.",
+      },
+    ]),
+    input: ["Y"],
+  },
+  {
     name: "active-turn",
     columns: 100,
     rows: 28,
@@ -850,6 +1001,10 @@ for (const shot of shots) {
     ? viewport.findIndex((line) => line.includes("New Tab")) + 1
     : -1;
   const cursorColumn = inputRow > 0 ? terminal.viewportInverseCells()[inputRow]?.indexOf(true) : -1;
+  const timelineCursor =
+    shot.name.startsWith("timeline-buffer-") && shot.name !== "timeline-buffer-copy-dialog"
+      ? terminal.viewportCursor()
+      : undefined;
   if (inputRow > 0 && (cursorColumn === undefined || cursorColumn < 0)) {
     throw new Error(`No visible New Tab input cursor in ${shot.name}`);
   }
@@ -867,7 +1022,7 @@ for (const shot of shots) {
         : undefined,
       inputRow > 0 && cursorColumn !== undefined && cursorColumn >= 0
         ? { row: inputRow, column: cursorColumn }
-        : undefined,
+        : timelineCursor,
     ),
     "utf8",
   );
@@ -1161,7 +1316,7 @@ function terminalSvg(
     })
     .join("\n");
   const cursorSvg = cursor
-    ? `<rect x="${padding + cursor.column * cellWidth + 1}" y="${chromeHeight + padding + cursor.row * lineHeight + 2}" width="2" height="${lineHeight - 4}" fill="#f5f5f4"/>`
+    ? `<rect x="${padding + cursor.column * cellWidth}" y="${chromeHeight + padding + cursor.row * lineHeight}" width="${cellWidth}" height="${lineHeight}" fill="#f5f5f4" opacity="0.55"/>`
     : "";
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">
   <title>${escapeXml(title)}</title>

@@ -509,7 +509,7 @@ describe("DeckController keyboard seam", () => {
     expect(intents).toEqual([{ type: "quit" }]);
   });
 
-  it("routes timeline navigation and Enter to a timeline-local selection", () => {
+  it("routes timeline navigation and Enter to the rendered buffer", () => {
     const intents: unknown[] = [];
     const controller = new DeckController(
       () => ({
@@ -533,8 +533,8 @@ describe("DeckController keyboard seam", () => {
     controller.handleKey("j");
     controller.handleKey("\r");
 
-    expect(intents).toContainEqual({ type: "move-timeline-selection", direction: 1 });
-    expect(intents).toContainEqual({ type: "toggle-selected-timeline-item" });
+    expect(intents).toContainEqual({ type: "move-timeline-text", key: "j" });
+    expect(intents).toContainEqual({ type: "timeline-fold" });
     expect(intents).not.toContainEqual({ type: "select-or-open" });
   });
 
@@ -582,6 +582,7 @@ describe("DeckController keyboard seam", () => {
       (intent) => timelineIntents.push(intent),
     );
     timeline.handleKey("g");
+    timeline.handleKey("g");
     timeline.handleKey("G");
     timeline.handleKey("\u001b[A");
 
@@ -594,7 +595,91 @@ describe("DeckController keyboard seam", () => {
     expect(timelineIntents).toEqual([
       { type: "move-timeline-selection-boundary", boundary: "start" },
       { type: "move-timeline-selection-boundary", boundary: "end" },
-      { type: "move-timeline-selection", direction: -1 },
+    ]);
+  });
+
+  it("routes buffer yank, Visual Block, and link commands", () => {
+    const intents: unknown[] = [];
+    const controller = new DeckController(
+      () => ({
+        ...makeState(),
+        focus: "timeline",
+        timeline: {
+          recoveryRevision: 0,
+          loading: false,
+          agentId: "agent",
+          items: [
+            { epoch: "e", sequence: 1, item: { id: "one", type: "user-message", text: "link" } },
+          ],
+        },
+      }),
+      (intent) => intents.push(intent),
+    );
+    for (const key of ["y", "i", "v", "g", "x", "\u0016"]) controller.handleKey(key);
+    expect(intents).toEqual([
+      { type: "timeline-yank-object", object: "event" },
+      { type: "timeline-open-link" },
+      { type: "timeline-visual", selection: "block" },
+    ]);
+  });
+
+  it("moves through visible timeline lines while timeline metadata is loading", () => {
+    const intents: unknown[] = [];
+    const controller = new DeckController(
+      () => ({
+        ...makeState(),
+        focus: "timeline",
+        timeline: {
+          recoveryRevision: 0,
+          loading: true,
+          items: [
+            {
+              epoch: "e",
+              sequence: 1,
+              item: { id: "one", type: "user-message", text: "first\nsecond" },
+            },
+          ],
+        },
+      }),
+      (intent) => intents.push(intent),
+    );
+
+    controller.handleKey("j");
+    controller.handleKey("k");
+    expect(intents).toEqual([
+      { type: "move-timeline-text", key: "j" },
+      { type: "move-timeline-text", key: "k" },
+    ]);
+  });
+
+  it("routes counted and character-find Vim motions inside the timeline", () => {
+    const intents: unknown[] = [];
+    const controller = new DeckController(
+      () => ({
+        ...makeState(),
+        focus: "timeline",
+        timeline: {
+          recoveryRevision: 0,
+          loading: false,
+          items: [
+            { epoch: "e", sequence: 1, item: { id: "one", type: "user-message", text: "one two" } },
+          ],
+        },
+      }),
+      (intent) => intents.push(intent),
+    );
+    for (const key of ["3", "j", "W", "g", "e", "f", "o", ";", ",", "H", "\u001b[D", "2", "G"])
+      controller.handleKey(key);
+    expect(intents).toEqual([
+      { type: "move-timeline-text", key: "j", count: 3 },
+      { type: "move-timeline-text", key: "W" },
+      { type: "move-timeline-text", key: "ge" },
+      { type: "timeline-find-character", key: "f", character: "o", count: 1 },
+      { type: "timeline-repeat-find", reverse: false },
+      { type: "timeline-repeat-find", reverse: true },
+      { type: "timeline-viewport-motion", key: "H", count: 1 },
+      { type: "move-timeline-text", key: "h" },
+      { type: "move-timeline-text", key: "G", count: 2 },
     ]);
   });
 

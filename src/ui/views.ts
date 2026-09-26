@@ -1,8 +1,11 @@
+import { spawn } from "node:child_process";
+
 import {
   type Component,
   CURSOR_MARKER,
   Editor,
   type Focusable,
+  getOsc8LinkAtColumn,
   HStack,
   Input,
   Markdown,
@@ -12,6 +15,7 @@ import {
   type SelectItem,
   SelectList,
   Spacer,
+  sliceByColumn,
   type Terminal,
   type TUI,
   TuiAltScreen,
@@ -56,6 +60,7 @@ import { type BackgroundTone, DeckTheme } from "./theme.js";
 import {
   createTimelineBuffer,
   enterTimelineVisual,
+  findTimelineCharacter,
   leaveTimelineVisual,
   moveTimelineBuffer,
   osc52,
@@ -65,6 +70,7 @@ import {
   searchTimelineBuffer,
   selectedTimelineText,
   type TimelineBufferState,
+  type TimelineSelectionMode,
   timelineSelectionColumns,
   toggleTimelineFold,
 } from "./timeline-buffer.js";
@@ -107,6 +113,7 @@ export interface DeckTuiOptions {
   renderClock?: RenderClock;
   frameMilliseconds?: number;
   copyText?: (text: string) => Promise<void> | void;
+  openLink?: (url: string) => Promise<void> | void;
   appearance?: TerminalAppearance;
   treeWidth?: number;
   requestedTheme?: "ember" | "plain";
@@ -548,9 +555,18 @@ class TimelineView implements Component {
   private renderedWidth = 80;
   private state: AppState | undefined;
   private buffer: TimelineBufferState = createTimelineBuffer();
+  private bufferAnchor:
+    | {
+        cursor: { itemId: string; offset: number };
+        selection?: { itemId: string; offset: number };
+      }
+    | undefined;
+  private keepCursorAtEnd = true;
   private searchQuery = "";
+  private lastFind: { key: "f" | "F" | "t" | "T"; character: string } | undefined;
   private selectionFeedback = "";
   private layout: TimelineLayout | undefined;
+  private readonly layouts = new Map<number, TimelineLayout>();
   private readonly rendered = new Map<
     number,
     {
@@ -566,6 +582,21 @@ class TimelineView implements Component {
   >();
   constructor(private readonly theme: DeckTheme) {}
   updateSelection(state: AppState): void {
+    const previousFollowing = this.state?.selectedAgentId
+      ? this.state.timelineNavigation[this.state.selectedAgentId]?.following !== false
+      : undefined;
+    const nextFollowing = state.selectedAgentId
+      ? state.timelineNavigation[state.selectedAgentId]?.following !== false
+      : false;
+    if (this.state?.selectedAgentId !== state.selectedAgentId) {
+      this.buffer = createTimelineBuffer();
+      this.bufferAnchor = undefined;
+      this.selectedIndex = 0;
+      this.searchQuery = "";
+      this.keepCursorAtEnd = nextFollowing;
+    } else if (previousFollowing === false && nextFollowing) {
+      this.keepCursorAtEnd = true;
+    }
     this.state = state;
     const selected = state.directory.agents.find((agent) => agent.id === state.selectedAgentId);
     this.heading = selected
@@ -575,8 +606,10 @@ class TimelineView implements Component {
   }
   update(events: readonly TimelineEvent[]): void {
     if (events === this.events) return;
+    this.captureBufferAnchor();
     this.events = events;
     this.layout = undefined;
+    this.layouts.clear();
     this.rendered.clear();
     const ids = new Set(events.map((event) => event.item.id));
     for (const id of this.itemViews.keys()) if (!ids.has(id)) this.itemViews.delete(id);
@@ -591,15 +624,47 @@ class TimelineView implements Component {
     }
     this.selectedIndex = Math.min(this.selectedIndex, Math.max(0, events.length - 1));
   }
-  moveText(key: Parameters<typeof moveTimelineBuffer>[1]): void {
-    this.buffer = moveTimelineBuffer(this.buffer, key === "g" ? "gg" : key);
+  moveText(key: string, count = 0): void {
+    this.buffer = moveTimelineBuffer(this.buffer, key, count);
+    this.keepCursorAtEnd = key === "G" && count === 0;
+    this.syncSelectedIndex();
+  }
+  findCharacter(key: "f" | "F" | "t" | "T", character: string, count: number): void {
+    this.buffer = findTimelineCharacter(this.buffer, key, character, count);
+    this.lastFind = { key, character };
+    this.keepCursorAtEnd = false;
+  }
+  repeatFind(reverse: boolean): void {
+    if (!this.lastFind) return;
+    const key = reverse
+      ? ({ f: "F", F: "f", t: "T", T: "t" } as const)[this.lastFind.key]
+      : this.lastFind.key;
+    const start =
+      key === "t"
+        ? moveTimelineBuffer(this.buffer, "l")
+        : key === "T"
+          ? moveTimelineBuffer(this.buffer, "h")
+          : this.buffer;
+    const found = findTimelineCharacter(start, key, this.lastFind.character);
+    if (found !== start) this.buffer = found;
+    this.keepCursorAtEnd = false;
+  }
+  moveToVisibleLine(line: number): void {
+    this.buffer = moveTimelineBuffer(
+      { ...this.buffer, line: Math.max(0, Math.min(this.buffer.lines.length - 1, line)) },
+      "^",
+    );
+    this.keepCursorAtEnd = false;
+    this.syncSelectedIndex();
   }
   pageText(direction: -1 | 1, height: number): void {
     this.buffer = pageTimelineBuffer(this.buffer, direction, height);
+    this.keepCursorAtEnd = false;
+    this.syncSelectedIndex();
   }
-  startVisual(line: boolean): void {
+  startVisual(selection: TimelineSelectionMode): void {
     this.selectionFeedback = "";
-    this.buffer = enterTimelineVisual(this.buffer, line ? "line" : "character");
+    this.buffer = enterTimelineVisual(this.buffer, selection);
     this.state = this.state ? { ...this.state, timelineMode: "visual" } : this.state;
   }
   clearVisual(): void {
@@ -608,13 +673,49 @@ class TimelineView implements Component {
   searchText(query: string, direction: -1 | 1 = 1): void {
     this.searchQuery = query;
     this.buffer = searchTimelineBuffer(this.buffer, query, direction);
+    this.keepCursorAtEnd = false;
+    this.syncSelectedIndex();
   }
   repeatSearch(direction: -1 | 1): void {
     if (this.searchQuery)
       this.buffer = searchTimelineBuffer(this.buffer, this.searchQuery, direction);
+    this.keepCursorAtEnd = false;
+    this.syncSelectedIndex();
   }
   yankText(): string {
     return selectedTimelineText(this.buffer);
+  }
+  yankObject(object: "line" | "event"): string {
+    if (object === "line") return printableTimelineText(this.buffer.lines[this.buffer.line] ?? "");
+    const index = this.eventIndexAtBodyLine(this.buffer.line);
+    const item = this.events[index]?.item;
+    return item ? (copyTargets(item)[0]?.text ?? "") : "";
+  }
+  linkAtCursor(): string | undefined {
+    const line = this.timelineLayout(this.renderedWidth).lines[this.buffer.line] ?? "";
+    const column = this.buffer.column;
+    const osc = getOsc8LinkAtColumn(line, column);
+    if (osc) return safeWebLink(osc);
+    const plain = printableTimelineText(line);
+    for (const match of plain.matchAll(/https?:\/\/[^\s<>]+/g)) {
+      const start = match.index;
+      const raw = match[0];
+      if (column >= start && column < start + raw.length)
+        return safeWebLink(raw.replace(/[),.;!?]+$/u, ""));
+    }
+    const item = this.events[this.eventIndexAtBodyLine(this.buffer.line)]?.item;
+    if (item?.type === "user-message" || item?.type === "assistant-message") {
+      let searchFrom = 0;
+      for (const match of item.text.matchAll(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g)) {
+        const label = match[1];
+        if (!label) continue;
+        const start = plain.indexOf(label, searchFrom);
+        if (start >= 0) searchFrom = start + label.length;
+        if (start >= 0 && column >= start && column < start + label.length)
+          return safeWebLink(match[2]);
+      }
+    }
+    return undefined;
   }
   yankOsc52(): string {
     return osc52(this.yankText());
@@ -645,6 +746,7 @@ class TimelineView implements Component {
     if (this.events.length > 0) {
       this.selectedIndex = boundary === "start" ? 0 : this.events.length - 1;
       this.buffer = moveTimelineBuffer(this.buffer, boundary === "start" ? "gg" : "G");
+      this.keepCursorAtEnd = boundary === "end";
     }
   }
   selectEvent(id: string): boolean {
@@ -662,6 +764,7 @@ class TimelineView implements Component {
       view?.update(item, true);
       view?.invalidate();
       this.layout = undefined;
+      this.layouts.clear();
       this.rendered.clear();
     }
     return true;
@@ -687,6 +790,7 @@ class TimelineView implements Component {
     if (candidate) {
       this.selectedIndex = candidate.index;
       this.buffer = { ...this.buffer, line: this.eventBodyLine(candidate.index), column: 0 };
+      this.keepCursorAtEnd = false;
     }
   }
   toggleSelected(): void {
@@ -700,15 +804,18 @@ class TimelineView implements Component {
     if (event) {
       this.itemViews.get(id)?.update(event.item, this.expanded.has(id));
       this.layout = undefined;
+      this.layouts.clear();
       this.rendered.clear();
     }
   }
   invalidate(): void {
     for (const item of this.itemViews.values()) item.invalidate();
     this.layout = undefined;
+    this.layouts.clear();
     this.rendered.clear();
   }
   render(width: number): string[] {
+    if (this.layout && this.layout.width !== width) this.captureBufferAnchor();
     this.renderedWidth = width;
     const mode = this.state?.timelineMode ?? "normal";
     const heading =
@@ -756,11 +863,50 @@ class TimelineView implements Component {
     )
       return cached.lines;
     const layout = this.timelineLayout(width);
-    const bodyLines = layout.lines;
+    const bodyLines = layout.plainLines;
     const wasVisual = this.buffer.mode === "visual";
-    this.buffer = replaceTimelineBuffer(this.buffer, bodyLines);
+    if (this.buffer.lines !== bodyLines)
+      this.buffer = replaceTimelineBuffer(this.buffer, bodyLines, true);
+    if (this.bufferAnchor) {
+      const cursorLine = this.resolveBufferAnchor(this.bufferAnchor.cursor, layout);
+      const selectionLine = this.bufferAnchor.selection
+        ? this.resolveBufferAnchor(this.bufferAnchor.selection, layout)
+        : undefined;
+      if (cursorLine !== undefined) this.buffer = { ...this.buffer, line: cursorLine };
+      if (cursorLine === undefined || (this.bufferAnchor.selection && selectionLine === undefined))
+        this.buffer = leaveTimelineVisual(this.buffer);
+      else if (selectionLine !== undefined && this.buffer.anchor)
+        this.buffer = { ...this.buffer, anchor: { ...this.buffer.anchor, line: selectionLine } };
+      this.bufferAnchor = undefined;
+    }
+    if (
+      this.buffer.mode === "normal" &&
+      this.state?.selectedAgentId &&
+      this.keepCursorAtEnd &&
+      this.state.timelineNavigation[this.state.selectedAgentId]?.following !== false
+    )
+      this.buffer = moveTimelineBuffer(this.buffer, "G");
+    this.syncSelectedIndex();
     if (wasVisual && this.buffer.mode !== "visual")
       this.selectionFeedback = "Selection cleared: timeline changed";
+    if (
+      cached?.layout === layout &&
+      cached.heading === heading &&
+      cached.focused &&
+      this.focused &&
+      cached.mode === "normal" &&
+      mode === "normal" &&
+      cached.buffer.mode === "normal" &&
+      this.buffer.mode === "normal" &&
+      cached.selectionFeedback === this.selectionFeedback
+    ) {
+      const lines = cached.lines.slice();
+      const previous = cached.buffer.line;
+      lines[previous + 1] = this.paintBodyLine(layout, previous, width, false);
+      lines[this.buffer.line + 1] = this.paintBodyLine(layout, this.buffer.line, width, true);
+      this.rendered.set(width, { ...cached, buffer: this.buffer, lines });
+      return lines;
+    }
     const lines = [
       this.theme.styleRendered(
         "header",
@@ -770,20 +916,14 @@ class TimelineView implements Component {
         ),
       ),
       ...layout.events.flatMap(({ lines, start }) => {
-        return lines.map((line, offset) => {
-          const bodyLine = start + offset;
-          let rendered = line;
-          if (this.focused && this.buffer.mode === "visual") {
-            const range = timelineSelectionColumns(this.buffer, bodyLine);
-            if (range) {
-              const plain = printableTimelineText(rendered);
-              rendered = `${plain.slice(0, range.start)}${this.theme.styleBackground("selection", plain.slice(range.start, range.end))}${plain.slice(range.end)}`;
-            }
-          }
-          if (this.focused && this.buffer.mode === "normal" && this.buffer.line === bodyLine)
-            rendered = `${this.theme.style("selection", "> ")}${rendered}`;
-          return clipTerminalLine(rendered, width, this.theme.glyph("ellipsis"));
-        });
+        return lines.map((_, offset) =>
+          this.paintBodyLine(
+            layout,
+            start + offset,
+            width,
+            this.focused && this.buffer.line === start + offset,
+          ),
+        );
       }),
     ];
     this.rendered.set(width, {
@@ -800,6 +940,33 @@ class TimelineView implements Component {
     return lines;
   }
 
+  private paintBodyLine(
+    layout: TimelineLayout,
+    bodyLine: number,
+    width: number,
+    active: boolean,
+  ): string {
+    const line = layout.lines[bodyLine] ?? "";
+    let rendered = line;
+    if (this.focused && this.buffer.mode === "visual") {
+      const range = timelineSelectionColumns(this.buffer, bodyLine);
+      if (range) {
+        const plain = layout.plainLines[bodyLine] ?? "";
+        rendered = `${plain.slice(0, range.start)}${this.theme.styleBackground("tab-active", plain.slice(range.start, range.end))}${plain.slice(range.end)}`;
+      }
+    }
+    const clipped = clipTerminalLine(rendered, width, this.theme.glyph("ellipsis"));
+    if (!active) return clipped;
+    const padded = `${clipped}${" ".repeat(Math.max(0, width - terminalDisplayWidth(clipped)))}`;
+    const plain = layout.plainLines[bodyLine] ?? "";
+    const cursorColumn = Math.min(
+      Math.max(0, terminalDisplayWidth(plain.slice(0, this.buffer.column))),
+      Math.max(0, width - 1),
+    );
+    const withCursor = `${sliceByColumn(padded, 0, cursorColumn)}${CURSOR_MARKER}${sliceByColumn(padded, cursorColumn, width - cursorColumn)}`;
+    return this.theme.styleRenderedBackground("selection", withCursor);
+  }
+
   private eventBodyLine(index: number): number {
     return this.timelineLayout(this.renderedWidth).events[index]?.bodyStart ?? 0;
   }
@@ -813,6 +980,51 @@ class TimelineView implements Component {
     if (this.events.length === 0) return undefined;
     const event = this.timelineLayout(this.renderedWidth).events[this.selectedIndex];
     return event ? { start: event.start + 1, end: event.start + event.lines.length } : undefined;
+  }
+
+  cursorLineRange(): { start: number; end: number } {
+    const line = this.buffer.line + 1;
+    return { start: line, end: line };
+  }
+  setCursorAtAnchor(cursor: { epoch: string; sequence: number }): void {
+    const range = this.lineRangeForCursor(cursor);
+    if (!range) return;
+    this.buffer = { ...this.buffer, line: range.start - 1, column: 0 };
+    this.keepCursorAtEnd = false;
+    this.syncSelectedIndex();
+  }
+  private syncSelectedIndex(): void {
+    const index = this.eventIndexAtBodyLine(this.buffer.line);
+    if (index >= 0) this.selectedIndex = index;
+  }
+  private captureBufferAnchor(): void {
+    const layout = this.layout;
+    if (!layout) return;
+    const at = (line: number): { itemId: string; offset: number } | undefined => {
+      const index = layout.events.findIndex(
+        (event) => line >= event.start && line < event.start + event.lines.length,
+      );
+      const event = layout.events[index];
+      const item = this.events[index]?.item;
+      return event && item ? { itemId: item.id, offset: line - event.start } : undefined;
+    };
+    const cursor = at(this.buffer.line);
+    const selection = this.buffer.anchor ? at(this.buffer.anchor.line) : undefined;
+    if (cursor)
+      this.bufferAnchor = {
+        cursor,
+        ...(selection ? { selection } : {}),
+      };
+  }
+  private resolveBufferAnchor(
+    anchor: { itemId: string; offset: number },
+    layout: TimelineLayout,
+  ): number | undefined {
+    const index = this.events.findIndex((event) => event.item.id === anchor.itemId);
+    const event = layout.events[index];
+    return event
+      ? event.start + Math.min(anchor.offset, Math.max(0, event.lines.length - 1))
+      : undefined;
   }
 
   cursorAtLine(line: number): { epoch: string; sequence: number } | undefined {
@@ -841,6 +1053,11 @@ class TimelineView implements Component {
   /** Build event lines and turn headers once per width instead of repeatedly walking history. */
   private timelineLayout(width: number): TimelineLayout {
     if (this.layout?.width === width) return this.layout;
+    const cached = this.layouts.get(width);
+    if (cached) {
+      this.layout = cached;
+      return cached;
+    }
     let group = "implicit:0";
     let priorGroup: string | undefined;
     let ordinal = 0;
@@ -883,7 +1100,10 @@ class TimelineView implements Component {
       start += lines.length;
       return layout;
     });
-    this.layout = { width, lines: events.flatMap((event) => event.lines), events };
+    const lines = events.flatMap((event) => event.lines);
+    this.layout = { width, lines, plainLines: lines.map(printableTimelineText), events };
+    this.layouts.set(width, this.layout);
+    if (this.layouts.size > 8) this.layouts.delete(this.layouts.keys().next().value ?? width);
     return this.layout;
   }
 }
@@ -891,6 +1111,7 @@ class TimelineView implements Component {
 type TimelineLayout = {
   width: number;
   lines: readonly string[];
+  plainLines: readonly string[];
   events: readonly { start: number; bodyStart: number; lines: readonly string[] }[];
 };
 
@@ -898,6 +1119,29 @@ function landmark(item: TimelineItem, kind: "turn" | "error"): boolean {
   return kind === "turn"
     ? item.type === "turn"
     : item.type === "error" || (item.type === "tool" && item.status === "failed");
+}
+
+function safeWebLink(value: string | undefined): string | undefined {
+  if (!value) return undefined;
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:" || url.protocol === "http:" ? url.href : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function openWebLink(url: string): Promise<void> {
+  const command =
+    process.platform === "darwin" ? "open" : process.platform === "win32" ? "rundll32" : "xdg-open";
+  const args = process.platform === "win32" ? ["url.dll,FileProtocolHandler", url] : [url];
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, args, { stdio: "ignore" });
+    child.once("error", reject);
+    child.once("exit", (code) =>
+      code === 0 ? resolve() : reject(new Error(`Opening link failed: ${code}`)),
+    );
+  });
 }
 
 class TimelineScrollView extends ScrollView {
@@ -912,7 +1156,7 @@ class TimelineScrollView extends ScrollView {
     const wasFollowing = this.isFollowingEnd;
     const before = this.scrollTop;
     const remaining = super.scrollBy(lines);
-    if (before !== this.scrollTop && wasFollowing !== this.isFollowingEnd)
+    if (before !== this.scrollTop || wasFollowing !== this.isFollowingEnd)
       this.onFollowChange(this.isFollowingEnd);
     return remaining;
   }
@@ -1841,6 +2085,7 @@ export class DeckTui {
       options.frameMilliseconds,
     );
     this.copyText = options.copyText ?? ((text) => this.writeOsc52(text));
+    this.openLink = options.openLink ?? openWebLink;
     this.controller = new DeckController(
       () => this.state,
       (intent) => this.handleControllerIntent(intent),
@@ -1906,15 +2151,24 @@ export class DeckTui {
   }
 
   private readonly copyText: (text: string) => Promise<void> | void;
+  private readonly openLink: (url: string) => Promise<void> | void;
 
   private setShellLayout(): void {
     const supported = (viewport: { width: number; height: number }): boolean =>
       shellLayout(viewport.width, viewport.height, this.treeWidth).supported;
+    const centeredTabs = new HStack(
+      [
+        { component: new Spacer(1), basis: 4, grow: 1, shrink: 1, minSize: 1 },
+        { component: this.tabs, basis: 100, shrink: 1, minSize: 1 },
+        { component: new Spacer(1), basis: 4, grow: 1, shrink: 1, minSize: 1 },
+      ],
+      { align: "stretch" },
+    );
     const mainPane = new HStack(
       [
         {
           component: new VStack([
-            { component: this.tabs, basis: 1, minSize: 1 },
+            { component: centeredTabs, basis: 1, minSize: 1 },
             {
               component: new HStack(
                 [
@@ -2057,6 +2311,7 @@ export class DeckTui {
   start(): void {
     this.started = true;
     this.lifecycle.start();
+    this.syncTimelineCursor();
     void this.sampleTerminalBackground();
     this.syncReconnectTicker();
   }
@@ -2067,6 +2322,17 @@ export class DeckTui {
     this.stopReconnectTicker();
     this.renderScheduler.stop();
     await this.lifecycle.stop();
+    this.terminal.write("\u001b[0 q");
+  }
+  private syncTimelineCursor(): void {
+    const visible =
+      this.state.focus === "timeline" &&
+      !this.state.activeTerminalId &&
+      this.state.modal.type === "none" &&
+      !this.localOverlay;
+    if (this.tui.getShowHardwareCursor() === visible) return;
+    this.tui.setShowHardwareCursor(visible);
+    this.terminal.write(visible ? "\u001b[2 q" : "\u001b[0 q");
   }
   update(state: AppState): void {
     const timelineChanged = state.timeline.items !== this.state.timeline.items;
@@ -2085,6 +2351,7 @@ export class DeckTui {
     this.tree.update(state);
     this.timeline.update(state.timeline.items);
     this.timeline.updateSelection(state);
+    this.syncTimelineCursor();
     this.composer.update(state);
     this.status.update(state);
     this.tui.setFocus(state.focus === "composer" && !state.activeTerminalId ? this.composer : null);
@@ -2106,7 +2373,7 @@ export class DeckTui {
     if (previousAgentId !== state.selectedAgentId || recoveryChanged)
       this.restoreTimelineNavigation(state);
     if (focusChanged || treeSelectionChanged) {
-      if (state.focus === "timeline" && !restoredPaused) this.revealTimelineSelection();
+      if (state.focus === "timeline" && !restoredPaused) this.revealTimelineCursor();
       else if (state.focus === "tree") this.revealTreeSelection();
       // Nested main-column layouts measure scroll views on the next frame.
       // Repeat the reveal after that measurement so selected rows remain visible.
@@ -2153,20 +2420,53 @@ export class DeckTui {
 
   private handleControllerIntent(intent: UiIntent): void {
     if (intent.type === "move-timeline-text") {
-      this.timeline.moveText(intent.key);
-      this.revealTimelineSelection();
-      this.pauseIfScrolledAwayFromEnd();
+      this.timeline.moveText(intent.key, intent.count);
+      this.revealTimelineCursor();
+      if (intent.key === "G" && intent.count === undefined) {
+        this.transcript.scrollToEnd();
+        this.setTimelineFollowing(true);
+      } else {
+        this.transcript.scrollTo(this.transcript.scrollTop, { disableFollow: true });
+        this.pauseTimeline();
+      }
+      this.renderScheduler.requestImmediate();
+      return;
+    }
+    if (intent.type === "timeline-find-character" || intent.type === "timeline-repeat-find") {
+      if (intent.type === "timeline-find-character")
+        this.timeline.findCharacter(intent.key, intent.character, intent.count);
+      else this.timeline.repeatFind(intent.reverse);
+      this.revealTimelineCursor();
+      this.pauseTimeline();
+      this.renderScheduler.requestImmediate();
+      return;
+    }
+    if (intent.type === "timeline-viewport-motion") {
+      const top = Math.max(0, this.transcript.scrollTop - 1);
+      const height = Math.max(1, this.transcript.viewportHeight);
+      const line =
+        intent.key === "H"
+          ? top + intent.count - 1
+          : intent.key === "M"
+            ? top + Math.floor(height / 2)
+            : top + height - intent.count;
+      this.timeline.moveToVisibleLine(line);
+      this.revealTimelineCursor();
+      this.pauseTimeline();
       this.renderScheduler.requestImmediate();
       return;
     }
     if (intent.type === "timeline-page") {
-      this.timeline.pageText(intent.direction, this.transcript.viewportHeight);
+      const amount = Math.max(1, Math.floor(this.transcript.viewportHeight * 0.75));
+      this.timeline.pageText(intent.direction, amount + 1);
+      this.transcript.scrollBy(intent.direction * amount);
+      this.revealTimelineCursor();
       this.pauseIfScrolledAwayFromEnd();
       this.renderScheduler.requestImmediate();
       return;
     }
     if (intent.type === "timeline-visual") {
-      this.timeline.startVisual(intent.line);
+      this.timeline.startVisual(intent.selection);
       this.emit({ type: "set-timeline-mode", mode: "visual" });
       this.renderScheduler.requestImmediate();
       return;
@@ -2187,6 +2487,27 @@ export class DeckTui {
       else this.emit({ type: "notify", message: "No timeline text selected." });
       return;
     }
+    if (intent.type === "timeline-yank-object") {
+      const value = this.timeline.yankObject(intent.object);
+      if (value) void this.copyTimelineTarget(value);
+      else this.emit({ type: "notify", message: "No timeline text at cursor." });
+      return;
+    }
+    if (intent.type === "timeline-open-link") {
+      const url = this.timeline.linkAtCursor();
+      if (!url) this.emit({ type: "notify", message: "No link at timeline cursor." });
+      else
+        void Promise.resolve()
+          .then(() => this.openLink(url))
+          .catch((error: unknown) =>
+            this.emit({
+              type: "notify",
+              message: `Could not open link: ${String(error)}`,
+              kind: "error",
+            }),
+          );
+      return;
+    }
     if (intent.type === "timeline-fold") {
       this.timeline.toggleTextFold();
       this.renderScheduler.requestImmediate();
@@ -2195,12 +2516,14 @@ export class DeckTui {
     if (intent.type === "set-timeline-mode" && intent.mode === "normal")
       this.timeline.clearVisual();
     if (intent.type === "set-timeline-mode" && intent.mode === "visual")
-      this.timeline.startVisual(false);
+      this.timeline.startVisual("character");
     if (intent.type === "scroll-timeline") {
       const amount = Math.max(1, Math.floor(this.transcript.viewportHeight * 0.75));
-      if (this.state.focus === "timeline")
-        this.timeline.pageText(intent.direction, this.transcript.viewportHeight);
-      this.transcript.scrollBy(intent.direction * amount);
+      if (this.state.focus === "timeline") {
+        this.timeline.pageText(intent.direction, amount + 1);
+        this.transcript.scrollBy(intent.direction * amount);
+        this.revealTimelineCursor();
+      } else this.transcript.scrollBy(intent.direction * amount);
       this.pauseIfScrolledAwayFromEnd();
       this.renderScheduler.requestImmediate();
       return;
@@ -2454,6 +2777,7 @@ export class DeckTui {
         this.localOverlay.setHidden(false);
         this.localOverlay.focus();
       }
+      this.syncTimelineCursor();
       this.renderScheduler.requestImmediate();
       return;
     }
@@ -2472,6 +2796,7 @@ export class DeckTui {
       this.tui.setFocus(
         this.state.focus === "composer" && !this.state.activeTerminalId ? this.composer : null,
       );
+    this.syncTimelineCursor();
     this.renderScheduler.requestImmediate();
   }
 
@@ -2482,6 +2807,7 @@ export class DeckTui {
     this.localOverlay = undefined;
     this.localOverlayKey = "";
     this.localSnapshot = undefined;
+    this.syncTimelineCursor();
   }
 
   private showLocalOverlay(
@@ -2498,6 +2824,7 @@ export class DeckTui {
     this.localOverlayKey = key;
     this.localOverlay = this.tui.showOverlay(component, options);
     this.localOverlay.focus();
+    this.syncTimelineCursor();
   }
 
   private captureLocalSnapshot(): void {
@@ -2549,8 +2876,10 @@ export class DeckTui {
       this.transcript.scrollToEnd();
       return;
     }
-    if (navigation.anchor)
+    if (navigation.anchor) {
+      this.timeline.setCursorAtAnchor(navigation.anchor);
       this.revealRange(this.transcript, this.timeline.lineRangeForCursor(navigation.anchor));
+    }
   }
 
   private setTimelineFollowing(
@@ -2598,6 +2927,10 @@ export class DeckTui {
 
   private revealTimelineSelection(): void {
     this.revealRange(this.transcript, this.timeline.selectedLineRange());
+  }
+
+  private revealTimelineCursor(): void {
+    this.revealRange(this.transcript, this.timeline.cursorLineRange());
   }
 
   private revealRange(
