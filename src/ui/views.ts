@@ -1702,11 +1702,7 @@ class ComposerView implements Component, Focusable {
       const up = matchesKey(data, "up");
       if ((up && current.cursor === 0) || (!up && current.cursor === current.text.length)) {
         this.applyVimResult({
-          state: recallComposerPrompt(
-            current,
-            this.state.composer.histories[this.selectedAgentId ?? ""] ?? [],
-            up ? -1 : 1,
-          ),
+          state: recallComposerPrompt(current, this.sentPrompts(), up ? -1 : 1),
           handled: true,
         });
       } else {
@@ -1736,6 +1732,12 @@ class ComposerView implements Component, Focusable {
     this.applyVimResult(handleComposerVim(current, key));
   }
 
+  private sentPrompts(): readonly string[] {
+    return this.resourceKey.startsWith("session:") && this.selectedAgentId
+      ? (this.state.composer.histories[this.selectedAgentId] ?? [])
+      : [];
+  }
+
   private handleVimInput(data: string): void {
     if (this.vim.pending === "g" && data === "?") {
       this.cancelPendingInput();
@@ -1755,11 +1757,7 @@ class ComposerView implements Component, Focusable {
         (data === "j" && !current.text.slice(current.cursor).includes("\n")))
     ) {
       this.applyVimResult({
-        state: recallComposerPrompt(
-          current,
-          this.state.composer.histories[this.selectedAgentId ?? ""] ?? [],
-          data === "k" ? -1 : 1,
-        ),
+        state: recallComposerPrompt(current, this.sentPrompts(), data === "k" ? -1 : 1),
         handled: true,
       });
       return;
