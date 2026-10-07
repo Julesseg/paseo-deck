@@ -13,6 +13,7 @@ import type {
   TerminalProfile,
   TerminalRecord,
 } from "../contracts/terminal.js";
+import { sessionSettingChoices } from "../domain/session-settings.js";
 import { PaseoGatewayError, paseoFailure, redactTransportDetail } from "../paseo/errors.js";
 import {
   activeSessionDraftWorkspaceId,
@@ -593,12 +594,38 @@ export class ApplicationController {
         this.apply({ type: "close-modal" });
         return;
       }
+      case "open-session-setting": {
+        if (
+          this.#state.modal.type !== "none" ||
+          this.#state.activeTerminalId ||
+          !(
+            (this.#state.focus === "composer" && this.#state.composerMode === "normal") ||
+            (this.#state.focus === "timeline" && this.#state.timelineMode === "normal")
+          )
+        )
+          return;
+        if (activeSessionDraftWorkspaceId(this.#state) || activeLaunchWorkspaceId(this.#state)) {
+          await this.handleIntent({ type: "open-draft-setting", setting: intent.setting });
+        } else if (intent.setting !== "provider" && this.#state.selectedAgentId) {
+          this.apply({
+            type: "open-modal",
+            modal: {
+              type: "session-setting",
+              agentId: this.#state.selectedAgentId,
+              setting: intent.setting,
+              ...(this.inFlightTargets.has(`settings:${this.#state.selectedAgentId}`)
+                ? { busy: true }
+                : {}),
+            },
+          });
+        }
+        return;
+      }
       case "open-draft-setting": {
         const launchId = activeLaunchWorkspaceId(this.#state);
         const id = launchId ?? this.#state.selectedWorkspaceId;
         const launch = launchId ? launchDraft(this.#state, launchId) : undefined;
-        if (launch && (launch.kind !== "session" || launch.submitting || launch.createdAgentId))
-          return;
+        if (launch && (launch.kind !== "session" || launch.createdAgentId)) return;
         if (
           id &&
           (activeSessionDraftWorkspaceId(this.#state) === id || launchId === id) &&
@@ -618,7 +645,7 @@ export class ApplicationController {
         const draft = isLaunch
           ? launchDraft(this.#state, modal.workspaceId)
           : this.#state.sessionDrafts[modal.workspaceId];
-        if (!draft) return;
+        if (!draft || draft.submitting) return;
         const selected =
           modal.setting === "provider"
             ? draft.providerId
@@ -1834,6 +1861,94 @@ export class ApplicationController {
 
   private async applyChoice(choice: string): Promise<void> {
     const modal = this.#state.modal;
+    if (modal.type === "session-setting") {
+      if (modal.busy || this.inFlightTargets.has(`settings:${modal.agentId}`)) return;
+      const agent = this.#state.directory.agents.find((item) => item.id === modal.agentId);
+      const selected =
+        modal.setting === "model"
+          ? agent?.modelId
+          : modal.setting === "mode"
+            ? agent?.modeId
+            : agent?.thinkingLevel;
+      const choiceItem = sessionSettingChoices(
+        this.#state.directory,
+        agent,
+        modal.setting,
+        this.#state.connection !== "connected"
+          ? "Disconnected"
+          : this.#state.composer.sendingAgentIds.has(modal.agentId)
+            ? "Session is busy"
+            : undefined,
+      ).find((item) => item.value === choice);
+      if (!choiceItem || choiceItem.disabled) return;
+      if (choice === selected) {
+        this.apply({ type: "close-modal" });
+        return;
+      }
+      const model = this.#state.directory.providers
+        .find((item) => item.id === agent?.providerId)
+        ?.models.find((item) => item.id === choice);
+      const command: AgentCommand =
+        modal.setting === "model"
+          ? {
+              type: "set-agent-model",
+              agentId: modal.agentId,
+              modelId: choice,
+              thinkingLevel: model?.defaultThinkingLevel ?? null,
+            }
+          : modal.setting === "mode"
+            ? { type: "set-agent-mode", agentId: modal.agentId, modeId: choice }
+            : { type: "set-thinking-level", agentId: modal.agentId, thinkingLevel: choice };
+      const busy = { ...modal, busy: true };
+      this.inFlightTargets.add(`settings:${modal.agentId}`);
+      this.apply({ type: "open-modal", modal: busy });
+      let failure: unknown;
+      let refreshed = false;
+      let notice: string | undefined;
+      try {
+        const result = await this.gateway.execute(command);
+        if (result.type === "ok") notice = result.notice;
+      } catch (error) {
+        failure = error;
+      }
+      try {
+        const snapshot = await this.gateway.getDirectorySnapshot();
+        this.apply({ type: "directory", update: { type: "snapshot", snapshot } });
+        refreshed = true;
+      } catch (error) {
+        failure ??= error;
+      }
+      this.inFlightTargets.delete(`settings:${modal.agentId}`);
+      if (
+        this.#state.modal !== busy &&
+        this.#state.modal.type === "session-setting" &&
+        this.#state.modal.agentId === modal.agentId &&
+        this.#state.modal.busy
+      )
+        this.apply({ type: "open-modal", modal: { ...this.#state.modal, busy: false } });
+      if (failure) {
+        if (this.#state.modal === busy)
+          this.apply({
+            type: "open-modal",
+            modal: {
+              ...modal,
+              error: refreshed
+                ? "Request failed; confirmed state refreshed"
+                : "Request failed; state refresh unavailable",
+            },
+          });
+        this.reportError(
+          "Settings request failed; some changes may have applied. Review confirmed settings before retrying.",
+          failure,
+          undefined,
+          "command",
+        );
+      } else {
+        if (this.#state.modal === busy) this.apply({ type: "close-modal" });
+        if (notice) this.apply({ type: "notify", message: notice });
+      }
+      return;
+    }
     if (modal.type === "filter") {
       this.apply({ type: "set-filter", filter: choice });
       this.apply({ type: "close-modal" });

@@ -115,13 +115,13 @@ describe("command registry", () => {
       commandById(
         { ...base, directory: { ...base.directory, agents: [{ ...agent, availableModeIds: [] }] } },
         "mode",
-      )?.disabledReason,
+      ),
     ).toBeUndefined();
   });
 
   it("uses composer-specific controls for model, thinking, and operational mode", () => {
     const current = { ...state(), focus: "composer" as const, composerMode: "normal" as const };
-    expect(commandById(current, "model")?.disabledReason).toContain("model switching");
+    expect(commandById(current, "model")?.shortcuts).toEqual(["mm"]);
     expect(commandById(current, "thinking")?.id).toBe("thinking");
     expect(commandById(current, "operational-mode")?.id).toBe("operational-mode");
     expect(commandForKey({ ...current, focus: "tree" }, "o")?.id).toBe("toggle-order");
