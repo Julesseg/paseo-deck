@@ -55,7 +55,7 @@ export type ModalState =
   | { type: "new-workspace-placement" }
   | { type: "new-workspace-base" }
   | { type: "launch-profile"; workspaceId: string }
-  | { type: "notifications"; index: number }
+  | { type: "notifications"; index: number; noticeId?: number }
   | { type: "filter"; query: string }
   | { type: "create-terminal"; workspaceId: string; name: string; error?: string }
   | { type: "new-tab"; workspaceId: string; profiles?: readonly TerminalProfile[] }
@@ -107,7 +107,12 @@ export type ModalState =
     }
   | { type: "mode"; agentId: string }
   | { type: "thinking"; agentId: string }
-  | { type: "error-details"; message: string; detail: string };
+  | {
+      type: "error-details";
+      message: string;
+      detail: string;
+      origin?: Extract<ModalState, { type: "notifications" }>;
+    };
 
 export interface FocusedTimelineState {
   agentId?: string;

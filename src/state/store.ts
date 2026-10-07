@@ -90,6 +90,7 @@ export type AppAction =
       retry?: AppState["notifications"][number]["retry"];
       failureKind?: AppState["notifications"][number]["failureKind"];
     }
+  | { type: "notification-retry-completed"; token: number }
   | { type: "select-notification"; id: number }
   | { type: "recovery-stage-succeeded"; stage: "directory" | "timeline" }
   | { type: "clear-notification" };
@@ -1249,9 +1250,22 @@ export function reduceApp(state: AppState, action: AppAction): AppState {
       return {
         ...state,
         notifications: [...state.notifications, record].slice(-MAX_NOTIFICATIONS),
-        activeNotificationId: record.id,
+        activeNotificationId:
+          state.modal.type === "notifications" || state.modal.type === "error-details"
+            ? (state.activeNotificationId ?? record.id)
+            : record.id,
       };
     }
+    case "notification-retry-completed":
+      return {
+        ...state,
+        notifications: state.notifications.map((notice) => {
+          if (notice.retry?.type !== "operation" || notice.retry.token !== action.token)
+            return notice;
+          const { retry: _retry, ...completed } = notice;
+          return completed;
+        }),
+      };
     case "select-notification": {
       const notification = state.notifications.find((item) => item.id === action.id);
       if (notification === undefined) return state;
@@ -1266,7 +1280,10 @@ export function reduceApp(state: AppState, action: AppAction): AppState {
 }
 
 export function activeNotification(state: AppState): AppState["notifications"][number] | undefined {
-  const id = state.activeNotificationId ?? state.notifications.at(-1)?.id;
+  const id =
+    state.modal.type === "notifications"
+      ? (state.modal.noticeId ?? state.notifications[state.modal.index]?.id)
+      : (state.activeNotificationId ?? state.notifications.at(-1)?.id);
   return id === undefined ? undefined : state.notifications.find((item) => item.id === id);
 }
 

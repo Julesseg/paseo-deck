@@ -28,7 +28,7 @@ import {
   selectedComposerDraft,
 } from "../state/composer.js";
 import { activeLaunchWorkspaceId, launchDraft } from "../state/launch.js";
-import { activeNotification } from "../state/store.js";
+import { activeNotification, pendingPermissions } from "../state/store.js";
 import { defaultTerminalAppearance, type TerminalAppearance } from "./capabilities.js";
 import { type ClipboardAdapter, SharedClipboard, systemClipboard } from "./clipboard.js";
 import {
@@ -2323,7 +2323,7 @@ class StatusView implements Component {
         : this.state.connection;
     const active = activeNotification(this.state);
     const notification = active
-      ? ` ${this.theme.glyph("bullet")} ${active.kind}${active.failureKind ? `/${active.failureKind}` : ""}: ${sanitizeTerminalText(active.message)}${active.detail ? ` ${this.theme.glyph("bullet")} E details` : ""}${active.retry ? ` ${this.theme.glyph("bullet")} R retry` : ""}${this.state.notifications.length > 1 ? ` ${this.theme.glyph("bullet")} ${this.state.notifications.length} notices ${this.theme.glyph("bullet")} N review` : ""}`
+      ? ` ${this.theme.glyph("bullet")} ${active.kind}${active.failureKind ? `/${active.failureKind}` : ""}: ${sanitizeTerminalText(active.message)}${active.detail ? ` ${this.theme.glyph("bullet")} palette details` : ""}${active.retry ? ` ${this.theme.glyph("bullet")} palette retry` : ""}${this.state.notifications.length > 1 ? ` ${this.theme.glyph("bullet")} ${this.state.notifications.length} notices ${this.theme.glyph("bullet")} palette notifications` : ""}`
       : "";
     const line = this.theme.clipRendered(
       `${details}${separator}${connection}${compact ? "" : `${separator}permissions ${permissions}`}${notification}`,
@@ -2354,7 +2354,7 @@ function permissionDialogLines(
     ?.pendingPermissions.find((item) => item.id === modal.requestId);
   if (!request) return ["Permission request is no longer pending."];
   const queue = pendingPermissionCount(state);
-  const ordinal = `${(modal.queueIndex ?? 0) + 1}/${queue}`;
+  const ordinal = `${pendingPermissions(state).findIndex((item) => item.id === modal.requestId && item.agentId === modal.agentId) + 1}/${queue}`;
   return [
     `Permission ${ordinal}`,
     { value: `Operation: ${request.operation ?? request.title}`, owned: false },
@@ -2382,13 +2382,13 @@ function pendingPermissionCount(state: AppState): number {
 class Dialog implements Component, Focusable {
   focused = false;
   constructor(
-    private readonly lines: readonly DialogLine[],
+    private readonly lines: readonly DialogLine[] | (() => readonly DialogLine[]),
     private readonly onKey: (data: string) => boolean,
     private readonly theme: DeckTheme,
   ) {}
   invalidate(): void {}
   render(width: number): string[] {
-    return this.lines.map((line) =>
+    return (typeof this.lines === "function" ? this.lines() : this.lines).map((line) =>
       typeof line === "string"
         ? this.theme.clipOwnedLabel(line, width)
         : this.theme.clipRemoteText(line.value, width),
@@ -2396,6 +2396,47 @@ class Dialog implements Component, Focusable {
   }
   handleInput(data: string): void {
     this.onKey(data);
+  }
+}
+
+class ReadOnlyDialog implements Component, Focusable {
+  focused = false;
+  private pendingG = false;
+  private offset = 0;
+  private content: string[] = [];
+  constructor(
+    private readonly lines: readonly DialogLine[],
+    private readonly close: () => void,
+    private readonly height: () => number,
+  ) {}
+  invalidate(): void {}
+  render(width: number): string[] {
+    this.content = this.lines.flatMap((line) =>
+      sanitizeTerminalText(typeof line === "string" ? line : line.value)
+        .split("\n")
+        .flatMap((row) => wordWrapLine(row, Math.max(1, width)).map((chunk) => chunk.text)),
+    );
+    this.offset = Math.max(0, Math.min(this.offset, this.content.length - this.height()));
+    return this.content.slice(this.offset, this.offset + this.height());
+  }
+  handleInput(data: string): void {
+    if (matchesKey(data, "escape")) {
+      this.close();
+      return;
+    }
+    if (data === "g") {
+      if (this.pendingG) {
+        this.offset = 0;
+        this.pendingG = false;
+      } else this.pendingG = true;
+      return;
+    }
+    this.pendingG = false;
+    if (data === "j" || matchesKey(data, "down")) this.offset++;
+    else if (data === "k" || matchesKey(data, "up")) this.offset--;
+    else if (matchesKey(data, "pageDown")) this.offset += this.height();
+    else if (matchesKey(data, "pageUp")) this.offset -= this.height();
+    else if (data === "G") this.offset = this.content.length;
   }
 }
 
@@ -3660,7 +3701,7 @@ export class DeckTui {
     const context = this.topInteractionContext();
     this.showLocalOverlay(
       "__help",
-      new Dialog(
+      new ReadOnlyDialog(
         [
           `Paseo Deck keys · ${context}`,
           ...(context === "timeline"
@@ -3704,11 +3745,8 @@ export class DeckTui {
             : []),
           ...contextualHelp(this.state, context).map((command) => commandHelpLine(command)),
         ],
-        (data) => {
-          if (matchesKey(data, "escape")) this.restoreLocalOverlay();
-          return true;
-        },
-        this.theme,
+        () => this.restoreLocalOverlay(),
+        () => Math.max(1, Math.floor(this.terminal.rows * 0.7)),
       ),
       { width: "70%", minWidth: 28, maxHeight: "70%", margin: 1 },
     );
@@ -3995,7 +4033,7 @@ export class DeckTui {
       visible: (columns, rows) => shellLayout(columns, rows, this.treeWidth).supported,
     };
     if (modal.type === "help")
-      component = new Dialog(
+      component = new ReadOnlyDialog(
         [
           `Paseo Deck keys · ${this.state.focus}`,
           ...(this.state.focus === "composer"
@@ -4022,11 +4060,8 @@ export class DeckTui {
             : []),
           ...contextualHelp(this.state).map((command) => commandHelpLine(command)),
         ],
-        (data) => {
-          if (matchesKey(data, "escape") || data === "?") close();
-          return true;
-        },
-        this.theme,
+        close,
+        () => Math.max(1, Math.floor(this.terminal.rows * 0.7)),
       );
     else if (modal.type === "filter")
       component = new InputDialog(
@@ -4311,24 +4346,29 @@ export class DeckTui {
       );
     else if (modal.type === "permission")
       component = new Dialog(
-        permissionDialogLines(this.state, modal),
+        () => permissionDialogLines(this.state, modal),
         (data) => this.controller.handleKey(data),
         this.theme,
       );
     else if (modal.type === "notifications")
       component = new Dialog(
-        notificationDialogLines(this.state, modal.index),
+        () =>
+          notificationDialogLines(
+            this.state,
+            modal.noticeId ?? this.state.notifications[modal.index]?.id,
+            Math.max(1, Math.floor(this.terminal.rows * 0.7) - 3),
+          ),
         (data) => this.controller.handleKey(data),
         this.theme,
       );
     else if (modal.type === "error-details")
-      component = new Dialog(
-        [`Error: ${modal.message}`, modal.detail],
-        (data) => {
-          if (matchesKey(data, "escape")) close();
-          return true;
-        },
-        this.theme,
+      component = new ReadOnlyDialog(
+        [
+          { value: modal.message, owned: false },
+          { value: modal.detail, owned: false },
+        ],
+        close,
+        () => Math.max(1, Math.floor(this.terminal.rows * 0.7)),
       );
     else if (modal.type === "create-agent" && modal.step === "prompt")
       component = new CreationPromptDialog(
@@ -4425,18 +4465,28 @@ export class DeckTui {
   }
 }
 
-function notificationDialogLines(state: AppState, index: number): readonly string[] {
+function notificationDialogLines(
+  state: AppState,
+  noticeId: number | undefined,
+  visible = 7,
+): readonly string[] {
   if (state.notifications.length === 0) return ["No notifications."];
-  const active = state.notifications[index] ?? state.notifications.at(-1);
-  if (!active) return ["No notifications."];
+  const index = state.notifications.findIndex((notice) => notice.id === noticeId);
+  const active = state.notifications[index];
+  if (!active) return ["Selected notification is no longer available."];
   return [
     `Notifications ${index + 1}/${state.notifications.length}`,
-    ...state.notifications.map(
-      (item, at) =>
-        `${at === index ? ">" : " "} ${item.kind}${item.failureKind ? `/${item.failureKind}` : ""}: ${item.message}`,
-    ),
-    ...(active.detail ? ["E details"] : []),
-    ...(active.retry ? ["R retry"] : []),
+    ...state.notifications
+      .slice(
+        Math.max(0, Math.min(index, state.notifications.length - visible)),
+        Math.max(0, Math.min(index, state.notifications.length - visible)) + visible,
+      )
+      .map(
+        (item) =>
+          `${item.id === active.id ? ">" : " "} ${item.kind}${item.failureKind ? `/${item.failureKind}` : ""}: ${item.message}`,
+      ),
+    "Enter details",
+    ...(active.retry ? ["r retry"] : []),
   ];
 }
 

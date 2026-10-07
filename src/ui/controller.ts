@@ -482,10 +482,17 @@ export class DeckController {
       (global?.id === "help" && !(state.focus === "composer" && state.composerMode === "insert"))
     )
       return this.send(global.intent(state));
+    if (
+      ["permission", "notifications", "error-details", "help"].includes(state.modal.type) &&
+      data === "\u001b"
+    )
+      return this.send({ type: "close-modal" });
     if (state.modal.type === "permission") {
-      if (state.modal.submitting) return true;
+      if (data === "\u001b") return this.send({ type: "close-modal" });
+      if (state.modal.submitting && ["a", "d", "r"].includes(data)) return true;
       return this.sendResolved(global, state);
     }
+    if (state.modal.type === "help" || state.modal.type === "error-details") return false;
     if (state.modal.type === "notifications") {
       return this.sendResolved(global, state);
     }

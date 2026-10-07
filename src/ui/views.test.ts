@@ -825,7 +825,7 @@ describe("composer controls", () => {
     await terminal.waitForRender();
     await deck.stop();
 
-    expect(terminal.viewport().join("\n")).toContain("E details");
+    expect(terminal.viewport().join("\n")).toContain("Enter details");
     expect(terminal.viewport().join("\n")).not.toMatch(/j\/k browse|Enter select|Esc close/);
   });
 
@@ -1798,8 +1798,8 @@ describe("DeckTui viewport and focus", () => {
 
     expect(terminal.viewport().join("\n")).toContain("Notifications 2/2");
     expect(terminal.viewport().join("\n")).toContain("error/command: Send failed");
-    expect(terminal.viewport().join("\n")).toContain("E details");
-    expect(terminal.viewport().join("\n")).toContain("R retry");
+    expect(terminal.viewport().join("\n")).toContain("Enter details");
+    expect(terminal.viewport().join("\n")).toContain("r retry");
   });
 
   it("renders its buffer query outside the Composer", async () => {
