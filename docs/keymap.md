@@ -136,6 +136,15 @@ An existing empty workspace shows the Launch composer with no tab row. Session a
 
 Sidebar `c` opens the New workspace composer with the highlighted project's original checkout selected (or the highlighted workspace's project). `\j` changes the project and `\n` edits the optional workspace title. Local uses the original checkout; repeated creation makes fresh workspaces for that same directory. The Launch composer controls above also apply here. `Esc` leaves Insert or Visual mode first; a second `Esc` in Normal mode cancels creation and returns to sidebar navigation. `T` is unavailable until creation finishes or is cancelled. If workspace creation succeeds but launch fails, the new workspace stays active with its inputs in the Launch composer; `\s` retries the resource without creating another workspace.
 
+## Reviewed Timeline controls
+
+Timeline is read-only. Shared motions/counts/finds operate on displayed rows. `_` equals `^`; only bare `%` matches delimiters. Normal `yy`/`Y` supports row counts; `y` plus shared motion or inner/around object copies directly. Character copies rejoin soft wraps and preserve real breaks; row copies preserve displayed rows with linewise clipboard ownership. Copies omit terminal styling and decorative padding.
+
+`v`/`V` enters or switches character/row selection, keeping the anchor; repeating the current type exits. `o`/`O` swaps endpoints, `gv` restores or exchanges the same Session selection, and `y`/`Y` copies then returns to Normal. `Y` includes all touched rows.
+
+`Ctrl-U`/`Ctrl-D` moves the Normal cursor with the viewport and preserves its screen row where possible. Visual and background half-page scrolling preserves saved endpoints even offscreen. Refocusing preserves that viewport; the next motion reveals its destination. `Ctrl-B`/`Ctrl-F` and page keys use a small overlap; Visual paging moves its active endpoint. `H`/`M`/`L` targets visible rows. Every manual motion/scroll pauses following; only bare Normal `G` resumes, including an empty Timeline.
+
+Normal `gx` opens the cursor link, `za` folds the entry, `[t`/`]t` navigates turns and `[e`/`]e` navigates errors without retrying. Escape cancels pending input first, otherwise leaves Visual or restores the saved Composer. Editing, native paste, entry objects, marks/jumps, Visual Block, percentage jumps, `+`/`-`/`|`/`gm`/`gM`, `zz`/`zt`/`zb` and fine-scroll `Ctrl-E`/`Ctrl-Y` are excluded.
 
 ## Single-line fields
 

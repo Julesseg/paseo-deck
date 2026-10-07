@@ -518,7 +518,7 @@ describe("DeckController keyboard seam", () => {
     controller.handleKey("\u0006");
     controller.handleKey("y");
 
-    expect(intents).toEqual([]);
+    expect(intents).toEqual([{ type: "timeline-page", direction: 1 }]);
   });
 
   it("treats arrows and g/G as their Vim navigation equivalents outside editors", () => {
@@ -563,12 +563,13 @@ describe("DeckController keyboard seam", () => {
     expect(composer.handleKey("\u001b[A")).toBe(false);
 
     expect(timelineIntents).toEqual([
-      { type: "move-timeline-selection-boundary", boundary: "start" },
-      { type: "move-timeline-selection-boundary", boundary: "end" },
+      { type: "move-timeline-text", key: "gg" },
+      { type: "move-timeline-text", key: "G" },
+      { type: "move-timeline-text", key: "k" },
     ]);
   });
 
-  it("routes buffer yank, Visual Block, and link commands", () => {
+  it("rejects entry objects and Visual Block while routing Normal links", () => {
     const intents: unknown[] = [];
     const controller = new DeckController(
       () => ({
@@ -586,11 +587,7 @@ describe("DeckController keyboard seam", () => {
       (intent) => intents.push(intent),
     );
     for (const key of ["y", "i", "v", "g", "x", "\u0016"]) controller.handleKey(key);
-    expect(intents).toEqual([
-      { type: "timeline-yank-object", object: "event" },
-      { type: "timeline-open-link" },
-      { type: "timeline-visual", selection: "block" },
-    ]);
+    expect(intents).toEqual([{ type: "timeline-open-link" }]);
   });
 
   it("moves through visible timeline lines while timeline metadata is loading", () => {
@@ -645,8 +642,8 @@ describe("DeckController keyboard seam", () => {
       { type: "move-timeline-text", key: "W" },
       { type: "move-timeline-text", key: "ge" },
       { type: "timeline-find-character", key: "f", character: "o", count: 1 },
-      { type: "timeline-repeat-find", reverse: false },
-      { type: "timeline-repeat-find", reverse: true },
+      { type: "move-timeline-text", key: ";" },
+      { type: "move-timeline-text", key: "," },
       { type: "timeline-viewport-motion", key: "H", count: 1 },
       { type: "move-timeline-text", key: "h" },
       { type: "move-timeline-text", key: "G", count: 2 },
