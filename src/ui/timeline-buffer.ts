@@ -9,7 +9,7 @@ import {
   positionAt,
   wordClass,
 } from "./logical-text.js";
-import { findTextCharacter } from "./text-buffer.js";
+import { characterStep, findTextCharacter } from "./text-buffer.js";
 /** Read-only, Vim-like state for the rendered timeline text.
  *
  * This deliberately operates on rendered plain lines rather than TimelineEvent
@@ -17,7 +17,7 @@ import { findTextCharacter } from "./text-buffer.js";
  * in cursor, search, or yank calculations.
  */
 export type TimelineBufferMode = "normal" | "visual";
-export type TimelineSelectionMode = "character" | "line" | "block";
+export type TimelineSelectionMode = "character" | "line";
 export interface TimelinePosition {
   readonly line: number;
   readonly column: number;
@@ -39,9 +39,6 @@ export interface TimelineBufferState {
     wholeWord?: boolean;
   };
   readonly lastFind?: { key: "f" | "F" | "t" | "T"; character: string };
-  readonly marks?: Readonly<Record<string, TimelinePosition>>;
-  readonly jumps?: readonly TimelinePosition[];
-  readonly jumpIndex?: number;
 }
 
 export interface TimelineTextRange {
@@ -68,80 +65,6 @@ export function createTimelineBuffer(options: TimelineBufferOptions = {}): Timel
   };
 }
 
-export function setTimelineMark(
-  state: TimelineBufferState,
-  character: string,
-): TimelineBufferState {
-  if (!/^[A-Za-z]$/u.test(character)) return state;
-  return {
-    ...state,
-    marks: { ...state.marks, [character]: { line: state.line, column: state.column } },
-  };
-}
-
-/** Record a substantial motion so Ctrl-O and Ctrl-I can traverse it. */
-export function recordTimelineJump(
-  state: TimelineBufferState,
-  target: TimelinePosition,
-): TimelineBufferState {
-  const destination = clampPosition(state.lines, target);
-  if (destination.line === state.line && destination.column === state.column) return state;
-  const current = { line: state.line, column: state.column };
-  const history = state.jumps?.slice(0, (state.jumpIndex ?? state.jumps.length - 1) + 1) ?? [];
-  if (!history.length || !samePosition(history[history.length - 1] as TimelinePosition, current))
-    history.push(current);
-  history.push(destination);
-  const next = { ...state, ...destination, jumps: history, jumpIndex: history.length - 1 };
-  delete (next as { goalColumn?: number }).goalColumn;
-  delete (next as { selectionRange?: TimelineTextRange }).selectionRange;
-  return next;
-}
-
-export function jumpTimelineMark(
-  state: TimelineBufferState,
-  character: string,
-  linewise = false,
-): TimelineBufferState {
-  if (character === "'" || character === "`") {
-    const previous = moveTimelineJump(state, -1);
-    return character === "'"
-      ? { ...previous, column: firstNonblank(previous.lines[previous.line] ?? "") }
-      : previous;
-  }
-  const mark = state.marks?.[character];
-  if (!mark) return state;
-  const line = clamp(mark.line, 0, state.lines.length - 1);
-  return recordTimelineJump(state, {
-    line,
-    column: linewise ? firstNonblank(state.lines[line] ?? "") : mark.column,
-  });
-}
-
-export function moveTimelineJump(
-  state: TimelineBufferState,
-  direction: -1 | 1,
-  count = 1,
-): TimelineBufferState {
-  if (!state.jumps?.length) return state;
-  const currentIndex = state.jumpIndex ?? state.jumps.length - 1;
-  const index = clamp(currentIndex + direction * Math.max(1, count), 0, state.jumps.length - 1);
-  if (index === currentIndex) return state;
-  const destination = clampPosition(state.lines, state.jumps[index] as TimelinePosition);
-  const next = { ...state, ...destination, jumpIndex: index };
-  delete (next as { goalColumn?: number }).goalColumn;
-  delete (next as { selectionRange?: TimelineTextRange }).selectionRange;
-  return next;
-}
-
-function samePosition(a: TimelinePosition, b: TimelinePosition): boolean {
-  return a.line === b.line && a.column === b.column;
-}
-
-function clampPosition(lines: readonly string[], position: TimelinePosition): TimelinePosition {
-  const line = clamp(position.line, 0, lines.length - 1);
-  return { line, column: clamp(position.column, 0, cursorLimit(lines[line] ?? "")) };
-}
-
 export function moveTimelineBuffer(
   state: TimelineBufferState,
   key: string,
@@ -149,7 +72,7 @@ export function moveTimelineBuffer(
 ): TimelineBufferState {
   if (key === ";" || key === ",")
     return repeatTimelineCharacterFind(state, key === ",", Math.max(1, count));
-  const moved = moveLogicalText(state, key, count);
+  const moved = moveLogicalText(state, key === "_" ? "^" : key, count);
   const next = { ...state, ...moved };
   if (moved.goalColumn === undefined) delete (next as { goalColumn?: number }).goalColumn;
   delete (next as { selectionRange?: TimelineTextRange }).selectionRange;
@@ -194,7 +117,7 @@ export function timelineSelection(
   const a = offsetAt(state.lines, state.anchor);
   const b = offsetAt(state.lines, { line: state.line, column: state.column });
   const start = Math.min(a, b);
-  const end = Math.max(a, b) + 1;
+  const end = characterStep(flattenLines(state.lines), Math.max(a, b), 1);
   if (state.selectionMode === "line") {
     const startLine = Math.min(state.anchor.line, state.line);
     const endLine = Math.max(state.anchor.line, state.line);
@@ -209,16 +132,6 @@ export function timelineSelection(
 }
 
 export function selectedTimelineText(state: TimelineBufferState): string {
-  if (state.anchor && state.selectionMode === "block") {
-    const firstLine = Math.min(state.anchor.line, state.line);
-    const lastLine = Math.max(state.anchor.line, state.line);
-    const firstColumn = Math.min(state.anchor.column, state.column);
-    const lastColumn = Math.max(state.anchor.column, state.column) + 1;
-    return state.lines
-      .slice(firstLine, lastLine + 1)
-      .map((line) => printableTimelineText(line.slice(firstColumn, lastColumn)))
-      .join("\n");
-  }
   const selection = timelineSelection(state);
   if (!selection) return "";
   return printableTimelineText(flattenLines(state.lines).slice(selection.start, selection.end));
@@ -228,21 +141,6 @@ export function timelineSelectionColumns(
   state: TimelineBufferState,
   line: number,
 ): { start: number; end: number } | undefined {
-  if (state.anchor && state.selectionMode === "block") {
-    if (
-      line < Math.min(state.anchor.line, state.line) ||
-      line > Math.max(state.anchor.line, state.line)
-    )
-      return undefined;
-    const start = Math.min(state.anchor.column, state.column);
-    return {
-      start,
-      end: Math.min(
-        (state.lines[line] ?? "").length,
-        Math.max(state.anchor.column, state.column) + 1,
-      ),
-    };
-  }
   const selection = timelineSelection(state);
   if (!selection) return undefined;
   const lineStart = offsetAt(state.lines, { line, column: 0 });

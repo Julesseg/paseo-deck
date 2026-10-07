@@ -837,15 +837,6 @@ export const deckCommands: readonly DeckCommand[] = [
     intent: () => ({ type: "timeline-yank-object", object: "line" }),
   },
   {
-    id: "timeline-yank-event",
-    label: "Yank event at cursor",
-    group: "Timeline",
-    shortcuts: ["yiv"],
-    contexts: ["timeline"],
-    palette: false,
-    intent: () => ({ type: "timeline-yank-object", object: "event" }),
-  },
-  {
     id: "timeline-open-link",
     label: "Open link at cursor",
     group: "Timeline",
