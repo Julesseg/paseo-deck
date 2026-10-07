@@ -62,10 +62,11 @@ import {
   NARROW_SIDEBAR_WIDTH,
   shellLayout,
 } from "./layout.js";
+import { logicalWordOffset, offsetAt, positionAt } from "./logical-text.js";
 import { type RenderClock, RenderScheduler } from "./render-scheduler.js";
 import { choiceNavigation, SingleLineField } from "./single-line-field.js";
 import { TerminalLifecycle } from "./terminal.js";
-import { characterOffsets } from "./text-buffer.js";
+import { characterOffsets, characterStep } from "./text-buffer.js";
 import {
   clipTerminalLine,
   sanitizeTerminalText,
@@ -77,10 +78,8 @@ import {
   createTimelineBuffer,
   enterTimelineVisual,
   findTimelineCharacter,
-  jumpTimelineMark,
   leaveTimelineVisual,
   moveTimelineBuffer,
-  moveTimelineJump,
   moveTimelineViewport,
   osc52,
   pageTimelineBuffer,
@@ -89,15 +88,12 @@ import {
   replaceTimelineBuffer,
   searchTimelineBuffer,
   searchTimelineWord,
-  selectedTimelineText,
   selectTimelineTextRange,
-  setTimelineMark,
   type TimelineBufferState,
   type TimelineSelectionMode,
   timelineSelection,
   timelineSelectionColumns,
   timelineTextObjectRange,
-  timelineTextObjectText,
   toggleTimelineFold,
 } from "./timeline-buffer.js";
 import { clipboardPlainText, copyTargets, findTimelineMatches } from "./timeline-search.js";
@@ -625,6 +621,13 @@ class TimelineView implements Component {
       expanded: Set<string>;
     }
   >();
+  private previousSelection:
+    | { buffer: TimelineBufferState; anchor: TimelineView["bufferAnchor"] }
+    | undefined;
+  private readonly previousSelections = new Map<
+    string,
+    { buffer: TimelineBufferState; anchor: TimelineView["bufferAnchor"] }
+  >();
   private restoredContentPosition = false;
   private viewportAnchor: TimelineContentAnchor | undefined;
   private remappedViewport: number | undefined;
@@ -660,6 +663,11 @@ class TimelineView implements Component {
     if (this.state?.selectedAgentId !== state.selectedAgentId) {
       if (!this.bufferAnchor) this.captureBufferAnchor();
       const previous = this.state?.selectedAgentId;
+      if (previous && this.previousSelection)
+        this.previousSelections.set(previous, this.previousSelection);
+      this.previousSelection = state.selectedAgentId
+        ? this.previousSelections.get(state.selectedAgentId)
+        : undefined;
       if (previous)
         this.sessions.set(previous, {
           buffer: this.buffer,
@@ -715,20 +723,7 @@ class TimelineView implements Component {
   }
   moveText(key: string, count = 0): void {
     this.buffer = moveTimelineBuffer(this.buffer, key, count);
-    this.keepCursorAtEnd = key === "G" && count === 0;
-    this.syncSelectedIndex();
-  }
-  setMark(mark: string): void {
-    this.buffer = setTimelineMark(this.buffer, mark);
-  }
-  jumpMark(mark: string, linewise: boolean): void {
-    this.buffer = jumpTimelineMark(this.buffer, mark, linewise);
-    this.keepCursorAtEnd = false;
-    this.syncSelectedIndex();
-  }
-  jumpHistory(direction: -1 | 1, count: number): void {
-    this.buffer = moveTimelineJump(this.buffer, direction, count);
-    this.keepCursorAtEnd = false;
+    this.keepCursorAtEnd = key === "G" && count === 0 && this.buffer.mode === "normal";
     this.syncSelectedIndex();
   }
   searchWord(key: "*" | "#" | "g*" | "g#", count: number): void {
@@ -768,20 +763,77 @@ class TimelineView implements Component {
       this.keepCursorAtEnd = false;
       return undefined;
     }
-    return timelineTextObjectText(this.buffer, range);
+    return this.copyCharacterRange(range.start, range.end);
   }
   pageText(direction: -1 | 1, height: number): void {
     this.buffer = pageTimelineBuffer(this.buffer, direction, height);
     this.keepCursorAtEnd = false;
     this.syncSelectedIndex();
   }
-  startVisual(selection: TimelineSelectionMode): void {
+  startVisual(selection: TimelineSelectionMode): boolean {
     this.selectionFeedback = "";
-    this.buffer = enterTimelineVisual(this.buffer, selection);
-    this.state = this.state ? { ...this.state, timelineMode: "visual" } : this.state;
+    if (this.buffer.mode === "visual") {
+      if (this.buffer.selectionMode === selection) {
+        this.clearVisual();
+        return false;
+      }
+      this.buffer = { ...this.buffer, selectionMode: selection };
+    } else this.buffer = enterTimelineVisual(this.buffer, selection);
+    this.keepCursorAtEnd = false;
+    return true;
   }
   clearVisual(): void {
+    if (this.buffer.mode === "visual") {
+      this.captureBufferAnchor();
+      this.previousSelection = { buffer: this.buffer, anchor: this.bufferAnchor };
+      this.bufferAnchor = undefined;
+    }
     this.buffer = leaveTimelineVisual(this.buffer);
+  }
+  swapEndpoints(): void {
+    if (!this.buffer.anchor) return;
+    const anchor = { line: this.buffer.line, column: this.buffer.column };
+    this.buffer = { ...this.buffer, ...this.buffer.anchor, anchor };
+    delete (this.buffer as { selectionRange?: unknown }).selectionRange;
+  }
+  reselect(): boolean {
+    const previous = this.previousSelection;
+    if (!previous?.anchor?.selection) return false;
+    const layout = this.timelineLayout(this.renderedWidth);
+    const cursor = this.resolveBufferAnchor(previous.anchor.cursor, layout, true);
+    const anchor = this.resolveBufferAnchor(previous.anchor.selection, layout, true);
+    if (!cursor || !anchor) {
+      this.previousSelection = undefined;
+      return false;
+    }
+    const rangeStart = previous.anchor.range
+      ? this.resolveBufferAnchor(previous.anchor.range.start, layout, true)
+      : undefined;
+    const rangeEnd = previous.anchor.range
+      ? this.resolveBufferAnchor(previous.anchor.range.end, layout, true)
+      : undefined;
+    if (previous.anchor.range && (!rangeStart || !rangeEnd)) {
+      this.previousSelection = undefined;
+      return false;
+    }
+    if (this.buffer.mode === "visual") {
+      this.captureBufferAnchor();
+      this.previousSelection = { buffer: this.buffer, anchor: this.bufferAnchor };
+      this.bufferAnchor = undefined;
+    }
+    this.buffer = { ...previous.buffer, lines: this.buffer.lines, ...cursor, anchor };
+    delete (this.buffer as { selectionRange?: unknown }).selectionRange;
+    if (rangeStart && rangeEnd) {
+      const from = offsetAt(this.buffer.lines, rangeStart);
+      const to = characterStep(
+        this.buffer.lines.join("\n"),
+        offsetAt(this.buffer.lines, rangeEnd),
+        1,
+      );
+      this.buffer = { ...this.buffer, selectionRange: { start: from, end: to } };
+    }
+    this.keepCursorAtEnd = false;
+    return true;
   }
   searchText(query: string, direction: -1 | 1 = 1): void {
     this.searchQuery = query;
@@ -800,15 +852,148 @@ class TimelineView implements Component {
       ? "line"
       : "character";
   }
-  yankText(): string {
-    return selectedTimelineText(this.buffer);
+  yankText(rows = false): string {
+    const range = timelineSelection(this.buffer);
+    if (!range || !this.events.length) return "";
+    if (rows || this.buffer.selectionMode === "line") {
+      const start = positionAt(this.buffer.lines, range.start).line;
+      const end = positionAt(this.buffer.lines, Math.max(range.start, range.end - 1)).line;
+      return this.copyRows(start, end + 1);
+    }
+    return this.copyCharacterRange(range.start, range.end);
   }
-  yankObject(object: "line" | "event"): string {
-    if (object === "line")
-      return printableTimelineText(this.buffer.lines[this.buffer.line] ?? "").trimEnd();
-    const index = this.eventIndexAtBodyLine(this.buffer.line);
-    const item = this.events[index]?.item;
-    return item ? (copyTargets(item)[0]?.text ?? "") : "";
+  yankObject(object: "line" | "event", count = 1): string {
+    if (!this.events.length) return "";
+    if (object === "line") return this.copyRows(this.buffer.line, this.buffer.line + count);
+    return "";
+  }
+  yankMotion(
+    key: string,
+    count = 0,
+    character?: string,
+  ): { text: string; kind: "line" | "character" } | undefined {
+    if (!this.events.length) return undefined;
+    const original = this.buffer;
+    const target =
+      character === undefined
+        ? moveTimelineBuffer(original, key, count)
+        : findTimelineCharacter(original, key as "f" | "F" | "t" | "T", character, count || 1);
+    if (
+      target.line === original.line &&
+      target.column === original.column &&
+      !(
+        ["e", "E", "ge", "gE", "$", "g$", "g_"].includes(key) &&
+        (original.lines[original.line]?.length ?? 0) > 0
+      )
+    )
+      return undefined;
+    if (["j", "k", "gj", "gk", "gg", "G", "{", "}", "[[", "]]", "[]", "]["].includes(key)) {
+      return {
+        text: this.copyRows(
+          Math.min(original.line, target.line),
+          Math.max(original.line, target.line) + 1,
+        ),
+        kind: "line",
+      };
+    }
+    const from = offsetAt(original.lines, original);
+    let to = offsetAt(original.lines, target);
+    if (key === "w" || key === "W")
+      to = logicalWordOffset(original.lines.join("\n"), from, key, count || 1);
+    const inclusive = [
+      "e",
+      "E",
+      "ge",
+      "gE",
+      "$",
+      "g$",
+      "g_",
+      "%",
+      "f",
+      "F",
+      "t",
+      "T",
+      ";",
+      ",",
+    ].includes(key);
+    const start = Math.min(from, to);
+    const end = inclusive
+      ? characterStep(original.lines.join("\n"), Math.max(from, to), 1)
+      : Math.max(from, to);
+    return end > start
+      ? { text: this.copyCharacterRange(start, end), kind: "character" }
+      : undefined;
+  }
+  private copyRows(start: number, end: number): string {
+    return this.buffer.lines
+      .slice(start, end)
+      .map((line, index) => {
+        const event = this.timelineLayout(this.renderedWidth).events[
+          this.eventIndexAtBodyLine(start + index)
+        ];
+        const mapping = event?.positions[start + index - (event?.start ?? 0)];
+        const item = this.events[this.eventIndexAtBodyLine(start + index)]?.item;
+        const primary = item?.type === "user-message" || item?.type === "assistant-message";
+        const padding = !primary && line.startsWith("    ") ? 4 : 2;
+        return (
+          mapping?.region === "body" && line.startsWith("  ") ? line.slice(padding) : line
+        ).trimEnd();
+      })
+      .join("\n");
+  }
+  private copyCharacterRange(start: number, end: number): string {
+    const layout = this.timelineLayout(this.renderedWidth);
+    const first = positionAt(this.buffer.lines, start);
+    const last = positionAt(this.buffer.lines, Math.max(start, end - 1));
+    const pieces: { event: number; region: string; start: number; end: number; text: string }[] =
+      [];
+    for (let row = first.line; row <= last.line; row++) {
+      const eventIndex = this.eventIndexAtBodyLine(row);
+      const event = layout.events[eventIndex];
+      const mapping = event?.positions[row - (event?.start ?? 0)];
+      const line = this.buffer.lines[row] ?? "";
+      const lo = row === first.line ? first.column : 0;
+      const hi = row === last.line ? last.column + 1 : line.length;
+      if (!event || !mapping) continue;
+      if (mapping.region === "body") {
+        const from = mapping.offsets[Math.min(lo, mapping.offsets.length - 1)] ?? 0;
+        const tail =
+          mapping.offsets[Math.min(Math.max(lo, hi - 1), mapping.offsets.length - 1)] ?? from;
+        const to = hi > lo && line.length ? Math.min(event.content.length, tail + 1) : from;
+        const previous = pieces.at(-1);
+        if (previous?.event === eventIndex && previous.region === "body") {
+          previous.end = Math.max(previous.end, to);
+          previous.text = event.content.slice(previous.start, previous.end);
+        } else
+          pieces.push({
+            event: eventIndex,
+            region: "body",
+            start: from,
+            end: to,
+            text: event.content.slice(from, to),
+          });
+      } else
+        pieces.push({
+          event: eventIndex,
+          region: "header",
+          start: 0,
+          end: 0,
+          text: line.slice(lo, hi).trimEnd(),
+        });
+    }
+    return printableTimelineText(
+      pieces
+        .map((piece) => {
+          if (piece.region !== "body") return piece.text;
+          const event = layout.events[piece.event];
+          const lineStart = (event?.content.lastIndexOf("\n", piece.start - 1) ?? -1) + 1;
+          const leading = Math.max(0, 2 - (piece.start - lineStart));
+          return piece.text
+            .slice(piece.text.startsWith(" ".repeat(leading)) ? leading : 0)
+            .replaceAll("\n  ", "\n");
+        })
+        .join("\n"),
+    );
   }
   linkAtCursor(): string | undefined {
     const line = this.timelineLayout(this.renderedWidth).lines[this.buffer.line] ?? "";
@@ -2715,6 +2900,14 @@ export class DeckTui {
           return { consume: true };
         }
         if (data === "\u0015" || data === "\u0004") {
+          if (
+            this.state.focus === "timeline" &&
+            !this.localOverlayKey &&
+            this.state.modal.type === "none"
+          ) {
+            this.controller.handleKey(data);
+            return { consume: true };
+          }
           this.handleControllerIntent({
             type: "scroll-timeline",
             direction: data === "\u0015" ? -1 : 1,
@@ -3094,20 +3287,8 @@ export class DeckTui {
   }
 
   private handleControllerIntent(intent: UiIntent): void {
-    if (intent.type === "timeline-mark-set") {
-      this.timeline.setMark(intent.mark);
-      return;
-    }
-    if (
-      intent.type === "timeline-mark-jump" ||
-      intent.type === "timeline-jump-history" ||
-      intent.type === "timeline-word-search"
-    ) {
-      if (intent.type === "timeline-mark-jump")
-        this.timeline.jumpMark(intent.mark, intent.linewise);
-      else if (intent.type === "timeline-jump-history")
-        this.timeline.jumpHistory(intent.direction, intent.count);
-      else this.timeline.searchWord(intent.key, intent.count);
+    if (intent.type === "timeline-word-search") {
+      this.timeline.searchWord(intent.key, intent.count);
       this.revealTimelineCursor();
       this.pauseTimeline();
       this.renderScheduler.requestImmediate();
@@ -3116,7 +3297,11 @@ export class DeckTui {
     if (intent.type === "move-timeline-text") {
       this.timeline.moveText(intent.key, intent.count);
       this.revealTimelineCursor();
-      if (intent.key === "G" && intent.count === undefined) {
+      if (
+        intent.key === "G" &&
+        intent.count === undefined &&
+        this.state.timelineMode !== "visual"
+      ) {
         this.transcript.scrollToEnd();
         this.setTimelineFollowing(true);
       } else {
@@ -3149,33 +3334,29 @@ export class DeckTui {
       this.timeline.pageText(intent.direction, amount + 1);
       this.transcript.scrollBy(intent.direction * amount);
       this.revealTimelineCursor();
-      this.pauseIfScrolledAwayFromEnd();
-      this.renderScheduler.requestImmediate();
-      return;
-    }
-    if (intent.type === "timeline-scroll-viewport") {
-      this.transcript.scrollBy(intent.direction);
       this.pauseTimeline();
       this.renderScheduler.requestImmediate();
       return;
     }
-    if (intent.type === "timeline-align") {
-      const position = this.timeline.cursorBodyLine();
-      const height = Math.max(1, this.transcript.viewportHeight);
-      const offset =
-        intent.position === "top"
-          ? 0
-          : intent.position === "middle"
-            ? Math.floor(height / 2)
-            : height - 1;
-      this.transcript.scrollTo(Math.max(0, position - offset + 1), { disableFollow: true });
-      this.pauseTimeline();
+    if (intent.type === "timeline-swap-endpoints") {
+      this.timeline.swapEndpoints();
+      this.revealTimelineCursor();
       this.renderScheduler.requestImmediate();
+      return;
+    }
+    if (intent.type === "timeline-reselect") {
+      if (this.timeline.reselect()) {
+        this.emit({ type: "set-timeline-mode", mode: "visual" });
+        this.revealTimelineCursor();
+        this.pauseTimeline();
+        this.renderScheduler.requestImmediate();
+      }
       return;
     }
     if (intent.type === "timeline-visual") {
-      this.timeline.startVisual(intent.selection);
-      this.emit({ type: "set-timeline-mode", mode: "visual" });
+      const visual = this.timeline.startVisual(intent.selection);
+      this.emit({ type: "set-timeline-mode", mode: visual ? "visual" : "normal" });
+      this.pauseTimeline();
       this.renderScheduler.requestImmediate();
       return;
     }
@@ -3189,15 +3370,23 @@ export class DeckTui {
       this.renderScheduler.requestImmediate();
       return;
     }
+    if (intent.type === "timeline-yank-motion") {
+      const copy = this.timeline.yankMotion(intent.key, intent.count, intent.character);
+      if (copy?.text) void this.copyTimelineTarget(copy.text, copy.kind);
+      return;
+    }
     if (intent.type === "timeline-yank") {
-      const value = this.timeline.yankText();
-      if (value) void this.copyTimelineTarget(value, this.timeline.clipboardKind());
-      else this.emit({ type: "notify", message: "No timeline text selected." });
+      const kind = intent.rows ? "line" : this.timeline.clipboardKind();
+      const value = this.timeline.yankText(intent.rows);
+      if (value) void this.copyTimelineTarget(value, kind);
+      this.timeline.clearVisual();
+      this.emit({ type: "set-timeline-mode", mode: "normal" });
+
       return;
     }
     if (intent.type === "timeline-yank-object") {
-      const value = this.timeline.yankObject(intent.object);
-      if (value || intent.object === "line")
+      const value = this.timeline.yankObject(intent.object, intent.count);
+      if (value)
         void this.copyTimelineTarget(value, intent.object === "line" ? "line" : "character");
       else this.emit({ type: "notify", message: "No timeline text at cursor." });
       return;
@@ -3212,14 +3401,13 @@ export class DeckTui {
       if (intent.action === "yank") {
         if (value === undefined)
           this.emit({ type: "notify", message: "No text object at timeline cursor." });
-        else void this.copyTimelineTarget(value);
+        else if (value) void this.copyTimelineTarget(value);
       } else this.renderScheduler.requestImmediate();
       return;
     }
     if (intent.type === "timeline-open-link") {
       const url = this.timeline.linkAtCursor();
-      if (!url) this.emit({ type: "notify", message: "No link at timeline cursor." });
-      else
+      if (url)
         void Promise.resolve()
           .then(() => this.openLink(url))
           .catch((error: unknown) =>
@@ -3242,23 +3430,25 @@ export class DeckTui {
       this.timeline.startVisual("character");
     if (intent.type === "scroll-timeline") {
       const amount = Math.max(1, Math.floor(this.transcript.viewportHeight / 2));
+      const before = this.transcript.scrollTop;
+      this.transcript.scrollBy(intent.direction * amount);
       if (
         this.state.focus === "timeline" &&
+        this.state.timelineMode !== "visual" &&
         !this.localOverlayKey &&
         this.state.modal.type === "none"
       ) {
-        this.timeline.pageText(intent.direction, amount + 1);
-        this.transcript.scrollBy(intent.direction * amount);
-        this.revealTimelineCursor();
-      } else this.transcript.scrollBy(intent.direction * amount);
-      this.pauseIfScrolledAwayFromEnd();
+        const delta = this.transcript.scrollTop - before;
+        if (delta) this.timeline.pageText(delta < 0 ? -1 : 1, Math.abs(delta) + 1);
+      }
+      this.pauseTimeline();
       this.renderScheduler.requestImmediate();
       return;
     }
     if (intent.type === "move-timeline-selection") {
       this.timeline.moveSelection(intent.direction);
       this.revealTimelineSelection();
-      this.pauseIfScrolledAwayFromEnd();
+      this.pauseTimeline();
       this.renderScheduler.requestImmediate();
       return;
     }
@@ -3411,6 +3601,16 @@ export class DeckTui {
       new Dialog(
         [
           `Paseo Deck keys · ${context}`,
+          ...(context === "timeline"
+            ? [
+                "Read-only: shared motions/counts/finds; yy/Y counted rows; y + motion/object.",
+                "v/V character/row selection; o/O swaps; gv restores; y/Y copies then Normal.",
+                "Ctrl-U/D: Normal moves cursor with viewport; Visual/background preserves endpoints.",
+                "Ctrl-B/F or PageUp/Down pages; H/M/L targets visible rows. Only bare Normal G follows.",
+                "Normal gx opens cursor link; za folds; [t/]t turns; [e/]e errors, never retry.",
+                "Character copy rejoins wraps; row copy retains displayed rows. Escape cancels pending first.",
+              ]
+            : []),
           ...(context === "composer"
             ? [
                 "Normal Enter sends; Insert Enter/Alt-Enter adds a newline.",
@@ -3645,10 +3845,6 @@ export class DeckTui {
     const agentId = this.state.selectedAgentId;
     if (!agentId) return;
     this.persistPausedTimeline(agentId, this.timeline.cursorAtLine(this.transcript.scrollTop));
-  }
-
-  private pauseIfScrolledAwayFromEnd(): void {
-    if (!this.transcript.isFollowingEnd) this.pauseTimeline();
   }
 
   private persistPausedTimeline(
