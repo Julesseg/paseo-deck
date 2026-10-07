@@ -284,12 +284,10 @@ describe("DeckController keyboard seam", () => {
   it.each([
     ["\u0018", "stop"],
     ["\u0001", "archive"],
-    ["d", "detach"],
   ] as const)("requires confirmation before %s operation", (key, action) => {
     const intents: unknown[] = [];
     const controller = new DeckController(
-      () =>
-        key === "d" ? makeState() : { ...makeState(), focus: "composer", composerMode: "normal" },
+      () => ({ ...makeState(), focus: "composer", composerMode: "normal" }),
       (intent) => intents.push(intent),
     );
 
@@ -521,7 +519,7 @@ describe("DeckController keyboard seam", () => {
     expect(intents).toEqual([]);
   });
 
-  it("treats arrows and g/G as their Vim navigation equivalents outside editors", () => {
+  it("treats arrows and gg/G as their Vim navigation equivalents outside editors", () => {
     const intents: unknown[] = [];
     const controller = new DeckController(
       () => makeState(),
@@ -532,6 +530,7 @@ describe("DeckController keyboard seam", () => {
     controller.handleKey("\u001b[B");
     controller.handleKey("\u001b[D");
     controller.handleKey("\u001b[C");
+    controller.handleKey("g");
     controller.handleKey("g");
     controller.handleKey("G");
 
@@ -743,7 +742,7 @@ describe("DeckController keyboard seam", () => {
       (intent) => intents.push(intent),
     );
 
-    controller.handleKey("E");
+    controller.invokeCommand("error-details");
 
     expect(intents).toContainEqual({
       type: "open-error-details",
@@ -763,7 +762,8 @@ describe("DeckController keyboard seam", () => {
       (intent) => intents.push(intent),
     );
 
-    expect(controller.handleKey("R")).toBe(true);
+    expect(controller.handleKey("R")).toBe(false);
+    expect(controller.invokeCommand("retry")).toBe(true);
     expect(intents).toEqual([{ type: "retry-notification", id: 4 }]);
   });
 

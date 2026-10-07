@@ -199,7 +199,7 @@ class TreeView implements Component {
             : this.state.connection === "disconnected"
               ? "Paseo is disconnected. Press r to retry."
               : this.state.filter.trim()
-                ? `No projects or workspaces match “${sanitizeTerminalText(this.state.filter)}”. Press Esc to clear the filter.`
+                ? `No projects or workspaces match “${sanitizeTerminalText(this.state.filter)}”. Press / to change the filter.`
                 : "No projects or workspaces are available yet. Press r to refresh.";
       output.push(
         header,
@@ -3785,7 +3785,7 @@ export class DeckTui {
       );
     else if (modal.type === "filter")
       component = new InputDialog(
-        "Filter sessions",
+        "Filter Project/Workspace names",
         modal.query,
         (value) => this.emit({ type: "create-choice", choice: value }),
         close,

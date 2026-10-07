@@ -116,7 +116,7 @@ describe("command registry", () => {
         { ...base, directory: { ...base.directory, agents: [{ ...agent, availableModeIds: [] }] } },
         "mode",
       )?.disabledReason,
-    ).toContain("No modes");
+    ).toBeUndefined();
   });
 
   it("uses composer-specific controls for model, thinking, and operational mode", () => {
@@ -148,7 +148,7 @@ describe("command registry", () => {
     ]);
   });
 
-  it("keeps direct and palette retry and error-detail intents identical", () => {
+  it("keeps Sidebar utilities palette-only", () => {
     const current: AppState = {
       ...state(),
       notifications: [
@@ -167,14 +167,12 @@ describe("command registry", () => {
       () => current,
       (intent) => intents.push(intent),
     );
-    controller.handleKey("R");
+    expect(controller.handleKey("R")).toBe(false);
     controller.invokeCommand("retry");
-    controller.handleKey("E");
+    expect(controller.handleKey("E")).toBe(false);
     controller.invokeCommand("error-details");
     expect(intents).toEqual([
       { type: "retry-notification", id: 7 },
-      { type: "retry-notification", id: 7 },
-      { type: "open-error-details", message: "Failed", detail: "safe details" },
       { type: "open-error-details", message: "Failed", detail: "safe details" },
     ]);
   });

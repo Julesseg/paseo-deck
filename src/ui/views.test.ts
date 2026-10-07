@@ -3551,8 +3551,8 @@ describe("DeckTui viewport and focus", () => {
     await terminal.waitForRender();
     await deck.stop();
 
-    expect(terminal.viewport().join("\n")).toContain("[  Narrow session tree");
-    expect(terminal.viewport().join("\n")).toContain("]  Widen session tree");
+    expect(terminal.viewport().join("\n")).toContain("[  Narrow Sidebar");
+    expect(terminal.viewport().join("\n")).toContain("]  Widen Sidebar");
   });
 
   it("applies tree-width keys locally and restores the expanded tree view", async () => {

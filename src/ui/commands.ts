@@ -50,10 +50,16 @@ export interface ResolvedCommand extends Omit<DeckCommand, "disabledReason"> {
 const selectedAgent = (state: AppState): string | undefined => state.selectedAgentId;
 const requireAgent = (state: AppState): string | undefined =>
   selectedAgent(state) ? undefined : "Select an active session first";
+export const targetWorkspaceId = (state: AppState): string | undefined =>
+  state.focus === "tree"
+    ? state.sidebarSelection?.kind === "workspace"
+      ? state.sidebarSelection.id
+      : undefined
+    : state.selectedWorkspaceId;
 const requireWorkspace = (state: AppState): string | undefined =>
-  state.selectedWorkspaceId &&
+  targetWorkspaceId(state) &&
   state.directory.workspaces.some(
-    (workspace) => workspace.id === state.selectedWorkspaceId && !workspace.archived,
+    (workspace) => workspace.id === targetWorkspaceId(state) && !workspace.archived,
   )
     ? undefined
     : "Select an active workspace first";
@@ -142,10 +148,10 @@ export const deckCommands: readonly DeckCommand[] = [
     shortcuts: [],
     contexts: ["tree", "timeline"],
     palette: true,
-    disabledReason: (state) => (state.selectedWorkspaceId ? undefined : "Select a workspace first"),
+    disabledReason: requireWorkspace,
     intent: (state) => ({
       type: "open-create-terminal",
-      workspaceId: state.selectedWorkspaceId ?? "",
+      workspaceId: targetWorkspaceId(state) ?? "",
     }),
   },
   {
@@ -298,7 +304,7 @@ export const deckCommands: readonly DeckCommand[] = [
   },
   {
     id: "open-selection",
-    label: "Open or toggle selected session",
+    label: "Activate highlighted Workspace",
     group: "Sessions",
     shortcuts: ["Enter"],
     contexts: ["tree"],
@@ -482,16 +488,16 @@ export const deckCommands: readonly DeckCommand[] = [
   },
   {
     id: "tree-start",
-    label: "Go to first session",
+    label: "Go to first Sidebar row",
     group: "Sessions",
-    shortcuts: ["g"],
+    shortcuts: ["gg"],
     contexts: ["tree"],
     palette: false,
     intent: () => ({ type: "select-boundary", boundary: "start" }),
   },
   {
     id: "tree-end",
-    label: "Go to last session",
+    label: "Go to last Sidebar row",
     group: "Sessions",
     shortcuts: ["G"],
     contexts: ["tree"],
@@ -576,7 +582,7 @@ export const deckCommands: readonly DeckCommand[] = [
   },
   {
     id: "narrow-tree",
-    label: "Narrow session tree",
+    label: "Narrow Sidebar",
     group: "Sessions",
     shortcuts: ["["],
     contexts: ["tree"],
@@ -585,7 +591,7 @@ export const deckCommands: readonly DeckCommand[] = [
   },
   {
     id: "widen-tree",
-    label: "Widen session tree",
+    label: "Widen Sidebar",
     group: "Sessions",
     shortcuts: ["]"],
     contexts: ["tree"],
@@ -658,7 +664,7 @@ export const deckCommands: readonly DeckCommand[] = [
   },
   {
     id: "filter",
-    label: "Filter sessions",
+    label: "Filter Project/Workspace names",
     group: "Sessions",
     shortcuts: ["/"],
     intent: () => ({ type: "open-filter" }),
@@ -692,7 +698,7 @@ export const deckCommands: readonly DeckCommand[] = [
   },
   {
     id: "toggle-archived",
-    label: "Toggle archived sessions",
+    label: "Show/hide archived Workspaces",
     group: "Sessions",
     shortcuts: ["v"],
     intent: () => ({ type: "toggle-archived" }),
@@ -895,6 +901,20 @@ export function resolvedCommands(
   context: CommandContext = commandContext(state),
 ): readonly ResolvedCommand[] {
   return deckCommands
+    .filter(
+      (command) =>
+        context !== "tree" ||
+        ![
+          "stop-agent",
+          "archive-agent",
+          "detach-agent",
+          "rename-agent",
+          "model",
+          "mode",
+          "operational-mode",
+          "thinking",
+        ].includes(command.id),
+    )
     .filter((command) => !command.contexts || command.contexts.includes(context))
     .map((command) => {
       const { disabledReason: availability, ...definition } = command;
@@ -915,6 +935,11 @@ export function resolvedCommands(
             !state.activeTerminalId &&
             (state.timelineMode ?? "normal") === "normal")
         )
+      )
+        shortcuts = [];
+      if (
+        context === "tree" &&
+        ["refresh", "notifications", "retry", "error-details", "terminal-kill"].includes(command.id)
       )
         shortcuts = [];
       return { ...definition, shortcuts, ...(disabledReason ? { disabledReason } : {}) };
