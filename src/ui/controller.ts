@@ -435,14 +435,17 @@ export class DeckController {
       }
       return this.send({ type: "scroll-timeline", direction: data === "\u0015" ? -1 : 1 });
     }
-    if (
-      state.focus === "tree" &&
-      state.modal.type === "none" &&
-      this.#tabPrefix === "g" &&
-      data === "?"
-    ) {
-      this.cancelPendingInput();
-      return this.send({ type: "open-help" });
+    if (state.focus === "tree" && state.modal.type === "none") {
+      if (this.#tabPrefix === "g") {
+        this.#tabPrefix = "";
+        if (data === "g") return this.send({ type: "select-boundary", boundary: "start" });
+        if (data === "?") return this.send({ type: "open-help" });
+        return true;
+      }
+      if (data === "g") {
+        this.#tabPrefix = "g";
+        return true;
+      }
     }
     const normalBuffer =
       state.modal.type === "none" &&
