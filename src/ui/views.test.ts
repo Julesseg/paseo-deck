@@ -3876,3 +3876,59 @@ describe("DeckTui viewport and focus", () => {
     expect(terminal.writes.join("")).not.toContain("•");
   });
 });
+
+describe("Launch composer", () => {
+  it("switches resource controls through keyboard input without workspace placement controls or tabs", async () => {
+    const { ApplicationController } = await import("../app/controller.js");
+    const { FakePaseoGateway } = await import("../paseo/fake-gateway.js");
+    const gateway = new FakePaseoGateway(state().directory);
+    gateway.terminalProfiles = [{ id: "tools", name: "Tools", command: "zsh" }];
+    const app = new ApplicationController(gateway);
+    await app.start();
+    const terminal = new RecordingTerminal(100, 28);
+    const deck = new DeckTui(terminal, app.state, (intent) => void app.handleIntent(intent));
+    const unsubscribe = app.subscribe((next) => deck.update(next));
+    deck.start();
+    try {
+      await terminal.waitForRender();
+      expect(terminal.viewport().join("\n")).toContain("Launch Session");
+      expect(terminal.viewport().join("\n")).toContain("[\\m]");
+      terminal.sendInput("\\");
+      terminal.sendInput("c");
+      await terminal.waitForRender();
+      const screen = terminal.viewport().join("\n");
+      expect(screen).toContain("Launch Terminal");
+      expect(screen).toContain("First command");
+      expect(screen).toContain("[\\p]");
+      for (const absent of [
+        "[\\m]",
+        "[\\z]",
+        "[\\o]",
+        "Session draft",
+        "New session",
+        "Base branch",
+        "Local",
+        "Worktree",
+      ])
+        expect(screen).not.toContain(absent);
+      terminal.sendInput("\\");
+      terminal.sendInput("p");
+      await terminal.waitForRender();
+      expect(terminal.viewport().join("\n")).toContain("Tools");
+      terminal.sendInput("\u001b");
+      terminal.sendInput("i");
+      terminal.sendInput("pwd");
+      terminal.sendInput("\u001b");
+      terminal.sendInput("\\");
+      terminal.sendInput("s");
+      await terminal.waitForRender();
+      expect(gateway.terminalInput).toEqual([{ terminalId: "fake-terminal-1", data: "pwd\r" }]);
+      expect(terminal.viewport().join("\n")).not.toContain("Launch Terminal");
+      expect(terminal.viewport().join("\n")).toContain("Terminal");
+    } finally {
+      unsubscribe();
+      await deck.stop();
+      await app.releaseObservations();
+    }
+  });
+});

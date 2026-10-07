@@ -1,5 +1,6 @@
 import type { AppState, FocusArea } from "../contracts/app-state.js";
 import { activeSessionDraftWorkspaceId, selectedComposerDraft } from "../state/composer.js";
+import { activeLaunchWorkspaceId } from "../state/launch.js";
 import { activeNotification, pendingPermissions } from "../state/store.js";
 import type { UiIntent } from "./controller.js";
 
@@ -30,6 +31,7 @@ export type CommandContext =
   | "create-agent"
   | "create-terminal"
   | "new-tab"
+  | "launch-profile"
   | "draft-setting"
   | "mode"
   | "thinking"
@@ -80,12 +82,16 @@ export const deckCommands: readonly DeckCommand[] = [
     palette: false,
     disabledReason: (state) =>
       selectedComposerDraft(state).trim() &&
-      (activeSessionDraftWorkspaceId(state) || state.selectedAgentId)
+      (activeLaunchWorkspaceId(state) ||
+        activeSessionDraftWorkspaceId(state) ||
+        state.selectedAgentId)
         ? undefined
         : "No prompt to send",
     intent: (state) => {
       const workspaceId = activeSessionDraftWorkspaceId(state);
       const prompt = selectedComposerDraft(state);
+      const launchId = activeLaunchWorkspaceId(state);
+      if (launchId) return { type: "submit-launch", workspaceId: launchId, prompt };
       return workspaceId
         ? { type: "submit-session-draft", workspaceId, prompt }
         : { type: "submit-composer", agentId: state.selectedAgentId ?? "", prompt };
@@ -172,6 +178,7 @@ export const deckCommands: readonly DeckCommand[] = [
       "create-agent",
       "new-tab",
       "draft-setting",
+      "launch-profile",
       "palette",
       "help",
       "mode",

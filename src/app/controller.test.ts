@@ -1462,3 +1462,243 @@ describe("New Tab terminals", () => {
     expect(app.state.modal.type).toBe("none");
   });
 });
+
+describe("empty workspace launch", () => {
+  it("launches the first session with its message and replaces Launch with its tab", async () => {
+    const gateway = new FakePaseoGateway({ ...snapshot, agents: [] });
+    const app = new ApplicationController(gateway);
+    await app.start();
+    await app.handleIntent({
+      type: "submit-launch",
+      workspaceId: "workspace-1",
+      prompt: "Build the first feature",
+    });
+    expect(gateway.commands).toEqual([
+      {
+        type: "create-agent",
+        workspaceId: "workspace-1",
+        providerId: "codex",
+        modelId: "gpt-5.6",
+        prompt: "",
+      },
+      { type: "send-prompt", agentId: "fake-agent-1", prompt: "Build the first feature" },
+    ]);
+    expect(app.state.activeTabIds["workspace-1"]).toBe("session:fake-agent-1");
+    expect(app.state.sessionDrafts).toEqual({});
+  });
+});
+
+describe("Launch recovery", () => {
+  it("keeps the first message and hides a partially created session until retry sends it", async () => {
+    class FailedFirstInput extends FakePaseoGateway {
+      fail = true;
+      override async execute(command: import("../contracts/commands.js").AgentCommand) {
+        if (command.type === "send-prompt" && this.fail) {
+          const template = snapshot.agents[0];
+          if (!template) throw new Error("Missing session fixture");
+          this.emitDirectory({
+            type: "agent-upserted",
+            agent: { ...template, id: command.agentId },
+          });
+          throw new Error("first message rejected");
+        }
+        return super.execute(command);
+      }
+    }
+    const gateway = new FailedFirstInput({ ...snapshot, agents: [] });
+    const app = new ApplicationController(gateway);
+    await app.start();
+    await app.handleIntent({
+      type: "submit-launch",
+      workspaceId: "workspace-1",
+      prompt: "Retain this message",
+    });
+    expect(app.state.launchDrafts?.["workspace-1"]).toMatchObject({
+      prompt: "Retain this message",
+      createdAgentId: "fake-agent-1",
+      submitting: false,
+      error: expect.stringContaining("retry"),
+    });
+    expect(app.state.tabOrder["workspace-1"]).toEqual([]);
+    gateway.fail = false;
+    await app.handleIntent({
+      type: "submit-launch",
+      workspaceId: "workspace-1",
+      prompt: "Retain this message",
+    });
+    expect(gateway.commands.filter((command) => command.type === "create-agent")).toHaveLength(1);
+    expect(app.state.activeTabIds["workspace-1"]).toBe("session:fake-agent-1");
+    expect(app.state.launchDrafts?.["workspace-1"]).toBeUndefined();
+  });
+});
+
+describe("Terminal Launch", () => {
+  it("retains separate messages across mode switches and launches the chosen profile with the first command", async () => {
+    const gateway = new FakePaseoGateway({ ...snapshot, agents: [] });
+    gateway.terminalProfiles = [{ id: "tools", name: "Tools", command: "zsh" }];
+    const app = new ApplicationController(gateway);
+    await app.start();
+    app.setComposerText("Session idea");
+    await app.handleIntent({ type: "toggle-launch-kind" });
+    app.setComposerText("pwd");
+    await app.handleIntent({ type: "open-launch-profile" });
+    await app.handleIntent({ type: "launch-profile-choice", profileId: "tools" });
+    await app.handleIntent({ type: "toggle-launch-kind" });
+    expect(selectedComposerDraft(app.state)).toBe("Session idea");
+    await app.handleIntent({ type: "toggle-launch-kind" });
+    expect(selectedComposerDraft(app.state)).toBe("pwd");
+    await app.handleIntent({ type: "submit-launch", workspaceId: "workspace-1", prompt: "pwd" });
+    expect(gateway.createdTerminals[0]?.options).toMatchObject({ command: "zsh" });
+    expect(gateway.terminalInput).toEqual([{ terminalId: "fake-terminal-1", data: "pwd\r" }]);
+    expect(app.state.activeTerminalId).toBe("fake-terminal-1");
+    expect(app.state.launchDrafts?.["workspace-1"]).toBeUndefined();
+  });
+});
+
+describe("Launch settings", () => {
+  it("uses selected session settings without making a Session draft", async () => {
+    const gateway = new FakePaseoGateway({ ...snapshot, agents: [] });
+    const app = new ApplicationController(gateway);
+    await app.start();
+    await app.handleIntent({ type: "open-draft-setting", setting: "thinking" });
+    expect(app.state.modal).toMatchObject({ type: "draft-setting", setting: "thinking" });
+    await app.handleIntent({ type: "draft-setting-choice", choice: "medium" });
+    await app.handleIntent({
+      type: "submit-launch",
+      workspaceId: "workspace-1",
+      prompt: "Think carefully",
+    });
+    expect(gateway.commands[0]).toMatchObject({ type: "create-agent", thinkingLevel: "medium" });
+    expect(app.state.sessionDrafts).toEqual({});
+  });
+});
+
+describe("Launch availability", () => {
+  it("loads terminal profiles and daemon model defaults when opening an empty workspace", async () => {
+    const provider = snapshot.providers[0];
+    if (!provider) throw new Error("Missing provider fixture");
+    const gateway = new FakePaseoGateway({
+      ...snapshot,
+      agents: [],
+      providers: [
+        {
+          ...provider,
+          defaultModelId: "preferred",
+          models: [
+            ...provider.models,
+            { id: "preferred", name: "Preferred", selectable: true, thinkingLevels: [] },
+          ],
+        },
+      ],
+    });
+    gateway.terminalProfiles = [{ id: "tools", name: "Tools", command: "zsh" }];
+    const app = new ApplicationController(gateway);
+    await app.start();
+    expect(app.state.launchDrafts?.["workspace-1"]).toMatchObject({
+      modelId: "preferred",
+      profiles: gateway.terminalProfiles,
+    });
+  });
+});
+
+describe("Terminal Launch failures", () => {
+  it("retains a created terminal after input fails and retries without creating a duplicate", async () => {
+    class FailedInput extends FakePaseoGateway {
+      fail = true;
+      override sendTerminalInput(id: string, data: string) {
+        if (this.fail) throw new Error("transport offline");
+        super.sendTerminalInput(id, data);
+      }
+    }
+    const gateway = new FailedInput({ ...snapshot, agents: [] });
+    const app = new ApplicationController(gateway);
+    await app.start();
+    await app.handleIntent({ type: "toggle-launch-kind" });
+    app.setComposerText("printf hello");
+    await app.handleIntent({
+      type: "submit-launch",
+      workspaceId: "workspace-1",
+      prompt: "printf hello",
+    });
+    expect(app.state.launchDrafts?.["workspace-1"]).toMatchObject({
+      kind: "terminal",
+      command: "printf hello",
+      error: expect.stringContaining("retry"),
+      submitting: false,
+    });
+    expect(app.state.activeTerminalId).toBeUndefined();
+    await app.handleIntent({ type: "toggle-launch-kind" });
+    expect(app.state.launchDrafts?.["workspace-1"]?.kind).toBe("terminal");
+    gateway.fail = false;
+    await app.handleIntent({
+      type: "submit-launch",
+      workspaceId: "workspace-1",
+      prompt: "printf hello",
+    });
+    expect(gateway.createdTerminals).toHaveLength(1);
+    expect(gateway.terminalInput).toEqual([
+      { terminalId: "fake-terminal-1", data: "printf hello\r" },
+    ]);
+    expect(app.state.activeTerminalId).toBe("fake-terminal-1");
+  });
+
+  it.each(["pwd\nrm -rf .", "pwd\r", "\u001b[31m", "\u0000", " "])(
+    "rejects an unsafe first command %j before terminal creation",
+    async (command) => {
+      const gateway = new FakePaseoGateway({ ...snapshot, agents: [] });
+      const app = new ApplicationController(gateway);
+      await app.start();
+      await app.handleIntent({ type: "toggle-launch-kind" });
+      app.setComposerText(command);
+      await app.handleIntent({
+        type: "submit-launch",
+        workspaceId: "workspace-1",
+        prompt: command,
+      });
+      expect(gateway.createdTerminals).toEqual([]);
+      expect(selectedComposerDraft(app.state)).toBe(command);
+      expect(app.state.launchDrafts?.["workspace-1"]?.error).toContain("one command");
+    },
+  );
+});
+
+describe("Launch submission lifecycle", () => {
+  it("keeps the launch visible during creation and preserves its input after a creation failure", async () => {
+    let rejectCreation!: (error: Error) => void;
+    class DelayedCreation extends FakePaseoGateway {
+      override async createTerminal(
+        _id: string,
+      ): Promise<import("../contracts/terminal.js").TerminalRecord> {
+        return new Promise((_resolve, reject) => {
+          rejectCreation = reject;
+        });
+      }
+    }
+    const gateway = new DelayedCreation({ ...snapshot, agents: [] });
+    const app = new ApplicationController(gateway);
+    await app.start();
+    await app.handleIntent({ type: "toggle-launch-kind" });
+    app.setComposerText("ls -la");
+    const submission = app.handleIntent({
+      type: "submit-launch",
+      workspaceId: "workspace-1",
+      prompt: "ls -la",
+    });
+    expect(app.state.launchDrafts?.["workspace-1"]).toMatchObject({
+      kind: "terminal",
+      submitting: true,
+    });
+    expect(app.state.tabOrder["workspace-1"]).toEqual([]);
+    await app.handleIntent({ type: "toggle-launch-kind" });
+    app.setComposerText("accidental edit");
+    expect(selectedComposerDraft(app.state)).toBe("ls -la");
+    rejectCreation(new Error("creation denied"));
+    await submission;
+    expect(app.state.launchDrafts?.["workspace-1"]).toMatchObject({
+      kind: "terminal",
+      command: "ls -la",
+      submitting: false,
+      error: expect.stringContaining("creation denied"),
+    });
+  });
+});

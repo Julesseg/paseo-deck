@@ -1,6 +1,7 @@
 import type { AppState, FocusArea, ModalState } from "../contracts/app-state.js";
 import type { AgentCommand } from "../contracts/commands.js";
 import { activeSessionDraftWorkspaceId } from "../state/composer.js";
+import { activeLaunchWorkspaceId, launchDraft } from "../state/launch.js";
 import { commandById, commandForKey, newTabUnavailableReason } from "./commands.js";
 
 const timelineTextMotionKeys = [
@@ -30,6 +31,10 @@ const timelineTextMotionKeys = [
 type TimelineTextMotionKey = (typeof timelineTextMotionKeys)[number];
 
 export type UiIntent =
+  | { type: "toggle-launch-kind" }
+  | { type: "open-launch-profile" }
+  | { type: "launch-profile-choice"; profileId: string }
+  | { type: "submit-launch"; workspaceId: string; prompt: string }
   | { type: "switch-tab"; direction: -1 | 1; count?: number | undefined }
   | { type: "open-terminal"; terminalId: string }
   | { type: "kill-terminal" }
@@ -175,7 +180,15 @@ export class DeckController {
       this.#bufferLeader = false;
       if (data === "\u001b") return true;
       const key = `\\${data}`;
-      if (state.focus === "composer" && activeSessionDraftWorkspaceId(state)) {
+      const launchId = activeLaunchWorkspaceId(state);
+      if (state.focus === "composer" && launchId) {
+        if (data === "c") return this.send({ type: "toggle-launch-kind" });
+        if (launchDraft(state, launchId).kind === "terminal") {
+          if (data === "p") return this.send({ type: "open-launch-profile" });
+          if (["m", "z", "o"].includes(data)) return true;
+        }
+      }
+      if (state.focus === "composer" && (activeSessionDraftWorkspaceId(state) || launchId)) {
         const setting = ({ p: "provider", m: "model", z: "thinking", o: "mode" } as const)[
           data as "p" | "m" | "z" | "o"
         ];
@@ -284,7 +297,11 @@ export class DeckController {
       if (data === "\u001b") return this.send({ type: "close-modal" });
       return false;
     }
-    if (state.modal.type === "new-tab" || state.modal.type === "draft-setting") {
+    if (
+      state.modal.type === "new-tab" ||
+      state.modal.type === "draft-setting" ||
+      state.modal.type === "launch-profile"
+    ) {
       if (data === "\u001b") return this.send({ type: "close-modal" });
       return false;
     }

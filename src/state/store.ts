@@ -21,8 +21,15 @@ import type {
 } from "../contracts/domain.js";
 import type { TerminalRecord } from "../contracts/terminal.js";
 import { activeSessionDraftWorkspaceId, createComposerState } from "./composer.js";
+import { activeLaunchWorkspaceId, launchDraft } from "./launch.js";
 
 export type AppAction =
+  | {
+      type: "set-launch-draft";
+      workspaceId: string;
+      changes: Partial<import("../contracts/app-state.js").LaunchDraft>;
+    }
+  | { type: "complete-launch"; workspaceId: string }
   | { type: "directory"; update: DirectoryUpdate }
   | { type: "select-agent"; agentId?: string; preserveSidebar?: boolean }
   | { type: "open-session-tab"; agentId: string; preserveSidebar?: boolean }
@@ -190,6 +197,11 @@ function reconcileTabs(state: AppState): AppState {
   const tabOrder: Record<string, readonly TabId[]> = {};
   const activeTabIds: Record<string, TabId> = {};
   for (const workspace of state.directory.workspaces) {
+    const launch = state.launchDrafts?.[workspace.id];
+    if (launch && (launch.submitting || launch.createdAgentId || launch.createdTerminal)) {
+      tabOrder[workspace.id] = [];
+      continue;
+    }
     const sessions = state.directory.agents
       .filter((agent) => agent.workspaceId === workspace.id && !agent.archived)
       .map((agent): TabId => `session:${agent.id}`);
@@ -748,6 +760,19 @@ function reconcilePermissionRemovals(state: AppState, directory: DirectorySnapsh
 
 export function reduceApp(state: AppState, action: AppAction): AppState {
   switch (action.type) {
+    case "set-launch-draft":
+      return {
+        ...state,
+        launchDrafts: {
+          ...state.launchDrafts,
+          [action.workspaceId]: { ...launchDraft(state, action.workspaceId), ...action.changes },
+        },
+      };
+    case "complete-launch": {
+      const launchDrafts = { ...state.launchDrafts };
+      delete launchDrafts[action.workspaceId];
+      return reconcileTabs({ ...state, launchDrafts });
+    }
     case "directory": {
       const directory = directoryUpdate(state.directory, action.update);
       const connection: ConnectionState =
@@ -860,8 +885,13 @@ export function reduceApp(state: AppState, action: AppAction): AppState {
       );
       if (!workspace) return state;
       const defaults = state.creationDefaults[action.workspaceId];
+      const launchDrafts = { ...state.launchDrafts };
+      const launch = launchDrafts[action.workspaceId];
+      if (launch?.submitting || launch?.createdAgentId || launch?.createdTerminal) return state;
+      delete launchDrafts[action.workspaceId];
       return reconcileTabs({
         ...state,
+        launchDrafts,
         selectedWorkspaceId: action.workspaceId,
         sessionDrafts: state.sessionDrafts[action.workspaceId]
           ? state.sessionDrafts
@@ -1013,6 +1043,20 @@ export function reduceApp(state: AppState, action: AppAction): AppState {
     case "set-timeline-mode":
       return { ...state, timelineMode: action.mode };
     case "set-composer": {
+      const launchId = activeLaunchWorkspaceId(state);
+      if (launchId) {
+        const draft = launchDraft(state, launchId);
+        if (draft.submitting) return state;
+        return reduceApp(state, {
+          type: "set-launch-draft",
+          workspaceId: launchId,
+          changes: {
+            [draft.kind === "session" ? "prompt" : "command"]: action.text,
+            dirty: true,
+            error: undefined,
+          },
+        });
+      }
       const workspaceId = activeSessionDraftWorkspaceId(state);
       if (workspaceId)
         return reduceApp(state, {
