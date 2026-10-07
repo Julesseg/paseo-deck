@@ -153,3 +153,23 @@ Picker queries, Sidebar name filter and Rename use ordinary text editing. Left/R
 Ctrl-Z undoes locally; distinguishable Ctrl-Shift-Z redoes locally, with no single-line fallback chord. Native paste inserts literal text, converting each line break to a space (CRLF counts once), as one undo step. Ctrl-Y/Alt-Y private paste history is removed.
 
 Deck globals take precedence. Ctrl-K focuses Timeline from ordinary fields and selects the previous result inside searchable Choice pickers. Caret movement preserves the highlighted result. Disabled results remain visible with reasons and cannot execute; empty results cannot execute. Clearing a query leaves the applied setting unchanged. Reconfirming a setting closes without resetting dependent settings; palette and New tab entries still execute. Escape discards unapplied edits and restores the origin.
+
+### Reviewed Session settings
+
+In Composer or Timeline Normal, `mp` chooses the provider for a Session draft only;
+`mm`, `mt` and `mo` choose model, thinking and operational mode. Existing Sessions
+keep their provider. Sidebar, Insert, Visual and direct Terminal input do not
+inherit these commands. Pending buffer motions/operators keep ownership of their
+following characters, including `m`.
+
+Changing a draft provider resets model, thinking and mode to provider/model
+defaults. Changing model resets thinking and preserves mode. Thinking/mode changes
+are independent; confirming the current value closes without resets or writes.
+Settings preserve prompt, cursor, selection and undo and never submit a prompt.
+
+Unsupported, unavailable and busy choices remain visible with reasons. Existing
+model switching uses the installed SDK 0.8 Claude/Codex/Pi setter contracts; other
+providers remain disabled until their contract is verified. After an existing
+Session settings request, Deck refreshes confirmed state on success and failure.
+An earlier step can remain applied after a later rejection: there is no rollback
+or automatic retry. Review current values before explicitly choosing again.

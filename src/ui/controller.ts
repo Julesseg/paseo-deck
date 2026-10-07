@@ -57,6 +57,7 @@ export type UiIntent =
     }
   | { type: "discard-session-draft"; workspaceId: string }
   | { type: "discard-session-draft-confirmed"; workspaceId: string }
+  | { type: "open-session-setting"; setting: "provider" | "model" | "mode" | "thinking" }
   | { type: "open-draft-setting"; setting: "provider" | "model" | "mode" | "thinking" }
   | { type: "draft-setting-choice"; choice: string }
   | { type: "submit-session-draft"; workspaceId: string; prompt: string }
@@ -156,6 +157,7 @@ export type UiIntent =
   | { type: "create-choice"; choice: string };
 
 export class DeckController {
+  #settingsPrefix = false;
   #tabPrefix = "";
   #timelineOperatorCount: number | undefined;
   #timelinePrefix = "";
@@ -173,6 +175,7 @@ export class DeckController {
   }
 
   cancelPendingInput(): void {
+    this.#settingsPrefix = false;
     this.#tabPrefix = "";
     this.#timelinePrefix = "";
     this.#timelineCount = "";
@@ -450,6 +453,19 @@ export class DeckController {
       this.cancelPendingInput();
       return this.sendResolved(commandForKey(state, data), state);
     }
+    if (!normalBuffer) this.#settingsPrefix = false;
+    if (normalBuffer && this.#settingsPrefix) {
+      this.#settingsPrefix = false;
+      const setting = ({ p: "provider", m: "model", t: "thinking", o: "mode" } as const)[
+        data as "p"
+      ];
+      if (setting) return this.send({ type: "open-session-setting", setting });
+      return true;
+    }
+    if (normalBuffer && data === "m" && !this.hasPendingTimelineInput) {
+      this.#settingsPrefix = true;
+      return true;
+    }
     // ProcessTerminal enables raw mode, so Ctrl+C is delivered as input rather
     // than raising SIGINT. It must remain a global escape hatch even while an
     // editor or modal owns the keyboard.
@@ -475,6 +491,7 @@ export class DeckController {
     if (
       state.modal.type === "new-tab" ||
       state.modal.type === "draft-setting" ||
+      state.modal.type === "session-setting" ||
       state.modal.type === "launch-profile" ||
       state.modal.type === "new-workspace-project" ||
       state.modal.type === "new-workspace-placement" ||

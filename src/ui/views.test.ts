@@ -521,10 +521,10 @@ describe("composer controls", () => {
     const screen = terminal.viewport().join("\n");
     await deck.stop();
     expect(screen).toContain("✎ New session");
-    expect(screen).toContain("[Provider] ready");
-    expect(screen).toContain("[Model] one");
-    expect(screen).toContain("[Thinking] low");
-    expect(screen).toContain("[Mode] plan");
+    expect(screen).toContain("[mp] ready");
+    expect(screen).toContain("[mm] one");
+    expect(screen).toContain("[mt] low");
+    expect(screen).toContain("[mo] plan");
     expect(screen).not.toContain("Provider:");
     expect(screen).not.toContain("Press i to edit");
     expect(screen).toContain("First message");
@@ -772,9 +772,9 @@ describe("composer controls", () => {
       new DeckTheme({ color: "none", unicode: false, theme: "plain", symbols: "ascii" }),
       24,
     );
-    expect(row).toContain("[Model]");
-    expect(row).toContain("[Think]");
-    expect(row).toContain("[Mode]");
+    expect(row).toContain("[mm]");
+    expect(row).toContain("[mt]");
+    expect(row).toContain("[mo]");
     expect(terminalDisplayWidth(row)).toBeLessThanOrEqual(24);
   });
 
@@ -794,9 +794,9 @@ describe("composer controls", () => {
     const rendered = terminal.viewport().join("\n");
     await deck.stop();
 
-    expect(rendered).toContain("[Model]");
-    expect(rendered).toContain("[Think]");
-    expect(rendered).toContain("[Mode]");
+    expect(rendered).toContain("[mm]");
+    expect(rendered).toContain("[mt]");
+    expect(rendered).toContain("[mo]");
     expect(rendered).not.toContain("Composer NORMAL:");
     expect(rendered).not.toContain("Sidebar:");
     expect(rendered).not.toContain("Timeline NORMAL:");
@@ -3898,7 +3898,7 @@ describe("Launch composer", () => {
     try {
       await terminal.waitForRender();
       expect(terminal.viewport().join("\n")).toContain("Launch Session");
-      expect(terminal.viewport().join("\n")).toContain("[Model]");
+      expect(terminal.viewport().join("\n")).toContain("[mm]");
       await app.handleIntent({ type: "toggle-launch-kind" });
       await terminal.waitForRender();
       const screen = terminal.viewport().join("\n");
@@ -3992,7 +3992,7 @@ describe("New workspace composer", () => {
       screen = terminal.viewport().join("\n");
       expect(screen).toContain("New workspace");
       expect(screen).toContain("Terminal");
-      expect(screen).not.toContain("[Model]");
+      expect(screen).not.toContain("[mm]");
       terminal.sendInput("\u001b");
       await terminal.waitForRender();
       expect(app.state.newWorkspace).toBeDefined();
