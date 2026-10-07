@@ -151,7 +151,7 @@ it("reports clipboard failures without pasting the prior copied value or changin
   }
 });
 
-it("discards a clipboard read after switching the active resource", async () => {
+it("keeps clipboard reads through background updates and discards them after switching resource", async () => {
   const agents = ["a", "b"].map((id) => ({
     id,
     workspaceId: "w",
@@ -195,11 +195,16 @@ it("discards a clipboard read after switching the active resource", async () => 
   deck.start();
   try {
     terminal.sendInput("p");
+    await app.handleIntent({ type: "notify", message: "Background update" });
+    finishRead("fresh");
+    await terminal.waitForRender();
+    expect(selectedComposerDraft(app.state)).toBe("first draftfresh");
+    terminal.sendInput("p");
     await app.selectAgent("b");
     finishRead("late clipboard text");
     await terminal.waitForRender();
     expect(selectedComposerDraft(app.state)).toBe("");
-    expect(app.state.composer.drafts.a).toBe("first draft");
+    expect(app.state.composer.drafts.a).toBe("first draftfresh");
     expect(terminal.viewport().join("\n")).not.toContain("late clipboard text");
     expect(gateway.commands).toEqual([]);
   } finally {

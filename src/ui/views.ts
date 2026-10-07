@@ -1479,6 +1479,7 @@ class ComposerView implements Component, Focusable {
   private draftWorkspaceId: string | undefined;
   private state: AppState;
   private vim: ComposerVimState;
+  private inputRevision = 0;
   private visibleEditorLines = 3;
   constructor(
     tui: TUI,
@@ -1620,6 +1621,7 @@ class ComposerView implements Component, Focusable {
   }
 
   handleInput(data: string): void {
+    this.inputRevision++;
     const launchId = activeLaunchWorkspaceId(this.state);
     if (launchId && launchDraft(this.state, launchId).submitting) return;
     if (data.startsWith("\u001b[200~")) {
@@ -1729,11 +1731,20 @@ class ComposerView implements Component, Focusable {
     if (result.paste) {
       const paste = result.paste;
       const capturedState = this.vim;
+      const capturedRevision = this.inputRevision;
       const capturedResource = this.clipboardResource();
       void this.clipboard
         .read()
         .then((value) => {
-          if (this.vim !== capturedState || this.clipboardResource() !== capturedResource) return;
+          if (
+            this.inputRevision !== capturedRevision ||
+            this.clipboardResource() !== capturedResource ||
+            this.vim.text !== capturedState.text ||
+            this.vim.cursor !== capturedState.cursor ||
+            this.vim.mode !== capturedState.mode ||
+            this.vim.anchor !== capturedState.anchor
+          )
+            return;
           this.applyVimResult({
             state: applyComposerPaste(capturedState, value.text, value.kind, paste),
             handled: true,
@@ -1754,6 +1765,7 @@ class ComposerView implements Component, Focusable {
   }
 
   cancelPendingInput(): void {
+    this.inputRevision++;
     this.vim = {
       ...this.vim,
       pending: "",
