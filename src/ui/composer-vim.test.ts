@@ -96,8 +96,8 @@ describe("composer Vim buffer", () => {
     );
   });
 
-  it("uses Enter as a line motion and Ctrl-U to erase Insert text back to the line start", () => {
-    expect(keys("one\n  two", 0, ["\r"]).cursor).toBe(6);
+  it("keeps Enter inert and uses Ctrl-U to erase Insert text back to the line start", () => {
+    expect(keys("one\n  two", 0, ["\r"]).cursor).toBe(0);
     const insertion = {
       ...syncComposerVim(createComposerVim("one\nsecond"), "one\nsecond", { line: 1, col: 6 }),
       mode: "insert" as const,

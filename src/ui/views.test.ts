@@ -832,7 +832,7 @@ describe("composer controls", () => {
     expect(terminal.viewport().join("\n")).not.toMatch(/j\/k browse|Enter select|Esc close/);
   });
 
-  it("keeps Normal mode read only, submits the existing draft, and inserts multiline text only in Insert mode", async () => {
+  it("keeps ordinary Normal input inert and inserts multiline text in Insert mode", async () => {
     const base = state();
     const current: AppState = {
       ...base,
@@ -862,7 +862,7 @@ describe("composer controls", () => {
     deck.start();
     deck.update(current);
     await terminal.waitForRender();
-    terminal.sendInput("hello");
+    terminal.sendInput("Z");
     terminal.sendInput("\u007f");
     terminal.sendInput("\r");
     await terminal.waitForRender();
@@ -1635,6 +1635,7 @@ describe("creation prompt", () => {
     deck.update(uiState);
     deck.start();
     terminal.sendInput("\u001b");
+    await terminal.waitForRender();
     await deck.stop();
     expect(intents).toContainEqual({ type: "creation-back" });
   });
@@ -1659,6 +1660,7 @@ describe("creation prompt", () => {
     deck.start();
     terminal.sendInput("\r");
     terminal.sendInput("\u001b");
+    await terminal.waitForRender();
     await deck.stop();
 
     expect(intents).toEqual([]);
@@ -1832,6 +1834,7 @@ describe("DeckTui viewport and focus", () => {
     expect(terminal.viewport().join("\n")).toContain("1 match · result 1");
     terminal.sendInput("\u001b");
     await terminal.waitForRender();
+    await terminal.waitForRender();
     await deck.stop();
 
     expect(terminal.viewport().join("\n")).toContain("needle");
@@ -1893,6 +1896,7 @@ describe("DeckTui viewport and focus", () => {
     expect(terminal.viewport().join("\n")).toContain("2 matches · result 2");
     terminal.sendInput("\u001b");
     await terminal.waitForRender();
+    await terminal.waitForRender();
     await deck.stop();
 
     expect(terminal.viewport().join("\n")).toContain("You");
@@ -1936,6 +1940,7 @@ describe("DeckTui viewport and focus", () => {
     terminal.sendInput("matched");
     await terminal.waitForRender();
     terminal.sendInput("\u001b");
+    await terminal.waitForRender();
     await terminal.waitForRender();
     await deck.stop();
 
@@ -1997,6 +2002,7 @@ describe("DeckTui viewport and focus", () => {
     });
     terminal.sendInput("\u001b");
     await terminal.waitForRender();
+    await terminal.waitForRender();
     expect(transcript.scrollTop).toBe(pausedTop);
     expect(intents).toContainEqual({
       type: "set-timeline-navigation",
@@ -2022,6 +2028,7 @@ describe("DeckTui viewport and focus", () => {
       },
     });
     terminal.sendInput("\u001b");
+    await terminal.waitForRender();
     await terminal.waitForRender();
     await deck.stop();
 
@@ -2559,6 +2566,7 @@ describe("DeckTui viewport and focus", () => {
     expect(copied.at(-1)).toContain("docs");
     expect(terminal.writes.join("")).toContain("\u001b[2 q");
     terminal.sendInput("\u001b");
+    await terminal.waitForRender();
     await terminal.waitForRender();
     await deck.stop();
     expect(opened).toEqual(["https://example.test/path"]);
@@ -3651,6 +3659,7 @@ describe("DeckTui viewport and focus", () => {
     expect(terminal.viewport().join("\n")).toContain("Command palette");
     terminal.sendInput("\u001b");
     await terminal.waitForRender();
+    await terminal.waitForRender();
     terminal.sendInput("x");
     await deck.stop();
 
@@ -3708,6 +3717,7 @@ describe("DeckTui viewport and focus", () => {
       await terminal.waitForRender();
       expect(terminal.viewport().join("\n")).toContain("Command palette");
       terminal.sendInput("\u001b");
+      await terminal.waitForRender();
       terminal.sendInput("\r");
       await deck.stop();
 
@@ -3728,6 +3738,7 @@ describe("DeckTui viewport and focus", () => {
     terminal.sendInput("\r");
     terminal.sendInput("\u000b");
     terminal.sendInput("\u001b");
+    await terminal.waitForRender();
     await terminal.waitForRender();
     expect(terminal.viewport().join("\n")).not.toContain("Command palette");
     expect(intents).not.toContainEqual(expect.objectContaining({ type: "open-confirmation" }));
@@ -3762,6 +3773,7 @@ describe("DeckTui viewport and focus", () => {
     await terminal.waitForRender();
     expect(terminal.viewport().join("\n")).not.toContain("Select an active session first");
     terminal.sendInput("\u001b");
+    await terminal.waitForRender();
     await deck.stop();
   });
 
@@ -3947,9 +3959,11 @@ describe("Launch composer", () => {
       await terminal.waitForRender();
       expect(terminal.viewport().join("\n")).toContain("Tools");
       terminal.sendInput("\u001b");
+      await terminal.waitForRender();
       terminal.sendInput("i");
       terminal.sendInput("pwd");
       terminal.sendInput("\u001b");
+      await terminal.waitForRender();
       terminal.sendInput("\\");
       terminal.sendInput("s");
       await terminal.waitForRender();
@@ -4014,6 +4028,7 @@ describe("New workspace composer", () => {
       terminal.sendInput("T");
       expect(app.state.modal.type).toBe("none");
       terminal.sendInput("\u001b");
+      await terminal.waitForRender();
       expect(app.state.newWorkspace).toBeDefined();
       expect(app.state.composerMode).toBe("normal");
       await terminal.waitForRender();
@@ -4022,6 +4037,7 @@ describe("New workspace composer", () => {
       expect(screen).toContain("Terminal");
       expect(screen).not.toContain("[\\m]");
       terminal.sendInput("\u001b");
+      await terminal.waitForRender();
       expect(app.state.newWorkspace).toBeUndefined();
       expect(app.state.focus).toBe("tree");
     } finally {
@@ -4066,8 +4082,10 @@ describe("New workspace over an active terminal", () => {
       terminal.sendInput("i");
       terminal.sendInput("Build it");
       terminal.sendInput("\u001b");
+      await terminal.waitForRender();
       expect(app.state.newWorkspace?.launch.prompt).toBe("Build it");
       terminal.sendInput("\u001b");
+      await terminal.waitForRender();
       await terminal.waitForRender();
       expect(terminal.viewport().join("\n")).toContain("old-shell");
       expect(app.state.activeTerminalId).toBe("terminal");

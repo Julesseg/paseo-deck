@@ -23,6 +23,155 @@ function output() {
 }
 
 describe("runCli", () => {
+  it("owns Composer Enter once and keeps Insert Enter as a newline", async () => {
+    const terminal = new RecordingTerminal(100, 30);
+    const gateway = new FakePaseoGateway(treeDirectory());
+    const running = runInteractive({ type: "default" }, output().io, {
+      ...testRuntimeDependencies(),
+      gateway,
+      terminal,
+      bindExitHandlers: () => () => undefined,
+    });
+    await tick();
+    terminal.sendInput("i");
+    terminal.sendInput("hello");
+    terminal.sendInput("\u001b[13u");
+    terminal.sendInput("world");
+    await terminal.waitForRender();
+    expect(terminal.viewport().join("\n")).toContain("INSERT Prompt");
+    expect(gateway.commands).toEqual([]);
+    terminal.sendInput("\u001b");
+    terminal.sendInput("\r");
+    await tick();
+    // Escape followed immediately by Enter is legacy Alt-Enter: still data.
+    expect(gateway.commands).toEqual([]);
+    terminal.sendInput("\u001b");
+    await terminal.waitForRender();
+    terminal.sendInput("\r");
+    terminal.sendInput("\r");
+    await tick();
+    expect(gateway.commands).toEqual([
+      { type: "send-prompt", agentId: "agent", prompt: "hello\nworld\n" },
+    ]);
+    terminal.sendInput("\u0003");
+    await expect(running).resolves.toBe(0);
+  });
+
+  it.each(["2", "d", "g", "f", "r", "v"])(
+    "consumes Composer Enter after %s without sending or editing",
+    async (prefix) => {
+      const terminal = new RecordingTerminal(100, 30);
+      const gateway = new FakePaseoGateway(treeDirectory());
+      const running = runInteractive({ type: "default" }, output().io, {
+        ...testRuntimeDependencies(),
+        gateway,
+        terminal,
+        bindExitHandlers: () => () => undefined,
+      });
+      await tick();
+      terminal.sendInput("i");
+      terminal.sendInput("safe text");
+      terminal.sendInput("\u001b");
+      await terminal.waitForRender();
+      terminal.sendInput(prefix);
+      terminal.sendInput("\r");
+      await terminal.waitForRender();
+      expect(gateway.commands).toEqual([]);
+      expect(terminal.viewport().join("\n")).toContain("safe text");
+      terminal.sendInput("\u0003");
+      await expect(running).resolves.toBe(0);
+    },
+  );
+
+  it("keeps fragmented command-looking paste atomic in Composer and consumes it in Timeline", async () => {
+    const terminal = new RecordingTerminal(100, 30);
+    const gateway = new FakePaseoGateway(treeDirectory());
+    const running = runInteractive({ type: "default" }, output().io, {
+      ...testRuntimeDependencies(),
+      gateway,
+      terminal,
+      bindExitHandlers: () => () => undefined,
+    });
+    await tick();
+    terminal.sendInput("i");
+    for (const fragment of ["\u001b[2", "00~", "dd\r", "\\q\n", "g?", "\u001b[20", "1~"])
+      terminal.sendInput(fragment);
+    await terminal.waitForRender();
+    expect(gateway.commands).toEqual([]);
+    expect(terminal.viewport().join("\n")).toContain("g?");
+    terminal.sendInput("\u001b");
+    await terminal.waitForRender();
+    terminal.sendInput("\\");
+    terminal.sendInput("t");
+    await terminal.waitForRender();
+    const before = terminal.viewport().join("\n");
+    terminal.sendInput("\u001b[200~i\nBAD\r\\s\u001b[201~");
+    await terminal.waitForRender();
+    expect(terminal.viewport().join("\n")).toBe(before);
+    expect(gateway.commands).toEqual([]);
+    terminal.sendInput("\u0003");
+    await expect(running).resolves.toBe(0);
+  });
+
+  it("consumes incomplete enhanced Enter without submitting and lets query Enter own confirmation", async () => {
+    const terminal = new RecordingTerminal(100, 30);
+    const gateway = new FakePaseoGateway(treeDirectory());
+    const running = runInteractive({ type: "default" }, output().io, {
+      ...testRuntimeDependencies(),
+      gateway,
+      terminal,
+      bindExitHandlers: () => () => undefined,
+    });
+    await tick();
+    terminal.sendInput("i");
+    terminal.sendInput("find this");
+    terminal.sendInput("\u001b");
+    await terminal.waitForRender();
+    terminal.sendInput("\u001b[13;");
+    terminal.sendInput("\r");
+    await terminal.waitForRender();
+    expect(gateway.commands).toEqual([]);
+    terminal.sendInput("/");
+    terminal.sendInput("t");
+    terminal.sendInput("\r");
+    await terminal.waitForRender();
+    expect(gateway.commands).toEqual([]);
+    expect(terminal.viewport().join("\n")).toContain("find this");
+    terminal.sendInput("\u0003");
+    await expect(running).resolves.toBe(0);
+  });
+
+  it.each(["\r", "\n", "\u001b[13;2u", "\u001b[13;3u", "\u001b[27;2;13~"])(
+    "keeps Insert newline alias %j in the draft",
+    async (enter) => {
+      const terminal = new RecordingTerminal(100, 30);
+      const gateway = new FakePaseoGateway(treeDirectory());
+      const running = runInteractive({ type: "default" }, output().io, {
+        ...testRuntimeDependencies(),
+        gateway,
+        terminal,
+        bindExitHandlers: () => () => undefined,
+      });
+      await tick();
+      terminal.sendInput("i");
+      terminal.sendInput("first");
+      terminal.sendInput(enter);
+      terminal.sendInput("second");
+      await terminal.waitForRender();
+      expect(terminal.viewport().join("\n")).toContain("INSERT Prompt");
+      expect(gateway.commands).toEqual([]);
+      terminal.sendInput("\u001b");
+      await terminal.waitForRender();
+      terminal.sendInput("\r");
+      await tick();
+      expect(gateway.commands).toEqual([
+        { type: "send-prompt", agentId: "agent", prompt: "first\nsecond" },
+      ]);
+      terminal.sendInput("\u0003");
+      await expect(running).resolves.toBe(0);
+    },
+  );
+
   it("starts an existing session in composer normal mode", async () => {
     const terminal = new RecordingTerminal(100, 30);
     const running = runInteractive({ type: "default" }, output().io, {
@@ -38,6 +187,7 @@ describe("runCli", () => {
     await terminal.waitForRender();
     expect(terminal.viewport().join("\n")).toContain("INSERT Prompt");
     terminal.sendInput("\u001b");
+    await terminal.waitForRender();
     terminal.sendInput("\\");
     terminal.sendInput("q");
     await expect(running).resolves.toBe(0);
@@ -67,6 +217,7 @@ describe("runCli", () => {
     });
     await tick();
     terminal.sendInput("\u001b");
+    await terminal.waitForRender();
     terminal.sendInput("\\");
     terminal.sendInput("T");
     await terminal.waitForRender();
@@ -77,6 +228,7 @@ describe("runCli", () => {
     terminal.sendInput("i");
     for (const key of "Build this") terminal.sendInput(key);
     terminal.sendInput("\u001b");
+    await terminal.waitForRender();
     terminal.sendInput("\\");
     terminal.sendInput("s");
     await terminal.waitForRender();
@@ -103,6 +255,7 @@ describe("runCli", () => {
     });
     await tick();
     terminal.sendInput("\u001b");
+    await terminal.waitForRender();
     terminal.sendInput("\\");
     terminal.sendInput("T");
     await terminal.waitForRender();
@@ -112,6 +265,7 @@ describe("runCli", () => {
     for (const key of "Keep this text") terminal.sendInput(key);
     await terminal.waitForRender();
     terminal.sendInput("\u001b");
+    await terminal.waitForRender();
     terminal.sendInput("\\");
     terminal.sendInput("T");
     await terminal.waitForRender();
@@ -126,6 +280,7 @@ describe("runCli", () => {
     expect(gateway.terminalInput).toEqual([{ terminalId: "fake-terminal-1", data: "x" }]);
     expect(terminal.viewport().join("\n")).toContain("INSERT");
     terminal.sendInput("\u001b");
+    await terminal.waitForRender();
     terminal.sendInput("g");
     terminal.sendInput("k");
     await terminal.waitForRender();
@@ -154,6 +309,7 @@ describe("runCli", () => {
     });
     await tick();
     terminal.sendInput("\u001b");
+    await terminal.waitForRender();
     terminal.sendInput("\\");
     terminal.sendInput("T");
     terminal.sendInput("\r");
@@ -161,6 +317,7 @@ describe("runCli", () => {
     terminal.sendInput("i");
     terminal.sendInput("x");
     terminal.sendInput("\u001b");
+    await terminal.waitForRender();
     terminal.sendInput("\\");
     terminal.sendInput("q");
     await terminal.waitForRender();
@@ -556,6 +713,7 @@ function treeDirectory(): DirectorySnapshot {
 
 async function mutateTreePreferences(terminal: RecordingTerminal, widen: boolean): Promise<void> {
   terminal.sendInput("\u001b");
+  await terminal.waitForRender();
   terminal.sendInput("\\");
   terminal.sendInput("n");
   if (widen) {

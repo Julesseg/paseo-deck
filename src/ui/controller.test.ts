@@ -505,7 +505,7 @@ describe("DeckController keyboard seam", () => {
     expect(intents).toEqual([{ type: "quit" }]);
   });
 
-  it("routes timeline navigation and Enter to the rendered buffer", () => {
+  it("routes timeline navigation while consuming idle Enter", () => {
     const intents: unknown[] = [];
     const controller = new DeckController(
       () => ({
@@ -530,7 +530,7 @@ describe("DeckController keyboard seam", () => {
     controller.handleKey("\r");
 
     expect(intents).toContainEqual({ type: "move-timeline-text", key: "j" });
-    expect(intents).toContainEqual({ type: "move-timeline-text", key: "+" });
+    expect(intents).not.toContainEqual({ type: "move-timeline-text", key: "+" });
     expect(intents).not.toContainEqual({ type: "select-or-open" });
   });
 

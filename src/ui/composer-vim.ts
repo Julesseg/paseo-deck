@@ -542,6 +542,7 @@ export function handleComposerVim(state: ComposerVimState, key: string): Compose
       return { state: { ...state, searchInput: (state.searchInput ?? "") + key }, handled: true };
     return { state, handled: true };
   }
+  if (key === "\r" || key === "\n") return { state: clearCommand(state), handled: true };
   if (state.pending === "r") {
     if (key.length !== 1) return { state: clearCommand(state), handled: true };
     const end = Math.min(state.text.length, state.cursor + count(state));
