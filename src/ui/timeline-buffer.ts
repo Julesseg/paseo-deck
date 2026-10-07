@@ -242,13 +242,13 @@ export function timelineWordAtCursor(state: TimelineBufferState): string | undef
 
 export function searchTimelineWord(
   state: TimelineBufferState,
-  key: "*" | "#" | "g*" | "g#",
+  key: "*" | "#",
   count = 1,
 ): TimelineBufferState {
   const word = timelineWordAtCursor(state);
   if (!word) return state;
-  const direction = key === "#" || key === "g#" ? -1 : 1;
-  const wholeWord = key === "*" || key === "#";
+  const direction = key === "#" ? -1 : 1;
+  const wholeWord = true;
   let next = state;
   for (let i = 0; i < Math.max(1, count); i += 1)
     next = searchTimelineBuffer(next, word, direction, wholeWord);
