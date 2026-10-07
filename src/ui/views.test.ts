@@ -3878,6 +3878,37 @@ describe("DeckTui viewport and focus", () => {
 });
 
 describe("Launch composer", () => {
+  it("renders daemon terminal profile names as visible plain text without remote styling", async () => {
+    const terminal = new RecordingTerminal(100, 28);
+    const deck = new DeckTui(
+      terminal,
+      {
+        ...state(),
+        selectedWorkspaceId: "w",
+        focus: "composer",
+        launchDrafts: {
+          w: {
+            kind: "terminal",
+            prompt: "",
+            command: "pwd",
+            profileId: "hidden",
+            profiles: [{ id: "hidden", name: "\u001b[8mHidden\u001b[0m", command: "zsh" }],
+          },
+        },
+      },
+      () => undefined,
+      { appearance: { color: "none", unicode: false, theme: "plain", symbols: "ascii" } },
+    );
+    deck.start();
+    try {
+      await terminal.waitForRender();
+      expect(terminal.viewport().join("\n")).toContain("Hidden");
+      expect(terminal.writes.join("")).not.toContain("\u001b[8m");
+    } finally {
+      await deck.stop();
+    }
+  });
+
   it("switches resource controls through keyboard input without workspace placement controls or tabs", async () => {
     const { ApplicationController } = await import("../app/controller.js");
     const { FakePaseoGateway } = await import("../paseo/fake-gateway.js");

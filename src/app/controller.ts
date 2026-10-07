@@ -1,4 +1,9 @@
-import type { AppState, ModalState, PaseoFailureKind } from "../contracts/app-state.js";
+import type {
+  AppState,
+  LaunchDraft,
+  ModalState,
+  PaseoFailureKind,
+} from "../contracts/app-state.js";
 import type { AgentCommand } from "../contracts/commands.js";
 import type { DirectoryUpdate, ProviderOption } from "../contracts/domain.js";
 import type { Observation, PaseoGateway } from "../contracts/gateway.js";
@@ -1294,6 +1299,7 @@ export class ApplicationController {
     const model = provider?.models.find(
       (item) => item.id === draft.launch.modelId && item.selectable,
     );
+    const terminalInput = validateTerminalLaunchInput(draft.launch, prompt);
     const error = !project?.path
       ? "Choose a project with an original checkout directory."
       : draft.placement === "worktree" &&
@@ -1307,14 +1313,9 @@ export class ApplicationController {
               : !provider || !model
                 ? "Choose an available provider and model."
                 : undefined
-            : !prompt.trim() ||
-                Array.from(prompt).some((character) => {
-                  const code = character.charCodeAt(0);
-                  return code < 32 || (code >= 127 && code <= 159);
-                })
+            : terminalInput.error === "command"
               ? "Enter one command without control characters or line breaks, then retry."
-              : draft.launch.profileId &&
-                  !draft.launch.profiles?.some((profile) => profile.id === draft.launch.profileId)
+              : terminalInput.error === "profile"
                 ? "Choose an available terminal profile."
                 : undefined;
     if (error || !project?.path) {
@@ -1396,14 +1397,8 @@ export class ApplicationController {
       this.apply({ type: "set-launch-draft", workspaceId, changes });
     };
     if (draft.kind === "terminal") {
-      if (
-        !this.isConnected() ||
-        !prompt.trim() ||
-        Array.from(prompt).some((character) => {
-          const code = character.charCodeAt(0);
-          return code < 32 || (code >= 127 && code <= 159);
-        })
-      ) {
+      const terminalInput = validateTerminalLaunchInput(draft, prompt);
+      if (!this.isConnected() || terminalInput.error === "command") {
         update({
           error: !this.isConnected()
             ? "Reconnect to Paseo, then press \\s to retry."
@@ -1415,8 +1410,9 @@ export class ApplicationController {
       try {
         let terminal = draft.createdTerminal;
         if (!terminal) {
-          const profile = draft.profiles?.find((item) => item.id === draft.profileId);
-          if (draft.profileId && !profile) throw new Error("Choose an available terminal profile");
+          const { profile } = terminalInput;
+          if (terminalInput.error === "profile")
+            throw new Error("Choose an available terminal profile");
           terminal = profile
             ? await this.gateway.createProfileTerminal(workspaceId, profile)
             : await this.gateway.createTerminal(workspaceId);
@@ -1991,6 +1987,23 @@ export class ApplicationController {
     for (const token of this.#retryOperations.keys())
       if (!retained.has(token)) this.#retryOperations.delete(token);
   }
+}
+
+function validateTerminalLaunchInput(
+  draft: LaunchDraft,
+  command: string,
+): { profile: TerminalProfile | undefined; error: "command" | "profile" | undefined } {
+  const profile = draft.profiles?.find((item) => item.id === draft.profileId);
+  const invalidCommand =
+    !command.trim() ||
+    Array.from(command).some((character) => {
+      const code = character.charCodeAt(0);
+      return code < 32 || (code >= 127 && code <= 159);
+    });
+  return {
+    profile,
+    error: invalidCommand ? "command" : draft.profileId && !profile ? "profile" : undefined,
+  };
 }
 
 function availabilityMessage(

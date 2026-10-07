@@ -239,6 +239,26 @@ const shots: Array<{
       },
     },
   },
+  {
+    name: "new-workspace-remote-unsupported",
+    columns: 120,
+    rows: 28,
+    state: {
+      ...worktreeWorkspaceState,
+      newWorkspace: {
+        ...worktreeWorkspaceState.newWorkspace,
+        title: "Navigation",
+        launch: {
+          ...draftFixture,
+          kind: "session",
+          command: "",
+          prompt: "Improve sidebar navigation",
+          error:
+            "Could not create workspace: Remote Base ref refresh is unsupported for remote daemons. Choose a local Base ref, or connect to a verified local daemon without --host.. Press \\s to retry.",
+        },
+      },
+    },
+  },
   { name: "new-workspace-local-session", columns: 100, rows: 28, state: newWorkspaceState },
   { name: "new-workspace-local-narrow", columns: 52, rows: 18, state: newWorkspaceState },
   {
@@ -352,6 +372,23 @@ const shots: Array<{
           kind: "terminal",
           command: "npm run dev",
           error: "Could not launch terminal: connection interrupted. Press \\s to retry.",
+        },
+      },
+    },
+  },
+  {
+    name: "launch-session-error",
+    columns: 100,
+    rows: 28,
+    state: {
+      ...launchState,
+      launchDrafts: {
+        "workspace-main": {
+          ...draftFixture,
+          kind: "session",
+          command: "",
+          prompt: "Build the workspace launch flow",
+          error: "Could not launch session: connection interrupted. Press \\s to retry.",
         },
       },
     },
