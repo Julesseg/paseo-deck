@@ -25,6 +25,7 @@ export interface SessionDraft {
   settingsDirty?: boolean | undefined;
   error?: string | undefined;
   submitting?: boolean | undefined;
+  createdAgentId?: string;
 }
 
 export interface LaunchDraft extends SessionDraft {
@@ -32,7 +33,6 @@ export interface LaunchDraft extends SessionDraft {
   command: string;
   profileId?: string | undefined;
   profiles?: readonly TerminalProfile[];
-  createdAgentId?: string;
   createdTerminal?: TerminalRecord;
 }
 

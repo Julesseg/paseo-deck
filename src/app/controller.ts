@@ -1674,25 +1674,31 @@ export class ApplicationController {
       changes: { submitting: true, error: undefined, prompt, dirty: true },
     });
     try {
+      let agentId = draft.createdAgentId;
+      if (!agentId) {
       const result = await this.gateway.execute({
         type: "create-agent",
         workspaceId,
         providerId: provider.id,
         modelId: model.id,
-        prompt,
+        prompt: "",
         ...(draft.modeId ? { modeId: draft.modeId } : {}),
         ...(draft.thinkingLevel ? { thinkingLevel: draft.thinkingLevel } : {}),
       });
       if (result.type !== "agent-created")
         throw new Error("Paseo did not return the created session.");
+      agentId = result.agentId;
+      this.apply({ type: "set-session-draft", workspaceId, changes: { createdAgentId: agentId } });
+      }
+      await this.gateway.execute({ type: "send-prompt", agentId, prompt });
       const keepFocus = activeSessionDraftWorkspaceId(this.#state) === workspaceId;
-      if (!this.#state.directory.agents.some((agent) => agent.id === result.agentId))
+      if (!this.#state.directory.agents.some((agent) => agent.id === agentId))
         this.apply({
           type: "directory",
           update: {
             type: "agent-upserted",
             agent: {
-              id: result.agentId,
+              id: agentId,
               workspaceId,
               title: "New session",
               status: "starting",
@@ -1708,7 +1714,7 @@ export class ApplicationController {
             },
           },
         });
-      this.apply({ type: "complete-session-draft", workspaceId, agentId: result.agentId });
+      this.apply({ type: "complete-session-draft", workspaceId, agentId: agentId });
       this.apply({
         type: "set-creation-default",
         workspaceId,
@@ -1719,15 +1725,15 @@ export class ApplicationController {
           ...(draft.thinkingLevel ? { thinkingLevel: draft.thinkingLevel } : {}),
         },
       });
-      if (keepFocus) await this.selectAgent(result.agentId, true);
-      this.apply({ type: "notify", message: `Created session ${shortId(result.agentId)}.` });
+      if (keepFocus) await this.selectAgent(agentId, true);
+      this.apply({ type: "notify", message: `Created session ${shortId(agentId)}.` });
     } catch (error) {
       this.apply({
         type: "set-session-draft",
         workspaceId,
         changes: {
           submitting: false,
-          error: `Could not create session: ${errorDetail(error)}. Press Enter to retry.`,
+          error: `Could not launch session: ${errorDetail(error)}. Press Enter to retry.`,
         },
       });
     }
