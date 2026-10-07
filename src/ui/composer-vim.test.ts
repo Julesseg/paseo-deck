@@ -77,11 +77,10 @@ describe("composer Vim buffer", () => {
     expect(handleComposerVim(lineVisual, "d").state.text).toBe("");
   });
 
-  it("yanks and deletes rectangular Visual Block selections", () => {
-    const block = keys("abcd\nefgh", 1, ["\u0016", "l", "j"]);
-    const yank = handleComposerVim(block, "y");
-    expect(yank.yank).toBe("bc\nfg");
-    expect(handleComposerVim(block, "d").state.text).toBe("ad\neh");
+  it("does not enter removed Visual Block mode", () => {
+    const state = keys("abcd\nefgh", 1, ["\u0016"]);
+    expect(state.mode).toBe("normal");
+    expect(composerVisualSelection(state)).toBeUndefined();
   });
 
   it("opens a line, deletes, then undoes and redoes", () => {
