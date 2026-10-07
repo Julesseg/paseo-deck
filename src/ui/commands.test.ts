@@ -148,7 +148,7 @@ describe("command registry", () => {
     ]);
   });
 
-  it("keeps direct and palette retry and error-detail intents identical", () => {
+  it("keeps Sidebar utilities palette-only", () => {
     const current: AppState = {
       ...state(),
       notifications: [
@@ -167,14 +167,12 @@ describe("command registry", () => {
       () => current,
       (intent) => intents.push(intent),
     );
-    controller.handleKey("R");
+    expect(controller.handleKey("R")).toBe(false);
     controller.invokeCommand("retry");
-    controller.handleKey("E");
+    expect(controller.handleKey("E")).toBe(false);
     controller.invokeCommand("error-details");
     expect(intents).toEqual([
       { type: "retry-notification", id: 7 },
-      { type: "retry-notification", id: 7 },
-      { type: "open-error-details", message: "Failed", detail: "safe details" },
       { type: "open-error-details", message: "Failed", detail: "safe details" },
     ]);
   });
@@ -336,3 +334,26 @@ function terminalInput(shortcut: string): string | undefined {
   };
   return inputs[shortcut] ?? (shortcut.length === 1 ? shortcut : undefined);
 }
+
+it("Sidebar Workspace actions use its highlighted eligible Workspace and never fall back on Project rows", () => {
+  const current = state();
+  const highlighted = {
+    ...current,
+    sidebarSelection: { kind: "workspace" as const, id: "other" },
+    directory: {
+      ...current.directory,
+      workspaces: [
+        ...current.directory.workspaces,
+        { id: "other", title: "Other", directory: "/other", archived: false },
+      ],
+    },
+  };
+  expect(commandById(highlighted, "terminal-create")?.intent(highlighted)).toEqual({
+    type: "open-create-terminal",
+    workspaceId: "other",
+  });
+  const project = { ...highlighted, sidebarSelection: { kind: "project" as const, id: "p" } };
+  expect(commandById(project, "terminal-create")?.disabledReason).toContain("workspace");
+  expect(commandById(project, "rename-agent")).toBeUndefined();
+  expect(commandById(project, "detach-agent")).toBeUndefined();
+});

@@ -1260,7 +1260,6 @@ export class ApplicationController {
       this.apply({ type: "set-focus", focus: "tree" });
       return;
     }
-    if (selection?.kind === "project") this.apply({ type: "toggle-expanded", id: selection.id });
   }
 
   private async showActiveResource(): Promise<void> {
