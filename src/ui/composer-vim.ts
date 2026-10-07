@@ -361,9 +361,12 @@ function applyOperator(
   state: ComposerVimState,
   operator: string,
   range: { start: number; end: number; kind: "character" | "line" },
+  allowEmpty = false,
 ): ComposerVimResult {
   const start = clamp(range.start, 0, state.text.length);
   const end = clamp(range.end, start, state.text.length);
+  if (start === end && range.kind !== "line" && !allowEmpty)
+    return { state: clearCommand(state), handled: true };
   const yank = state.text.slice(start, end);
   let next: ComposerVimState = {
     ...clearCommand(state),
@@ -585,7 +588,7 @@ export function handleComposerVim(state: ComposerVimState, key: string): Compose
         ? undefined
         : textObject(state, key, state.pending[1] === "a");
     return range
-      ? applyOperator(state, state.pending[0] ?? "", range)
+      ? applyOperator(state, state.pending[0] ?? "", range, true)
       : { state: clearCommand(state), handled: true };
   }
   if (["d", "c", "y"].includes(state.pending)) {

@@ -167,3 +167,15 @@ it("chooses the nearest complete quote type, including nested other quote types 
   expect(keys(`"outer 'inner' end"`, 9, ["d", "i", "q"]).text).toBe(`"outer '' end"`);
   expect(keys('before "a\\"b" after', 0, ["d", "i", "q"]).text).toBe('before "" after');
 });
+
+it("does not overwrite clipboard or enter Insert for an empty motion range", () => {
+  expect(result("one", 0, ["c", "^"])).toMatchObject({
+    state: { text: "one", cursor: 0, mode: "normal" },
+  });
+  expect(result("one", 0, ["c", "^"]).copy).toBeUndefined();
+  expect(result("one", 0, ["X"]).copy).toBeUndefined();
+  expect(result("()", 0, ["c", "i", "b"])).toMatchObject({
+    state: { mode: "insert" },
+    copy: { text: "", kind: "character" },
+  });
+});
