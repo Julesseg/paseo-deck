@@ -6,6 +6,7 @@ import type {
   TimelineEvent,
   UsageSummary,
 } from "./domain.js";
+import type { WorkspacePlacement } from "./gateway.js";
 import type { TerminalProfile, TerminalRecord } from "./terminal.js";
 
 export type FocusArea = "tree" | "timeline" | "composer";
@@ -37,6 +38,11 @@ export interface LaunchDraft extends SessionDraft {
 }
 
 export interface NewWorkspaceDraft {
+  placement?: "local" | "worktree";
+  placementOptions?: WorkspacePlacement;
+  placementLoading?: boolean;
+  placementError?: string | undefined;
+  baseRef?: string | undefined;
   projectId?: string | undefined;
   title: string;
   launch: LaunchDraft;
@@ -47,6 +53,8 @@ export type ModalState =
   | { type: "help" }
   | { type: "new-workspace-project" }
   | { type: "new-workspace-title" }
+  | { type: "new-workspace-placement" }
+  | { type: "new-workspace-base" }
   | { type: "launch-profile"; workspaceId: string }
   | { type: "notifications"; index: number }
   | { type: "filter"; query: string }

@@ -11,13 +11,28 @@ export interface Observation {
   release(): Promise<void>;
 }
 
+export interface WorkspaceBaseRef {
+  label: string;
+  ref: string;
+  remote: boolean;
+}
+
+export interface WorkspacePlacement {
+  supportsWorktree: boolean;
+  refs: readonly WorkspaceBaseRef[];
+  defaultRef?: string;
+}
+
 export interface WorkspaceCreateOptions {
   projectId: string;
   directory: string;
   title?: string;
+  baseRef?: string;
+  firstAgentPrompt?: string;
 }
 
 export interface PaseoGateway extends TerminalGateway {
+  getWorkspacePlacement(directory: string): Promise<WorkspacePlacement>;
   createWorkspace(options: WorkspaceCreateOptions): Promise<WorkspaceRecord>;
   connect(): Promise<void>;
   close(): Promise<void>;

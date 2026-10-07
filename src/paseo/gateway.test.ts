@@ -917,3 +917,428 @@ describe("Local workspace gateway", () => {
     await gateway.close();
   });
 });
+
+describe("Worktree workspace metadata", () => {
+  it("offers exact remote and local refs and defaults to the repository base instead of the current branch", async () => {
+    const fixture = testClient();
+    const metadata = {
+      connect: vi.fn(async () => {}),
+      close: vi.fn(async () => {}),
+      getCheckoutStatus: vi.fn(async () => ({
+        isGit: true,
+        baseRef: "main",
+        currentBranch: "feature",
+        hasRemote: true,
+      })),
+      getBranchSuggestions: vi.fn(async () => ({
+        branches: ["feature", "main"],
+        branchDetails: [
+          { name: "feature", hasLocal: true },
+          { name: "main", hasLocal: true, hasRemote: true },
+        ],
+      })),
+    };
+    const gateway = new ProductionPaseoGateway({
+      host: "127.0.0.1:6767",
+      createClient: () => fixture.client as never,
+      createMetadataClient: () => metadata,
+    });
+    await gateway.connect();
+    expect(metadata.connect).not.toHaveBeenCalled();
+    expect(await gateway.getWorkspacePlacement("/repo")).toEqual({
+      supportsWorktree: true,
+      defaultRef: "refs/remotes/origin/main",
+      refs: [
+        { label: "feature (local)", ref: "refs/heads/feature", remote: false },
+        { label: "main", ref: "refs/remotes/origin/main", remote: true },
+        { label: "main (local)", ref: "refs/heads/main", remote: false },
+      ],
+    });
+    await gateway.close();
+    expect(metadata.close).toHaveBeenCalledOnce();
+  });
+});
+
+describe("Worktree workspace creation", () => {
+  it("fetches the exact remote ref before public SDK creation, and never fetches a local base", async () => {
+    const fixture = testClient();
+    const create = vi.fn(async () => ({
+      id: "created",
+      current: () => ({
+        id: "created",
+        workspaceDirectory: "/worktrees/generated",
+        projectId: "project-1",
+      }),
+    }));
+    Object.assign(fixture.client.workspaces, { create });
+    const fetchRemote = vi.fn(async () => {});
+    const gateway = new ProductionPaseoGateway({
+      cliRunner: async () => ({
+        exitCode: 0,
+        stderr: "",
+        stdout: JSON.stringify({
+          listen: "127.0.0.1:6767",
+          localDaemon: "running",
+          pid: process.pid,
+        }),
+      }),
+      createClient: () => fixture.client as never,
+      fetchRemote,
+    });
+    await gateway.connect();
+    const options = {
+      projectId: "project-1",
+      directory: "/repo",
+      title: "Feature",
+      baseRef: "refs/remotes/origin/main",
+      firstAgentPrompt: "Build feature",
+    };
+    expect(await gateway.createWorkspace(options)).toMatchObject({
+      directory: "/worktrees/generated",
+    });
+    expect(fetchRemote).toHaveBeenCalledWith("/repo", "main");
+    expect(create).toHaveBeenCalledWith({
+      source: {
+        kind: "worktree",
+        cwd: "/repo",
+        projectId: "project-1",
+        action: "branch-off",
+        refName: "refs/remotes/origin/main",
+      },
+      title: "Feature",
+      firstAgentContext: { prompt: "Build feature" },
+    });
+    await gateway.createWorkspace({ ...options, baseRef: "refs/heads/main" });
+    expect(fetchRemote).toHaveBeenCalledOnce();
+    expect(create).toHaveBeenLastCalledWith(
+      expect.objectContaining({ source: expect.objectContaining({ refName: "refs/heads/main" }) }),
+    );
+    await gateway.close();
+  });
+});
+
+describe("Unsupported Worktree projects", () => {
+  it("offers Local for non-Git directories and unborn repositories", async () => {
+    const fixture = testClient();
+    const metadata = {
+      connect: vi.fn(async () => {}),
+      close: vi.fn(async () => {}),
+      getCheckoutStatus: vi.fn(async () => ({
+        isGit: false,
+        error: { code: "NOT_GIT_REPO", message: "Not a git repository" },
+      })),
+      getBranchSuggestions: vi.fn(async () => ({ branchDetails: [] })),
+    };
+    const gateway = new ProductionPaseoGateway({
+      host: "remote:6767",
+      createClient: () => fixture.client as never,
+      createMetadataClient: () => metadata,
+    });
+    await gateway.connect();
+    expect(await gateway.getWorkspacePlacement("/directory")).toEqual({
+      supportsWorktree: false,
+      refs: [],
+    });
+    metadata.getCheckoutStatus.mockResolvedValueOnce({ isGit: true, error: null } as never);
+    expect(await gateway.getWorkspacePlacement("/unborn")).toEqual({
+      supportsWorktree: false,
+      refs: [],
+    });
+    await gateway.close();
+  });
+});
+
+describe("Remote base refresh safety", () => {
+  it("creates nothing on fetch failure, then permits an explicit local ref without fetching", async () => {
+    const fixture = testClient();
+    const create = vi.fn(async () => ({
+      id: "created",
+      current: () => ({ id: "created", workspaceDirectory: "/worktree" }),
+    }));
+    Object.assign(fixture.client.workspaces, { create });
+    const fetchRemote = vi.fn(async () => {
+      throw new Error("fetch failed token=secret-value");
+    });
+    const gateway = new ProductionPaseoGateway({
+      createClient: () => fixture.client as never,
+      fetchRemote,
+      cliRunner: async () => ({
+        exitCode: 0,
+        stderr: "",
+        stdout: JSON.stringify({
+          listen: "127.0.0.1:6767",
+          localDaemon: "running",
+          pid: process.pid,
+        }),
+      }),
+    });
+    await gateway.connect();
+    const options = {
+      projectId: "project-1",
+      directory: "/repo",
+      baseRef: "refs/remotes/origin/main",
+    };
+    const failure = await gateway
+      .createWorkspace(options)
+      .catch((error: PaseoGatewayError) => error);
+    expect(failure).toMatchObject({ kind: "command" });
+    expect(JSON.stringify(failure)).not.toContain("secret-value");
+    expect(create).not.toHaveBeenCalled();
+    await gateway.createWorkspace({ ...options, baseRef: "refs/heads/main" });
+    expect(fetchRemote).toHaveBeenCalledOnce();
+    expect(create).toHaveBeenCalledOnce();
+    await gateway.close();
+  });
+
+  it.each(["remote.example:6767", "localhost:6767", "127.0.0.1:6767"])(
+    "rejects remote refresh with explicit host %s, while allowing local refs",
+    async (host) => {
+      const fixture = testClient();
+      const create = vi.fn(async () => ({
+        id: "created",
+        current: () => ({ id: "created", workspaceDirectory: "/worktree" }),
+      }));
+      Object.assign(fixture.client.workspaces, { create });
+      const fetchRemote = vi.fn();
+      const gateway = new ProductionPaseoGateway({
+        host,
+        createClient: () => fixture.client as never,
+        fetchRemote,
+      });
+      await gateway.connect();
+      await expect(
+        gateway.createWorkspace({
+          projectId: "project-1",
+          directory: "/repo",
+          baseRef: "refs/remotes/origin/main",
+        }),
+      ).rejects.toThrow("unsupported for remote daemons");
+      expect(create).not.toHaveBeenCalled();
+      expect(fetchRemote).not.toHaveBeenCalled();
+      await gateway.createWorkspace({
+        projectId: "project-1",
+        directory: "/repo",
+        baseRef: "refs/heads/main",
+      });
+      expect(create).toHaveBeenCalledOnce();
+      await gateway.close();
+    },
+  );
+});
+
+describe("Workspace metadata lifecycle", () => {
+  it("closes a failed metadata connection and allows discovery to retry without reconnecting the public SDK", async () => {
+    const fixture = testClient();
+    const metadata = {
+      connect: vi.fn(async () => {}),
+      close: vi.fn(async () => {}),
+      getCheckoutStatus: vi.fn(async () => ({ isGit: true, baseRef: "main" })),
+      getBranchSuggestions: vi.fn(async () => ({
+        branchDetails: [{ name: "main", hasLocal: true }],
+      })),
+    };
+    metadata.connect.mockRejectedValueOnce(new Error("socket unavailable"));
+    const gateway = new ProductionPaseoGateway({
+      host: "remote:6767",
+      createClient: () => fixture.client as never,
+      createMetadataClient: () => metadata,
+    });
+    await gateway.connect();
+    await expect(gateway.getWorkspacePlacement("/repo")).rejects.toMatchObject({
+      kind: "daemon-unavailable",
+    });
+    expect(metadata.close).toHaveBeenCalledOnce();
+    expect(await gateway.getWorkspacePlacement("/repo")).toMatchObject({
+      defaultRef: "refs/heads/main",
+    });
+    expect(fixture.client.connect).toHaveBeenCalledOnce();
+    await gateway.close();
+    expect(metadata.close).toHaveBeenCalledTimes(2);
+  });
+
+  it("uses the main repository default when the selected project root is an owned worktree", async () => {
+    const fixture = testClient();
+    const metadata = {
+      connect: vi.fn(async () => {}),
+      close: vi.fn(async () => {}),
+      getCheckoutStatus: vi.fn(async (cwd: string) =>
+        cwd === "/worktree"
+          ? { isGit: true, baseRef: "feature", isPaseoOwnedWorktree: true, mainRepoRoot: "/main" }
+          : { isGit: true, baseRef: "main" },
+      ),
+      getBranchSuggestions: vi.fn(async () => ({
+        branchDetails: [
+          { name: "feature", hasLocal: true },
+          { name: "main", hasRemote: true },
+        ],
+      })),
+    };
+    const gateway = new ProductionPaseoGateway({
+      host: "remote:6767",
+      createClient: () => fixture.client as never,
+      createMetadataClient: () => metadata,
+    });
+    await gateway.connect();
+    expect(await gateway.getWorkspacePlacement("/worktree")).toMatchObject({
+      defaultRef: "refs/remotes/origin/main",
+    });
+    await gateway.close();
+  });
+
+  it("still closes the public SDK when metadata socket cleanup fails", async () => {
+    const fixture = testClient();
+    const metadata = {
+      connect: vi.fn(async () => {}),
+      close: vi.fn(async () => {
+        throw new Error("close failed");
+      }),
+      getCheckoutStatus: vi.fn(async () => ({ isGit: false })),
+      getBranchSuggestions: vi.fn(async () => ({})),
+    };
+    const gateway = new ProductionPaseoGateway({
+      host: "remote:6767",
+      createClient: () => fixture.client as never,
+      createMetadataClient: () => metadata,
+    });
+    await gateway.connect();
+    await gateway.getWorkspacePlacement("/repo");
+    await gateway.close().catch(() => {});
+    expect(fixture.client.close).toHaveBeenCalledOnce();
+  });
+});
+
+describe("Workspace metadata failures", () => {
+  it("redacts checkout discovery errors at the gateway boundary", async () => {
+    const fixture = testClient();
+    const metadata = {
+      connect: vi.fn(async () => {}),
+      close: vi.fn(async () => {}),
+      getCheckoutStatus: vi.fn(async () => {
+        throw new Error("metadata failed token=private-value");
+      }),
+      getBranchSuggestions: vi.fn(async () => ({})),
+    };
+    const gateway = new ProductionPaseoGateway({
+      host: "remote:6767",
+      createClient: () => fixture.client as never,
+      createMetadataClient: () => metadata,
+    });
+    await gateway.connect();
+    const error = await gateway.getWorkspacePlacement("/repo").catch((failure) => failure);
+    expect(error).toMatchObject({ kind: "protocol" });
+    expect(error.message).not.toContain("private-value");
+    await gateway.close();
+  });
+});
+
+describe("Local daemon verification", () => {
+  it.each([
+    { localDaemon: "stale_pid", pid: process.pid, listen: "127.0.0.1:6767" },
+    { localDaemon: "running", pid: null, listen: "127.0.0.1:6767" },
+    { localDaemon: "running", pid: 2_147_483_647, listen: "127.0.0.1:6767" },
+    { localDaemon: "running", pid: process.pid, listen: "127.0.0.1:7777" },
+  ])("rechecks local status immediately before any filesystem fetch (%j)", async (status) => {
+    const fixture = testClient();
+    const fetchRemote = vi.fn();
+    let checks = 0;
+    const gateway = new ProductionPaseoGateway({
+      createClient: () => fixture.client as never,
+      fetchRemote,
+      cliRunner: async () => ({
+        exitCode: 0,
+        stderr: "",
+        stdout: JSON.stringify(
+          checks++ === 0
+            ? { localDaemon: "running", pid: process.pid, listen: "127.0.0.1:6767" }
+            : status,
+        ),
+      }),
+    });
+    await gateway.connect();
+    await expect(
+      gateway.createWorkspace({
+        directory: "/repo",
+        projectId: "project",
+        baseRef: "refs/remotes/origin/main",
+      }),
+    ).rejects.toThrow("unsupported");
+    expect(fetchRemote).not.toHaveBeenCalled();
+    await gateway.close();
+  });
+
+  it("rejects inherited host overrides even when local status looks running", async () => {
+    const previous = process.env.PASEO_HOST;
+    process.env.PASEO_HOST = "localhost:6767";
+    try {
+      const fixture = testClient();
+      const fetchRemote = vi.fn();
+      const gateway = new ProductionPaseoGateway({
+        createClient: () => fixture.client as never,
+        fetchRemote,
+        cliRunner: async () => ({
+          exitCode: 0,
+          stderr: "",
+          stdout: JSON.stringify({
+            localDaemon: "running",
+            pid: process.pid,
+            listen: "127.0.0.1:6767",
+          }),
+        }),
+      });
+      await gateway.connect();
+      await expect(
+        gateway.createWorkspace({
+          directory: "/repo",
+          projectId: "project",
+          baseRef: "refs/remotes/origin/main",
+        }),
+      ).rejects.toThrow("unsupported");
+      expect(fetchRemote).not.toHaveBeenCalled();
+      await gateway.close();
+    } finally {
+      if (previous === undefined) delete process.env.PASEO_HOST;
+      else process.env.PASEO_HOST = previous;
+    }
+  });
+});
+
+describe("Pinned Git metadata protocol", () => {
+  it("uses supported suggestion limits and includes the repository default beyond the first page", async () => {
+    const { BranchSuggestionsRequestSchema } = await import("@getpaseo/protocol/messages");
+    const fixture = testClient();
+    const metadata = {
+      connect: vi.fn(async () => {}),
+      close: vi.fn(async () => {}),
+      getCheckoutStatus: vi.fn(async () => ({ isGit: true, baseRef: "main" })),
+      getBranchSuggestions: vi.fn(
+        async (options: { cwd: string; limit?: number; query?: string }) => {
+          BranchSuggestionsRequestSchema.parse({
+            type: "branch_suggestions_request",
+            requestId: "metadata-test",
+            ...options,
+          });
+          return {
+            branchDetails:
+              options.query === "main"
+                ? [{ name: "main", hasLocal: true, hasRemote: true }]
+                : [{ name: "feature", hasLocal: true }],
+          };
+        },
+      ),
+    };
+    const gateway = new ProductionPaseoGateway({
+      host: "remote:6767",
+      createClient: () => fixture.client as never,
+      createMetadataClient: () => metadata,
+    });
+    await gateway.connect();
+    expect(await gateway.getWorkspacePlacement("/repo")).toMatchObject({
+      supportsWorktree: true,
+      defaultRef: "refs/remotes/origin/main",
+      refs: expect.arrayContaining([
+        { label: "main", ref: "refs/remotes/origin/main", remote: true },
+      ]),
+    });
+    await gateway.close();
+  });
+});

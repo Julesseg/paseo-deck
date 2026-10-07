@@ -642,10 +642,72 @@ export class ApplicationController {
                 ?.projectId;
         this.apply({
           type: "set-new-workspace",
-          draft: { projectId, title: "", launch: launchDraft(this.#state, NEW_WORKSPACE_DRAFT_ID) },
+          draft: {
+            projectId,
+            placement: "local",
+            title: "",
+            launch: launchDraft(this.#state, NEW_WORKSPACE_DRAFT_ID),
+          },
         });
         this.apply({ type: "set-focus", focus: "composer" });
         this.apply({ type: "set-composer-mode", mode: "normal" });
+        await this.loadWorkspacePlacement();
+        return;
+      }
+      case "open-new-workspace-placement":
+      case "open-new-workspace-base": {
+        const draft = this.#state.newWorkspace;
+        if (
+          !draft ||
+          draft.launch.submitting ||
+          draft.placementLoading ||
+          !draft.placementOptions?.supportsWorktree ||
+          this.#state.modal.type !== "none"
+        )
+          return;
+        if (intent.type === "open-new-workspace-base" && draft.placement !== "worktree") return;
+        this.apply({
+          type: "open-modal",
+          modal: {
+            type:
+              intent.type === "open-new-workspace-base"
+                ? "new-workspace-base"
+                : "new-workspace-placement",
+          },
+        });
+        return;
+      }
+      case "new-workspace-placement-choice": {
+        const draft = this.#state.newWorkspace;
+        if (
+          draft &&
+          !draft.launch.submitting &&
+          !draft.placementLoading &&
+          (intent.placement === "local" || draft.placementOptions?.supportsWorktree)
+        )
+          this.apply({
+            type: "set-new-workspace",
+            draft: {
+              ...draft,
+              placement: intent.placement,
+              launch: { ...draft.launch, error: undefined },
+            },
+          });
+        this.apply({ type: "close-modal" });
+        return;
+      }
+      case "new-workspace-base-choice": {
+        const draft = this.#state.newWorkspace;
+        if (
+          draft &&
+          !draft.launch.submitting &&
+          draft.placementOptions?.refs.some((ref) => ref.ref === intent.ref)
+        )
+          this.apply({
+            type: "set-new-workspace",
+            draft: { ...draft, baseRef: intent.ref, launch: { ...draft.launch, error: undefined } },
+          });
+        this.apply({ type: "close-modal" });
         return;
       }
       case "open-new-workspace-project":
@@ -670,7 +732,7 @@ export class ApplicationController {
           this.#state.newWorkspace &&
           !this.#state.newWorkspace.launch.submitting &&
           this.#state.directory.projects.some((project) => project.id === intent.projectId)
-        )
+        ) {
           this.apply({
             type: "set-new-workspace",
             draft: {
@@ -679,7 +741,9 @@ export class ApplicationController {
               launch: { ...this.#state.newWorkspace.launch, error: undefined },
             },
           });
-        this.apply({ type: "close-modal" });
+          this.apply({ type: "close-modal" });
+          await this.loadWorkspacePlacement();
+        }
         return;
       case "set-new-workspace-title":
         if (this.#state.newWorkspace && !this.#state.newWorkspace.launch.submitting)
@@ -691,6 +755,7 @@ export class ApplicationController {
         return;
       case "cancel-new-workspace":
         if (!this.#state.newWorkspace || this.#state.newWorkspace.launch.submitting) return;
+        this.workspacePlacementGeneration += 1;
         this.apply({ type: "set-new-workspace", draft: undefined });
         this.apply({ type: "set-focus", focus: "tree" });
         return;
@@ -1156,9 +1221,72 @@ export class ApplicationController {
     return this.#state.connection === "connected";
   }
 
-  private async submitNewWorkspace(prompt: string): Promise<void> {
+  private workspacePlacementGeneration = 0;
+
+  private async loadWorkspacePlacement(): Promise<void> {
+    const generation = ++this.workspacePlacementGeneration;
     const draft = this.#state.newWorkspace;
-    if (!draft || draft.launch.submitting) return;
+    if (!draft) return;
+    const project = this.#state.directory.projects.find((item) => item.id === draft.projectId);
+    this.apply({
+      type: "set-new-workspace",
+      draft: {
+        ...draft,
+        placement: "local",
+        placementOptions: { supportsWorktree: false, refs: [] },
+        baseRef: undefined,
+        placementError: undefined,
+        placementLoading: Boolean(project?.path),
+      },
+    });
+    if (!project?.path) return;
+    try {
+      const options = await this.gateway.getWorkspacePlacement(project.path);
+      const current = this.#state.newWorkspace;
+      if (!current || generation !== this.workspacePlacementGeneration) return;
+      this.apply({
+        type: "set-new-workspace",
+        draft: {
+          ...current,
+          placement: options.supportsWorktree ? "worktree" : "local",
+          placementOptions: options,
+          baseRef: options.defaultRef,
+          placementLoading: false,
+        },
+      });
+    } catch (error) {
+      const current = this.#state.newWorkspace;
+      if (!current || generation !== this.workspacePlacementGeneration) return;
+      this.apply({
+        type: "set-new-workspace",
+        draft: {
+          ...current,
+          placementLoading: false,
+          placementError: errorDetail(error),
+          launch: {
+            ...current.launch,
+            error: `Could not load workspace placement: ${errorDetail(error)}`,
+          },
+        },
+      });
+    }
+  }
+
+  private async submitNewWorkspace(prompt: string): Promise<void> {
+    let draft = this.#state.newWorkspace;
+    if (!draft || draft.launch.submitting || draft.placementLoading) return;
+    if (draft.placementError) {
+      this.apply({
+        type: "set-launch-draft",
+        workspaceId: NEW_WORKSPACE_DRAFT_ID,
+        changes: { [draft.launch.kind === "session" ? "prompt" : "command"]: prompt },
+      });
+      const generation = this.workspacePlacementGeneration + 1;
+      await this.loadWorkspacePlacement();
+      draft = this.#state.newWorkspace;
+      if (!draft || draft.placementError || generation !== this.workspacePlacementGeneration)
+        return;
+    }
     const project = this.#state.directory.projects.find((item) => item.id === draft.projectId);
     const provider = this.#state.directory.providers.find(
       (item) => item.id === draft.launch.providerId && item.ready,
@@ -1168,24 +1296,27 @@ export class ApplicationController {
     );
     const error = !project?.path
       ? "Choose a project with an original checkout directory."
-      : !this.isConnected()
-        ? "Reconnect to Paseo, then retry."
-        : draft.launch.kind === "session"
-          ? !prompt.trim()
-            ? "Write a first message before creating a workspace."
-            : !provider || !model
-              ? "Choose an available provider and model."
-              : undefined
-          : !prompt.trim() ||
-              Array.from(prompt).some((character) => {
-                const code = character.charCodeAt(0);
-                return code < 32 || (code >= 127 && code <= 159);
-              })
-            ? "Enter one command without control characters or line breaks, then retry."
-            : draft.launch.profileId &&
-                !draft.launch.profiles?.some((profile) => profile.id === draft.launch.profileId)
-              ? "Choose an available terminal profile."
-              : undefined;
+      : draft.placement === "worktree" &&
+          !draft.placementOptions?.refs.some((ref) => ref.ref === draft.baseRef)
+        ? "Choose an available Base ref."
+        : !this.isConnected()
+          ? "Reconnect to Paseo, then retry."
+          : draft.launch.kind === "session"
+            ? !prompt.trim()
+              ? "Write a first message before creating a workspace."
+              : !provider || !model
+                ? "Choose an available provider and model."
+                : undefined
+            : !prompt.trim() ||
+                Array.from(prompt).some((character) => {
+                  const code = character.charCodeAt(0);
+                  return code < 32 || (code >= 127 && code <= 159);
+                })
+              ? "Enter one command without control characters or line breaks, then retry."
+              : draft.launch.profileId &&
+                  !draft.launch.profiles?.some((profile) => profile.id === draft.launch.profileId)
+                ? "Choose an available terminal profile."
+                : undefined;
     if (error || !project?.path) {
       this.apply({
         type: "set-launch-draft",
@@ -1208,6 +1339,16 @@ export class ApplicationController {
         projectId: project.id,
         directory: project.path,
         ...(draft.title.trim() ? { title: draft.title.trim() } : {}),
+        ...(draft.placement === "worktree" && draft.baseRef
+          ? {
+              baseRef: draft.baseRef,
+              ...((draft.launch.kind === "session" ? prompt : draft.title.trim())
+                ? {
+                    firstAgentPrompt: draft.launch.kind === "session" ? prompt : draft.title.trim(),
+                  }
+                : {}),
+            }
+          : {}),
       });
       this.apply({ type: "directory", update: { type: "workspace-upserted", workspace } });
       this.apply({

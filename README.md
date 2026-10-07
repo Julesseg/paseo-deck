@@ -114,7 +114,7 @@ Connect only to a Paseo daemon you trust. The daemon can expose agent history an
 
 ## Design and attribution
 
-The implementation uses only public Paseo packages and keeps SDK, CLI fallback, state, and terminal concerns behind separate module boundaries. See [the architecture note](docs/architecture.md) for the lifecycle design.
+The implementation uses Paseo packages and keeps SDK, CLI fallback, state, and terminal concerns behind separate module boundaries. See [the architecture note](docs/architecture.md) for the lifecycle design.
 
 [huanghaiyangyy/paseo-tui](https://github.com/huanghaiyangyy/paseo-tui) (MIT) informed the investigation of timeline projection, permission presentation, and pi-tui terminal patterns. Paseo Deck's multi-session store and implementation were written independently; no source code was copied.
 
@@ -122,4 +122,6 @@ The implementation uses only public Paseo packages and keeps SDK, CLI fallback, 
 
 MIT. See [LICENSE](LICENSE).
 
-Create a workspace with sidebar `c`: choose a project with `\j`, optionally name it with `\n`, and use `\c` to choose Session or Terminal. Local placement uses the project's original checkout. Submit the first message or command with `\s`; failed initial launches keep the new workspace and inputs ready for retry.
+Create a workspace with sidebar `c`: choose a project with `\j`, optionally name it with `\n`, and use `\c` to choose Session or Terminal. Git projects default to Worktree placement; use `\w` to choose Local (the project's original checkout) or Worktree, and `\b` to select its Base ref. `main` refreshes `origin/main` before creation; `main (local)` uses the on-disk branch without fetching. Non-Git and unborn projects offer Local only. Remote-base refresh currently requires a verified local daemon connection without `--host`; explicit remote targets can use local base refs. A failed refresh preserves the draft and never falls back to Local. Paseo generates the worktree branch name from the session prompt or optional workspace title. Submit the first message or command with `\s`; failed initial launches keep the new workspace and inputs ready for retry.
+
+See [workspace placement compatibility](docs/workspace-placement.md) for the narrow Git metadata API exception and remote fetch constraints.

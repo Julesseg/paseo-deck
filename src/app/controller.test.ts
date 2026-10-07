@@ -1891,3 +1891,189 @@ describe("New workspace retained state", () => {
     expect(app.state.selectedWorkspaceId).toBe("workspace-1");
   });
 });
+
+describe("Worktree workspace creation", () => {
+  it("defaults to Worktree and the repository remote base for both initial resource kinds", async () => {
+    for (const kind of ["session", "terminal"] as const) {
+      const gateway = new FakePaseoGateway({
+        ...snapshot,
+        projects: [{ id: "project-1", name: "Deck", path: "/original" }],
+      });
+      gateway.workspacePlacement = {
+        supportsWorktree: true,
+        defaultRef: "refs/remotes/origin/main",
+        refs: [
+          { label: "main", ref: "refs/remotes/origin/main", remote: true },
+          { label: "main (local)", ref: "refs/heads/main", remote: false },
+        ],
+      };
+      const app = new ApplicationController(gateway);
+      await app.start();
+      await app.handleIntent({ type: "set-focus", focus: "tree" });
+      await app.handleIntent({ type: "open-new-workspace" });
+      expect(app.state.newWorkspace).toMatchObject({
+        placement: "worktree",
+        baseRef: "refs/remotes/origin/main",
+        launch: { kind: "session", modelId: "gpt-5.6" },
+      });
+      await app.handleIntent({ type: "set-new-workspace-title", title: "Feature" });
+      if (kind === "terminal") await app.handleIntent({ type: "toggle-launch-kind" });
+      await app.handleIntent({
+        type: "submit-launch",
+        workspaceId: "new-workspace-draft",
+        prompt: kind === "session" ? "Build feature" : "pwd",
+      });
+      expect(gateway.createdWorkspaces).toEqual([
+        {
+          projectId: "project-1",
+          directory: "/original",
+          title: "Feature",
+          baseRef: "refs/remotes/origin/main",
+          firstAgentPrompt: kind === "session" ? "Build feature" : "Feature",
+        },
+      ]);
+      expect(app.state.newWorkspace).toBeUndefined();
+      if (kind === "session")
+        expect(gateway.commands).toContainEqual(
+          expect.objectContaining({ type: "create-agent", workspaceId: "fake-workspace-1" }),
+        );
+      else expect(app.state.activeTerminalId).toBe("fake-terminal-1");
+    }
+  });
+});
+
+describe("Worktree refresh recovery", () => {
+  it("retains all inputs on refresh failure and retries the same remote base without a Local fallback", async () => {
+    class FetchFailure extends FakePaseoGateway {
+      fail = true;
+      override async createWorkspace(options: Parameters<FakePaseoGateway["createWorkspace"]>[0]) {
+        if (this.fail) throw new Error("Remote base refresh failed: authentication denied");
+        return super.createWorkspace(options);
+      }
+    }
+    const gateway = new FetchFailure({
+      ...snapshot,
+      projects: [{ id: "project-1", name: "Deck", path: "/original" }],
+    });
+    gateway.workspacePlacement = {
+      supportsWorktree: true,
+      defaultRef: "refs/remotes/origin/main",
+      refs: [{ label: "main", ref: "refs/remotes/origin/main", remote: true }],
+    };
+    const app = new ApplicationController(gateway);
+    await app.start();
+    await app.handleIntent({ type: "set-focus", focus: "tree" });
+    await app.handleIntent({ type: "open-new-workspace" });
+    await app.handleIntent({ type: "set-new-workspace-title", title: "Feature" });
+    app.setComposerText("Build it");
+    await app.handleIntent({ type: "toggle-launch-kind" });
+    app.setComposerText("pwd");
+    await app.handleIntent({
+      type: "submit-launch",
+      workspaceId: "new-workspace-draft",
+      prompt: "pwd",
+    });
+    expect(app.state.newWorkspace).toMatchObject({
+      projectId: "project-1",
+      title: "Feature",
+      placement: "worktree",
+      baseRef: "refs/remotes/origin/main",
+      launch: {
+        kind: "terminal",
+        prompt: "Build it",
+        command: "pwd",
+        modelId: "gpt-5.6",
+        submitting: false,
+        error: expect.stringContaining("authentication denied"),
+      },
+    });
+    expect(gateway.createdWorkspaces).toHaveLength(0);
+    expect(gateway.createdTerminals).toHaveLength(0);
+    expect(app.state.selectedWorkspaceId).toBe("workspace-1");
+    gateway.fail = false;
+    await app.handleIntent({
+      type: "submit-launch",
+      workspaceId: "new-workspace-draft",
+      prompt: "pwd",
+    });
+    expect(gateway.createdWorkspaces).toHaveLength(1);
+    expect(gateway.createdWorkspaces[0]?.baseRef).toBe("refs/remotes/origin/main");
+    expect(app.state.activeTerminalId).toBe("fake-terminal-1");
+  });
+});
+
+describe("Workspace placement discovery recovery", () => {
+  it("does not silently create Local on metadata failure and retries discovery with retained input", async () => {
+    class MetadataFailure extends FakePaseoGateway {
+      fail = true;
+      override async getWorkspacePlacement(directory: string) {
+        if (this.fail) throw new Error("metadata unavailable");
+        return super.getWorkspacePlacement(directory);
+      }
+    }
+    const gateway = new MetadataFailure({
+      ...snapshot,
+      projects: [{ id: "project-1", name: "Deck", path: "/original" }],
+    });
+    gateway.workspacePlacement = {
+      supportsWorktree: true,
+      defaultRef: "refs/heads/main",
+      refs: [{ label: "main (local)", ref: "refs/heads/main", remote: false }],
+    };
+    const app = new ApplicationController(gateway);
+    await app.start();
+    await app.handleIntent({ type: "set-focus", focus: "tree" });
+    await app.handleIntent({ type: "open-new-workspace" });
+    await app.handleIntent({
+      type: "submit-launch",
+      workspaceId: "new-workspace-draft",
+      prompt: "Build feature",
+    });
+    expect(gateway.createdWorkspaces).toHaveLength(0);
+    expect(app.state.newWorkspace?.launch.error).toContain("metadata unavailable");
+    gateway.fail = false;
+    await app.handleIntent({
+      type: "submit-launch",
+      workspaceId: "new-workspace-draft",
+      prompt: "Build feature",
+    });
+    expect(gateway.createdWorkspaces[0]?.baseRef).toBe("refs/heads/main");
+  });
+});
+
+describe("Workspace placement async ownership", () => {
+  it("does not submit a replacement draft when a canceled discovery retry completes late", async () => {
+    let complete!: () => void;
+    const pending = new Promise<void>((resolve) => {
+      complete = resolve;
+    });
+    class DelayedMetadata extends FakePaseoGateway {
+      requests = 0;
+      override async getWorkspacePlacement(directory: string) {
+        this.requests += 1;
+        if (this.requests === 1) throw new Error("unavailable");
+        if (this.requests === 2) await pending;
+        return super.getWorkspacePlacement(directory);
+      }
+    }
+    const gateway = new DelayedMetadata({
+      ...snapshot,
+      projects: [{ id: "project-1", name: "Deck", path: "/original" }],
+    });
+    const app = new ApplicationController(gateway);
+    await app.start();
+    await app.handleIntent({ type: "set-focus", focus: "tree" });
+    await app.handleIntent({ type: "open-new-workspace" });
+    const retry = app.handleIntent({
+      type: "submit-launch",
+      workspaceId: "new-workspace-draft",
+      prompt: "Old prompt",
+    });
+    await app.handleIntent({ type: "cancel-new-workspace" });
+    await app.handleIntent({ type: "open-new-workspace" });
+    complete();
+    await retry;
+    expect(gateway.createdWorkspaces).toHaveLength(0);
+    expect(app.state.newWorkspace?.launch.prompt).toBe("");
+  });
+});

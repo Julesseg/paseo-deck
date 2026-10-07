@@ -20,7 +20,12 @@ import type {
   UsageSummary,
   WorkspaceRecord,
 } from "../contracts/domain.js";
-import type { Observation, PaseoGateway, WorkspaceCreateOptions } from "../contracts/gateway.js";
+import type {
+  Observation,
+  PaseoGateway,
+  WorkspaceCreateOptions,
+  WorkspacePlacement,
+} from "../contracts/gateway.js";
 import type {
   TerminalCapture,
   TerminalCreateOptions,
@@ -32,6 +37,13 @@ import type {
 import { type CliRunner, createCliRunner, runJson } from "./cli.js";
 import { PaseoGatewayError, paseoFailure } from "./errors.js";
 import { type PaseoTarget, type PaseoTargetInput, targetFromDaemonStatus } from "./target.js";
+
+import {
+  createWorkspaceMetadataClient,
+  fetchWorkspaceRemote,
+  type WorkspaceMetadataClient,
+  workspacePlacement,
+} from "./worktree.js";
 
 type UnknownRecord = Record<string, unknown>;
 type Listener<T> = (value: T) => void;
@@ -49,6 +61,8 @@ type ClientSurface = PaseoClient;
 
 export interface PaseoGatewayOptions extends PaseoTargetInput {
   cliRunner?: CliRunner;
+  fetchRemote?: (directory: string, branch: string) => Promise<void>;
+  createMetadataClient?: (target: PaseoTarget) => WorkspaceMetadataClient;
   createClient?: (target: PaseoTarget) => ClientSurface;
 }
 
@@ -59,6 +73,7 @@ export class ProductionPaseoGateway implements PaseoGateway {
   private target: PaseoTarget | undefined;
   private focused: Observation | undefined;
   private focusGeneration = 0;
+  private metadata: Promise<WorkspaceMetadataClient> | undefined;
 
   public constructor(private readonly options: PaseoGatewayOptions = {}) {
     this.cliRunner = options.cliRunner ?? createCliRunner();
@@ -76,19 +91,67 @@ export class ProductionPaseoGateway implements PaseoGateway {
         }));
   }
 
+  public async getWorkspacePlacement(directory: string): Promise<WorkspacePlacement> {
+    try {
+      this.requireClient();
+      if (!this.metadata) {
+        const target = this.target;
+        if (!target) throw new PaseoGatewayError("Paseo Deck is not connected.");
+        const metadata = (this.options.createMetadataClient ?? createWorkspaceMetadataClient)(
+          target,
+        );
+        this.metadata = metadata
+          .connect()
+          .then(() => metadata)
+          .catch(async (error) => {
+            this.metadata = undefined;
+            await metadata.close().catch(() => {});
+            throw error;
+          });
+      }
+      return await workspacePlacement(await this.metadata, directory);
+    } catch (error) {
+      throw paseoFailure(error, "protocol");
+    }
+  }
+
   public async createWorkspace(options: WorkspaceCreateOptions): Promise<WorkspaceRecord> {
-    const handle = await this.requireClient().workspaces.create({
-      source: { kind: "directory", path: options.directory, projectId: options.projectId },
-      ...(options.title ? { title: options.title } : {}),
-    });
-    return workspaceRecord(
-      asRecord(handle.current()) ?? {
-        id: handle.id,
-        directory: handle.directory,
-        projectId: handle.projectId,
-        title: options.title,
-      },
-    );
+    try {
+      if (options.baseRef?.startsWith("refs/remotes/origin/")) {
+        await this.verifyLocalFetchTarget();
+        await (this.options.fetchRemote ?? fetchWorkspaceRemote)(
+          options.directory,
+          options.baseRef.slice("refs/remotes/origin/".length),
+        );
+      } else if (options.baseRef && !options.baseRef.startsWith("refs/heads/")) {
+        throw new PaseoGatewayError("Choose an explicit remote or local Base ref.");
+      }
+      const handle = await this.requireClient().workspaces.create({
+        source: options.baseRef
+          ? {
+              kind: "worktree",
+              cwd: options.directory,
+              projectId: options.projectId,
+              action: "branch-off",
+              refName: options.baseRef,
+            }
+          : { kind: "directory", path: options.directory, projectId: options.projectId },
+        ...(options.firstAgentPrompt
+          ? { firstAgentContext: { prompt: options.firstAgentPrompt } }
+          : {}),
+        ...(options.title ? { title: options.title } : {}),
+      });
+      return workspaceRecord(
+        asRecord(handle.current()) ?? {
+          id: handle.id,
+          directory: handle.directory,
+          projectId: handle.projectId,
+          title: options.title,
+        },
+      );
+    } catch (error) {
+      throw paseoFailure(error, "command");
+    }
   }
 
   public async connect(): Promise<void> {
@@ -118,10 +181,20 @@ export class ProductionPaseoGateway implements PaseoGateway {
 
   public async close(): Promise<void> {
     this.focusGeneration += 1;
-    await this.focused?.release();
+    const focused = this.focused;
+    const metadata = this.metadata;
+    const client = this.client;
     this.focused = undefined;
-    if (this.client !== undefined) await this.client.close();
+    this.metadata = undefined;
+    const outcomes = await Promise.allSettled([
+      focused?.release(),
+      metadata?.then((connection) => connection.close()),
+      client?.close(),
+    ]);
     this.client = undefined;
+    this.target = undefined;
+    const failure = outcomes.find((outcome) => outcome.status === "rejected");
+    if (failure?.status === "rejected") throw paseoFailure(failure.reason, "protocol");
   }
 
   public async getDirectorySnapshot(): Promise<DirectorySnapshot> {
@@ -475,6 +548,28 @@ export class ProductionPaseoGateway implements PaseoGateway {
       }
     } catch (error) {
       throw paseoFailure(error, "command");
+    }
+  }
+
+  private async verifyLocalFetchTarget(): Promise<void> {
+    const unsupported = () =>
+      new PaseoGatewayError(
+        "Remote Base ref refresh is unsupported for remote daemons. Choose a local Base ref, or connect to a verified local daemon without --host.",
+      );
+    if (this.options.host !== undefined || process.env.PASEO_HOST) throw unsupported();
+    const status = await this.daemonStatus();
+    if (
+      status.localDaemon !== "running" ||
+      typeof status.pid !== "number" ||
+      !Number.isInteger(status.pid) ||
+      status.pid <= 0 ||
+      targetFromDaemonStatus(this.options, status).websocketUrl !== this.target?.websocketUrl
+    )
+      throw unsupported();
+    try {
+      process.kill(status.pid, 0);
+    } catch {
+      throw unsupported();
     }
   }
 

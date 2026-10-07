@@ -4047,3 +4047,68 @@ describe("New workspace over an active terminal", () => {
     }
   });
 });
+
+describe("Worktree workspace controls", () => {
+  it("shares a labeled Base ref picker across Session and Terminal, hiding it for Local placement", async () => {
+    const { ApplicationController } = await import("../app/controller.js");
+    const { FakePaseoGateway } = await import("../paseo/fake-gateway.js");
+    const directory = state().directory;
+    const gateway = new FakePaseoGateway({
+      ...directory,
+      projects: [{ id: "project", name: "Deck", path: "/original" }],
+      workspaces: directory.workspaces.map((workspace) => ({ ...workspace, projectId: "project" })),
+    });
+    gateway.workspacePlacement = {
+      supportsWorktree: true,
+      defaultRef: "refs/remotes/origin/main",
+      refs: [
+        { label: "main", ref: "refs/remotes/origin/main", remote: true },
+        { label: "main (local)", ref: "refs/heads/main", remote: false },
+      ],
+    };
+    const app = new ApplicationController(gateway);
+    await app.start();
+    const terminal = new RecordingTerminal(100, 28);
+    const deck = new DeckTui(terminal, app.state, (intent) => void app.handleIntent(intent));
+    const unsubscribe = app.subscribe((next) => deck.update(next));
+    deck.start();
+    try {
+      await app.handleIntent({ type: "set-focus", focus: "tree" });
+      terminal.sendInput("c");
+      await terminal.waitForRender();
+      let screen = terminal.viewport().join("\n");
+      expect(screen).toContain("Worktree");
+      expect(screen).toContain("Base ref · main");
+      expect(screen).not.toContain("Branch name");
+      terminal.sendInput("\\");
+      terminal.sendInput("b");
+      await terminal.waitForRender();
+      screen = terminal.viewport().join("\n");
+      expect(screen).toContain("main (local)");
+      expect(screen).toContain("Refresh origin/main");
+      terminal.sendInput("\u001b[B");
+      terminal.sendInput("\r");
+      await terminal.waitForRender();
+      expect(app.state.newWorkspace?.baseRef).toBe("refs/heads/main");
+      terminal.sendInput("\\");
+      terminal.sendInput("c");
+      await terminal.waitForRender();
+      screen = terminal.viewport().join("\n");
+      expect(screen).toContain("Terminal");
+      expect(screen).toContain("Base ref · main (local)");
+      terminal.sendInput("\\");
+      terminal.sendInput("w");
+      await terminal.waitForRender();
+      expect(terminal.viewport().join("\n")).toContain("Workspace placement");
+      terminal.sendInput("\u001b[A");
+      terminal.sendInput("\r");
+      await terminal.waitForRender();
+      expect(app.state.newWorkspace?.placement).toBe("local");
+      expect(terminal.viewport().join("\n")).not.toContain("Base ref");
+    } finally {
+      unsubscribe();
+      await deck.stop();
+      await app.releaseObservations();
+    }
+  });
+});

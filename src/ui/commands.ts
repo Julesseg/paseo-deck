@@ -34,6 +34,8 @@ export type CommandContext =
   | "launch-profile"
   | "new-workspace-project"
   | "new-workspace-title"
+  | "new-workspace-placement"
+  | "new-workspace-base"
   | "draft-setting"
   | "mode"
   | "thinking"
