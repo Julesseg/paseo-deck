@@ -161,7 +161,7 @@ describe("rendered timeline buffer", () => {
     expect(osc52("hello")).toBe("\u001b]52;c;aGVsbG8=\u0007");
   });
 
-  it("moves by sentences, paragraphs, last nonblank, and file percentage", () => {
+  it("moves by sentences, paragraphs, last nonblank, and rejects file percentage", () => {
     const lines = ["One. Two!", "  Three?", "", "Fourth sentence.", "  end  "];
     const initial = createTimelineBuffer({ lines });
     expect(moveTimelineBuffer(initial, ")", 2)).toMatchObject({ line: 1, column: 2 });
@@ -174,7 +174,7 @@ describe("rendered timeline buffer", () => {
       line: 2,
       column: 0,
     });
-    expect(moveTimelineBuffer(initial, "%", 50).line).toBe(2);
+    expect(moveTimelineBuffer(initial, "%", 50).line).toBe(0);
     expect(moveTimelineBuffer(createTimelineBuffer({ lines, line: 4 }), "g_").column).toBe(4);
   });
 
