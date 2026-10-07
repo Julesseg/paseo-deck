@@ -1,7 +1,17 @@
 import { resolveTerminalProfileLaunch } from "@getpaseo/protocol/terminal-profiles";
 import type { AgentCommand, CommandResult } from "../contracts/commands.js";
-import type { DirectorySnapshot, DirectoryUpdate, TimelineUpdate } from "../contracts/domain.js";
-import type { Observation, PaseoGateway } from "../contracts/gateway.js";
+import type {
+  DirectorySnapshot,
+  DirectoryUpdate,
+  TimelineUpdate,
+  WorkspaceRecord,
+} from "../contracts/domain.js";
+import type {
+  Observation,
+  PaseoGateway,
+  WorkspaceCreateOptions,
+  WorkspacePlacement,
+} from "../contracts/gateway.js";
 import type {
   TerminalCreateOptions,
   TerminalProfile,
@@ -29,6 +39,28 @@ export class FakePaseoGateway implements PaseoGateway {
   >();
 
   public constructor(private snapshot: DirectorySnapshot) {}
+
+  public workspacePlacement: WorkspacePlacement = { supportsWorktree: false, refs: [] };
+
+  public async getWorkspacePlacement(_directory: string): Promise<WorkspacePlacement> {
+    return this.workspacePlacement;
+  }
+
+  public readonly createdWorkspaces: WorkspaceCreateOptions[] = [];
+
+  public async createWorkspace(options: WorkspaceCreateOptions): Promise<WorkspaceRecord> {
+    this.assertConnected();
+    this.createdWorkspaces.push(options);
+    const workspace = {
+      id: `fake-workspace-${this.createdWorkspaces.length}`,
+      projectId: options.projectId,
+      directory: options.directory,
+      title: options.title ?? "New workspace",
+      archived: false,
+    };
+    this.snapshot = { ...this.snapshot, workspaces: [...this.snapshot.workspaces, workspace] };
+    return workspace;
+  }
 
   public async connect(): Promise<void> {
     this.connected = true;

@@ -6,6 +6,7 @@ import type {
   TimelineEvent,
   UsageSummary,
 } from "./domain.js";
+import type { WorkspacePlacement } from "./gateway.js";
 import type { TerminalProfile, TerminalRecord } from "./terminal.js";
 
 export type FocusArea = "tree" | "timeline" | "composer";
@@ -27,9 +28,34 @@ export interface SessionDraft {
   submitting?: boolean | undefined;
 }
 
+export interface LaunchDraft extends SessionDraft {
+  kind: "session" | "terminal";
+  command: string;
+  profileId?: string | undefined;
+  profiles?: readonly TerminalProfile[];
+  createdAgentId?: string;
+  createdTerminal?: TerminalRecord;
+}
+
+export interface NewWorkspaceDraft {
+  placement?: "local" | "worktree";
+  placementOptions?: WorkspacePlacement;
+  placementLoading?: boolean;
+  placementError?: string | undefined;
+  baseRef?: string | undefined;
+  projectId?: string | undefined;
+  title: string;
+  launch: LaunchDraft;
+}
+
 export type ModalState =
   | { type: "none" }
   | { type: "help" }
+  | { type: "new-workspace-project" }
+  | { type: "new-workspace-title" }
+  | { type: "new-workspace-placement" }
+  | { type: "new-workspace-base" }
+  | { type: "launch-profile"; workspaceId: string }
   | { type: "notifications"; index: number }
   | { type: "filter"; query: string }
   | { type: "create-terminal"; workspaceId: string; name: string; error?: string }
@@ -153,6 +179,8 @@ export interface AppState {
   /** Last active resource per workspace during this run. */
   activeTabIds: Readonly<Record<string, TabId>>;
   sessionDrafts: Readonly<Record<string, SessionDraft>>;
+  newWorkspace?: NewWorkspaceDraft | undefined;
+  launchDrafts?: Readonly<Record<string, LaunchDraft>>;
   expandedIds: ReadonlySet<string>;
   filter: string;
   treeOrder: TreeOrder;

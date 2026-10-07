@@ -32,6 +32,63 @@ const draftState: AppState = {
   sessionDrafts: { "workspace-main": draftFixture },
   timeline: { recoveryRevision: 0, items: [], loading: false },
 };
+const launchState: AppState = {
+  ...draftBaseState,
+  directory: {
+    ...baseState.directory,
+    agents: baseState.directory.agents.filter((agent) => agent.workspaceId !== "workspace-main"),
+  },
+  focus: "composer",
+  composerMode: "normal",
+  tabOrder: { ...baseState.tabOrder, "workspace-main": [] },
+  activeTabIds: {},
+  sessionDrafts: {},
+  workspaceTerminals: {},
+  timeline: { recoveryRevision: 0, items: [], loading: false },
+  launchDrafts: {
+    "workspace-main": {
+      ...draftFixture,
+      kind: "session",
+      command: "",
+      profiles: [{ id: "tools", name: "Tools", command: "zsh" }],
+    },
+  },
+};
+const newWorkspaceState = {
+  ...baseState,
+  focus: "composer",
+  composerMode: "normal",
+  directory: {
+    ...baseState.directory,
+    projects: [{ id: "live-project", name: "Deck Labs", path: "/demo/deck" }],
+  },
+  newWorkspace: {
+    projectId: "live-project",
+    title: "",
+    launch: { ...draftFixture, kind: "session", command: "" },
+  },
+} satisfies AppState;
+const worktreeWorkspaceState = {
+  ...newWorkspaceState,
+  newWorkspace: {
+    ...newWorkspaceState.newWorkspace,
+    placement: "worktree",
+    placementOptions: {
+      supportsWorktree: true,
+      defaultRef: "refs/remotes/origin/main",
+      refs: [
+        { label: "main", ref: "refs/remotes/origin/main", remote: true },
+        { label: "main (local)", ref: "refs/heads/main", remote: false },
+        {
+          label: "feature/navigation (local)",
+          ref: "refs/heads/feature/navigation",
+          remote: false,
+        },
+      ],
+    },
+    baseRef: "refs/remotes/origin/main",
+  },
+} satisfies AppState;
 const emptyState = withoutSelection(baseState);
 const overflowTemplate = baseState.directory.agents[0];
 if (!overflowTemplate) throw new Error("UI report needs a session fixture");
@@ -105,6 +162,234 @@ const shots: Array<{
         type: "new-tab",
         workspaceId: "workspace-main",
         profiles: [{ id: "codex", name: "Codex", command: "codex" }],
+      },
+    },
+  },
+  { name: "new-workspace-worktree-session", columns: 100, rows: 28, state: worktreeWorkspaceState },
+  { name: "new-workspace-worktree-narrow", columns: 52, rows: 18, state: worktreeWorkspaceState },
+  {
+    name: "new-workspace-placement-picker",
+    columns: 100,
+    rows: 28,
+    state: { ...worktreeWorkspaceState, modal: { type: "new-workspace-placement" } },
+  },
+  {
+    name: "new-workspace-base-picker",
+    columns: 100,
+    rows: 28,
+    state: { ...worktreeWorkspaceState, modal: { type: "new-workspace-base" } },
+  },
+  {
+    name: "new-workspace-worktree-terminal",
+    columns: 100,
+    rows: 28,
+    state: {
+      ...worktreeWorkspaceState,
+      newWorkspace: {
+        ...worktreeWorkspaceState.newWorkspace,
+        baseRef: "refs/heads/main",
+        launch: { ...draftFixture, kind: "terminal", command: "npm run dev" },
+      },
+    },
+  },
+  {
+    name: "new-workspace-placement-loading",
+    columns: 100,
+    rows: 28,
+    state: {
+      ...newWorkspaceState,
+      newWorkspace: { ...newWorkspaceState.newWorkspace, placementLoading: true },
+    },
+  },
+  {
+    name: "new-workspace-worktree-submitting",
+    columns: 100,
+    rows: 28,
+    state: {
+      ...worktreeWorkspaceState,
+      newWorkspace: {
+        ...worktreeWorkspaceState.newWorkspace,
+        title: "Navigation",
+        launch: {
+          ...draftFixture,
+          kind: "session",
+          command: "",
+          prompt: "Improve sidebar navigation",
+          submitting: true,
+        },
+      },
+    },
+  },
+  {
+    name: "new-workspace-worktree-error",
+    columns: 100,
+    rows: 28,
+    state: {
+      ...worktreeWorkspaceState,
+      newWorkspace: {
+        ...worktreeWorkspaceState.newWorkspace,
+        title: "Navigation",
+        launch: {
+          ...draftFixture,
+          kind: "session",
+          command: "",
+          prompt: "Improve sidebar navigation",
+          error: "Remote base refresh failed: origin unreachable. Press \\s to retry.",
+        },
+      },
+    },
+  },
+  {
+    name: "new-workspace-remote-unsupported",
+    columns: 120,
+    rows: 28,
+    state: {
+      ...worktreeWorkspaceState,
+      newWorkspace: {
+        ...worktreeWorkspaceState.newWorkspace,
+        title: "Navigation",
+        launch: {
+          ...draftFixture,
+          kind: "session",
+          command: "",
+          prompt: "Improve sidebar navigation",
+          error:
+            "Could not create workspace: Remote Base ref refresh is unsupported for remote daemons. Choose a local Base ref, or connect to a verified local daemon without --host.. Press \\s to retry.",
+        },
+      },
+    },
+  },
+  { name: "new-workspace-local-session", columns: 100, rows: 28, state: newWorkspaceState },
+  { name: "new-workspace-local-narrow", columns: 52, rows: 18, state: newWorkspaceState },
+  {
+    name: "new-workspace-local-terminal",
+    columns: 100,
+    rows: 28,
+    state: {
+      ...newWorkspaceState,
+      newWorkspace: {
+        projectId: "live-project",
+        title: "Dev server",
+        launch: { ...draftFixture, kind: "terminal", command: "npm run dev" },
+      },
+    },
+  },
+  {
+    name: "new-workspace-local-submitting",
+    columns: 100,
+    rows: 28,
+    state: {
+      ...newWorkspaceState,
+      newWorkspace: {
+        projectId: "live-project",
+        title: "Feature",
+        launch: {
+          ...draftFixture,
+          kind: "session",
+          command: "",
+          prompt: "Build the Local workspace flow",
+          submitting: true,
+        },
+      },
+    },
+  },
+  {
+    name: "new-workspace-local-error",
+    columns: 100,
+    rows: 28,
+    state: {
+      ...newWorkspaceState,
+      newWorkspace: {
+        projectId: "live-project",
+        title: "Feature",
+        launch: {
+          ...draftFixture,
+          kind: "session",
+          command: "",
+          prompt: "Build the Local workspace flow",
+          error: "Could not create workspace: disconnected. Press \\s to retry.",
+        },
+      },
+    },
+  },
+  {
+    name: "new-workspace-project-picker",
+    columns: 100,
+    rows: 28,
+    state: { ...newWorkspaceState, modal: { type: "new-workspace-project" } },
+  },
+  {
+    name: "new-workspace-title",
+    columns: 100,
+    rows: 28,
+    state: { ...newWorkspaceState, modal: { type: "new-workspace-title" } },
+  },
+  { name: "launch-session", columns: 100, rows: 28, state: launchState },
+  { name: "launch-session-narrow", columns: 52, rows: 18, state: launchState },
+  {
+    name: "launch-terminal",
+    columns: 100,
+    rows: 28,
+    state: {
+      ...launchState,
+      launchDrafts: {
+        "workspace-main": {
+          ...draftFixture,
+          kind: "terminal",
+          command: "npm run dev",
+          profileId: "tools",
+          profiles: [{ id: "tools", name: "Tools", command: "zsh" }],
+        },
+      },
+    },
+  },
+  {
+    name: "launch-submitting",
+    columns: 100,
+    rows: 28,
+    state: {
+      ...launchState,
+      launchDrafts: {
+        "workspace-main": {
+          ...draftFixture,
+          kind: "session",
+          command: "",
+          prompt: "Build the workspace launch flow",
+          submitting: true,
+        },
+      },
+    },
+  },
+  {
+    name: "launch-error",
+    columns: 100,
+    rows: 28,
+    state: {
+      ...launchState,
+      launchDrafts: {
+        "workspace-main": {
+          ...draftFixture,
+          kind: "terminal",
+          command: "npm run dev",
+          error: "Could not launch terminal: connection interrupted. Press \\s to retry.",
+        },
+      },
+    },
+  },
+  {
+    name: "launch-session-error",
+    columns: 100,
+    rows: 28,
+    state: {
+      ...launchState,
+      launchDrafts: {
+        "workspace-main": {
+          ...draftFixture,
+          kind: "session",
+          command: "",
+          prompt: "Build the workspace launch flow",
+          error: "Could not launch session: connection interrupted. Press \\s to retry.",
+        },
       },
     },
   },

@@ -3876,3 +3876,270 @@ describe("DeckTui viewport and focus", () => {
     expect(terminal.writes.join("")).not.toContain("•");
   });
 });
+
+describe("Launch composer", () => {
+  it("renders daemon terminal profile names as visible plain text without remote styling", async () => {
+    const terminal = new RecordingTerminal(100, 28);
+    const deck = new DeckTui(
+      terminal,
+      {
+        ...state(),
+        selectedWorkspaceId: "w",
+        focus: "composer",
+        launchDrafts: {
+          w: {
+            kind: "terminal",
+            prompt: "",
+            command: "pwd",
+            profileId: "hidden",
+            profiles: [{ id: "hidden", name: "\u001b[8mHidden\u001b[0m", command: "zsh" }],
+          },
+        },
+      },
+      () => undefined,
+      { appearance: { color: "none", unicode: false, theme: "plain", symbols: "ascii" } },
+    );
+    deck.start();
+    try {
+      await terminal.waitForRender();
+      expect(terminal.viewport().join("\n")).toContain("Hidden");
+      expect(terminal.writes.join("")).not.toContain("\u001b[8m");
+    } finally {
+      await deck.stop();
+    }
+  });
+
+  it("switches resource controls through keyboard input without workspace placement controls or tabs", async () => {
+    const { ApplicationController } = await import("../app/controller.js");
+    const { FakePaseoGateway } = await import("../paseo/fake-gateway.js");
+    const gateway = new FakePaseoGateway(state().directory);
+    gateway.terminalProfiles = [{ id: "tools", name: "Tools", command: "zsh" }];
+    const app = new ApplicationController(gateway);
+    await app.start();
+    const terminal = new RecordingTerminal(100, 28);
+    const deck = new DeckTui(terminal, app.state, (intent) => void app.handleIntent(intent));
+    const unsubscribe = app.subscribe((next) => deck.update(next));
+    deck.start();
+    try {
+      await terminal.waitForRender();
+      expect(terminal.viewport().join("\n")).toContain("Launch Session");
+      expect(terminal.viewport().join("\n")).toContain("[\\m]");
+      terminal.sendInput("\\");
+      terminal.sendInput("c");
+      await terminal.waitForRender();
+      const screen = terminal.viewport().join("\n");
+      expect(screen).toContain("Launch Terminal");
+      expect(screen).toContain("First command");
+      expect(screen).toContain("[\\p]");
+      for (const absent of [
+        "[\\m]",
+        "[\\z]",
+        "[\\o]",
+        "Session draft",
+        "New session",
+        "Base branch",
+        "Local",
+        "Worktree",
+      ])
+        expect(screen).not.toContain(absent);
+      terminal.sendInput("\\");
+      terminal.sendInput("p");
+      await terminal.waitForRender();
+      expect(terminal.viewport().join("\n")).toContain("Tools");
+      terminal.sendInput("\u001b");
+      terminal.sendInput("i");
+      terminal.sendInput("pwd");
+      terminal.sendInput("\u001b");
+      terminal.sendInput("\\");
+      terminal.sendInput("s");
+      await terminal.waitForRender();
+      expect(gateway.terminalInput).toEqual([{ terminalId: "fake-terminal-1", data: "pwd\r" }]);
+      expect(terminal.viewport().join("\n")).not.toContain("Launch Terminal");
+      expect(terminal.viewport().join("\n")).toContain("Terminal");
+    } finally {
+      unsubscribe();
+      await deck.stop();
+      await app.releaseObservations();
+    }
+  });
+});
+
+describe("New workspace composer", () => {
+  it("opens only from sidebar c with project/title controls, normal/insert cancellation, and T blocked", async () => {
+    const { ApplicationController } = await import("../app/controller.js");
+    const { FakePaseoGateway } = await import("../paseo/fake-gateway.js");
+    const directory = state().directory;
+    const gateway = new FakePaseoGateway({
+      ...directory,
+      projects: [{ id: "project", name: "Deck", path: "/original" }],
+      workspaces: directory.workspaces.map((workspace) => ({ ...workspace, projectId: "project" })),
+    });
+    const app = new ApplicationController(gateway);
+    await app.start();
+    const terminal = new RecordingTerminal(100, 28);
+    const deck = new DeckTui(terminal, app.state, (intent) => void app.handleIntent(intent));
+    const unsubscribe = app.subscribe((next) => deck.update(next));
+    deck.start();
+    try {
+      terminal.sendInput("c");
+      expect(app.state.newWorkspace).toBeUndefined();
+      await app.handleIntent({ type: "set-focus", focus: "tree" });
+      terminal.sendInput("c");
+      await terminal.waitForRender();
+      let screen = terminal.viewport().join("\n");
+      expect(screen).toContain("New workspace");
+      expect(screen).toContain("Local");
+      expect(screen).toContain("/original");
+      expect(screen).toContain("[\\j]");
+      expect(screen).toContain("[\\n]");
+      expect(screen).not.toContain("Hostname");
+      terminal.sendInput("\\");
+      terminal.sendInput("n");
+      await terminal.waitForRender();
+      expect(terminal.viewport().join("\n")).toContain("Workspace title");
+      terminal.sendInput("Feature");
+      terminal.sendInput("\r");
+      await terminal.waitForRender();
+      expect(app.state.newWorkspace?.title).toBe("Feature");
+      terminal.sendInput("\\");
+      terminal.sendInput("j");
+      await terminal.waitForRender();
+      expect(terminal.viewport().join("\n")).toContain("Choose project");
+      terminal.sendInput("\r");
+      await terminal.waitForRender();
+      terminal.sendInput("\\");
+      terminal.sendInput("c");
+      terminal.sendInput("i");
+      terminal.sendInput("pwd");
+      terminal.sendInput("T");
+      expect(app.state.modal.type).toBe("none");
+      terminal.sendInput("\u001b");
+      expect(app.state.newWorkspace).toBeDefined();
+      expect(app.state.composerMode).toBe("normal");
+      await terminal.waitForRender();
+      screen = terminal.viewport().join("\n");
+      expect(screen).toContain("New workspace");
+      expect(screen).toContain("Terminal");
+      expect(screen).not.toContain("[\\m]");
+      terminal.sendInput("\u001b");
+      expect(app.state.newWorkspace).toBeUndefined();
+      expect(app.state.focus).toBe("tree");
+    } finally {
+      unsubscribe();
+      await deck.stop();
+      await app.releaseObservations();
+    }
+  });
+});
+
+describe("New workspace over an active terminal", () => {
+  it("shows the composer and its own status then restores the terminal on cancel", async () => {
+    const { ApplicationController } = await import("../app/controller.js");
+    const { FakePaseoGateway } = await import("../paseo/fake-gateway.js");
+    const gateway = new FakePaseoGateway({
+      ...state().directory,
+      projects: [{ id: "project", name: "Deck", path: "/original" }],
+      workspaces: [
+        {
+          id: "w",
+          projectId: "project",
+          title: "Current",
+          directory: "/worktree",
+          archived: false,
+        },
+      ],
+    });
+    gateway.terminals = [{ id: "terminal", workspaceId: "w", cwd: "/worktree", name: "old-shell" }];
+    const app = new ApplicationController(gateway);
+    await app.start();
+    await app.handleIntent({ type: "open-terminal", terminalId: "terminal" });
+    const terminal = new RecordingTerminal(100, 28);
+    const deck = new DeckTui(terminal, app.state, (intent) => void app.handleIntent(intent));
+    const unsubscribe = app.subscribe((next) => deck.update(next));
+    deck.start();
+    try {
+      await app.handleIntent({ type: "set-focus", focus: "tree" });
+      terminal.sendInput("c");
+      await terminal.waitForRender();
+      expect(terminal.viewport().join("\n")).toContain("New workspace");
+      expect(terminal.viewport().join("\n")).not.toContain("terminal old-shell");
+      terminal.sendInput("i");
+      terminal.sendInput("Build it");
+      terminal.sendInput("\u001b");
+      expect(app.state.newWorkspace?.launch.prompt).toBe("Build it");
+      terminal.sendInput("\u001b");
+      await terminal.waitForRender();
+      expect(terminal.viewport().join("\n")).toContain("old-shell");
+      expect(app.state.activeTerminalId).toBe("terminal");
+    } finally {
+      unsubscribe();
+      await deck.stop();
+      await app.releaseObservations();
+    }
+  });
+});
+
+describe("Worktree workspace controls", () => {
+  it("shares a labeled Base ref picker across Session and Terminal, hiding it for Local placement", async () => {
+    const { ApplicationController } = await import("../app/controller.js");
+    const { FakePaseoGateway } = await import("../paseo/fake-gateway.js");
+    const directory = state().directory;
+    const gateway = new FakePaseoGateway({
+      ...directory,
+      projects: [{ id: "project", name: "Deck", path: "/original" }],
+      workspaces: directory.workspaces.map((workspace) => ({ ...workspace, projectId: "project" })),
+    });
+    gateway.workspacePlacement = {
+      supportsWorktree: true,
+      defaultRef: "refs/remotes/origin/main",
+      refs: [
+        { label: "main", ref: "refs/remotes/origin/main", remote: true },
+        { label: "main (local)", ref: "refs/heads/main", remote: false },
+      ],
+    };
+    const app = new ApplicationController(gateway);
+    await app.start();
+    const terminal = new RecordingTerminal(100, 28);
+    const deck = new DeckTui(terminal, app.state, (intent) => void app.handleIntent(intent));
+    const unsubscribe = app.subscribe((next) => deck.update(next));
+    deck.start();
+    try {
+      await app.handleIntent({ type: "set-focus", focus: "tree" });
+      terminal.sendInput("c");
+      await terminal.waitForRender();
+      let screen = terminal.viewport().join("\n");
+      expect(screen).toContain("Worktree");
+      expect(screen).toContain("Base ref · main");
+      expect(screen).not.toContain("Branch name");
+      terminal.sendInput("\\");
+      terminal.sendInput("b");
+      await terminal.waitForRender();
+      screen = terminal.viewport().join("\n");
+      expect(screen).toContain("main (local)");
+      expect(screen).toContain("Refresh origin/main");
+      terminal.sendInput("\u001b[B");
+      terminal.sendInput("\r");
+      await terminal.waitForRender();
+      expect(app.state.newWorkspace?.baseRef).toBe("refs/heads/main");
+      terminal.sendInput("\\");
+      terminal.sendInput("c");
+      await terminal.waitForRender();
+      screen = terminal.viewport().join("\n");
+      expect(screen).toContain("Terminal");
+      expect(screen).toContain("Base ref · main (local)");
+      terminal.sendInput("\\");
+      terminal.sendInput("w");
+      await terminal.waitForRender();
+      expect(terminal.viewport().join("\n")).toContain("Workspace placement");
+      terminal.sendInput("\u001b[A");
+      terminal.sendInput("\r");
+      await terminal.waitForRender();
+      expect(app.state.newWorkspace?.placement).toBe("local");
+      expect(terminal.viewport().join("\n")).not.toContain("Base ref");
+    } finally {
+      unsubscribe();
+      await deck.stop();
+      await app.releaseObservations();
+    }
+  });
+});

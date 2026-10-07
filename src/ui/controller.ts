@@ -1,6 +1,7 @@
 import type { AppState, FocusArea, ModalState } from "../contracts/app-state.js";
 import type { AgentCommand } from "../contracts/commands.js";
 import { activeSessionDraftWorkspaceId } from "../state/composer.js";
+import { activeLaunchWorkspaceId, launchDraft } from "../state/launch.js";
 import { commandById, commandForKey, newTabUnavailableReason } from "./commands.js";
 
 const timelineTextMotionKeys = [
@@ -30,6 +31,20 @@ const timelineTextMotionKeys = [
 type TimelineTextMotionKey = (typeof timelineTextMotionKeys)[number];
 
 export type UiIntent =
+  | { type: "open-new-workspace" }
+  | { type: "open-new-workspace-project" }
+  | { type: "open-new-workspace-title" }
+  | { type: "open-new-workspace-placement" }
+  | { type: "open-new-workspace-base" }
+  | { type: "new-workspace-placement-choice"; placement: "local" | "worktree" }
+  | { type: "new-workspace-base-choice"; ref: string }
+  | { type: "new-workspace-project-choice"; projectId: string }
+  | { type: "set-new-workspace-title"; title: string }
+  | { type: "cancel-new-workspace" }
+  | { type: "toggle-launch-kind" }
+  | { type: "open-launch-profile" }
+  | { type: "launch-profile-choice"; profileId: string }
+  | { type: "submit-launch"; workspaceId: string; prompt: string }
   | { type: "switch-tab"; direction: -1 | 1; count?: number | undefined }
   | { type: "open-terminal"; terminalId: string }
   | { type: "kill-terminal" }
@@ -174,8 +189,22 @@ export class DeckController {
     if (bufferMode && this.#bufferLeader) {
       this.#bufferLeader = false;
       if (data === "\u001b") return true;
+      if (state.newWorkspace && state.focus === "composer") {
+        if (data === "j") return this.send({ type: "open-new-workspace-project" });
+        if (data === "w") return this.send({ type: "open-new-workspace-placement" });
+        if (data === "b") return this.send({ type: "open-new-workspace-base" });
+        if (data === "n") return this.send({ type: "open-new-workspace-title" });
+      }
       const key = `\\${data}`;
-      if (state.focus === "composer" && activeSessionDraftWorkspaceId(state)) {
+      const launchId = activeLaunchWorkspaceId(state);
+      if (state.focus === "composer" && launchId) {
+        if (data === "c") return this.send({ type: "toggle-launch-kind" });
+        if (launchDraft(state, launchId).kind === "terminal") {
+          if (data === "p") return this.send({ type: "open-launch-profile" });
+          if (["m", "z", "o"].includes(data)) return true;
+        }
+      }
+      if (state.focus === "composer" && (activeSessionDraftWorkspaceId(state) || launchId)) {
         const setting = ({ p: "provider", m: "model", z: "thinking", o: "mode" } as const)[
           data as "p" | "m" | "z" | "o"
         ];
@@ -284,7 +313,15 @@ export class DeckController {
       if (data === "\u001b") return this.send({ type: "close-modal" });
       return false;
     }
-    if (state.modal.type === "new-tab" || state.modal.type === "draft-setting") {
+    if (
+      state.modal.type === "new-tab" ||
+      state.modal.type === "draft-setting" ||
+      state.modal.type === "launch-profile" ||
+      state.modal.type === "new-workspace-project" ||
+      state.modal.type === "new-workspace-placement" ||
+      state.modal.type === "new-workspace-base" ||
+      state.modal.type === "new-workspace-title"
+    ) {
       if (data === "\u001b") return this.send({ type: "close-modal" });
       return false;
     }
@@ -308,6 +345,7 @@ export class DeckController {
         if (state.composerMode === undefined)
           return this.send({ type: "set-focus", focus: "tree" });
         if (mode !== "normal") return this.send({ type: "set-composer-mode", mode: "normal" });
+        if (state.newWorkspace) return this.send({ type: "cancel-new-workspace" });
         return true;
       }
       if (global?.id === "command-palette") return this.send(global.intent(state));

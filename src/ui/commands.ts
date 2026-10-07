@@ -1,5 +1,6 @@
 import type { AppState, FocusArea } from "../contracts/app-state.js";
 import { activeSessionDraftWorkspaceId, selectedComposerDraft } from "../state/composer.js";
+import { activeLaunchWorkspaceId } from "../state/launch.js";
 import { activeNotification, pendingPermissions } from "../state/store.js";
 import type { UiIntent } from "./controller.js";
 
@@ -11,7 +12,7 @@ import type { UiIntent } from "./controller.js";
 export interface DeckCommand {
   readonly id: string;
   readonly label: string;
-  readonly group: "Sessions" | "Tabs" | "Agent" | "Timeline" | "Application";
+  readonly group: "Workspaces" | "Sessions" | "Tabs" | "Agent" | "Timeline" | "Application";
   readonly shortcuts: readonly string[];
   /** Navigation remains discoverable in help but does not crowd the palette. */
   readonly palette?: boolean;
@@ -30,6 +31,11 @@ export type CommandContext =
   | "create-agent"
   | "create-terminal"
   | "new-tab"
+  | "launch-profile"
+  | "new-workspace-project"
+  | "new-workspace-title"
+  | "new-workspace-placement"
+  | "new-workspace-base"
   | "draft-setting"
   | "mode"
   | "thinking"
@@ -57,6 +63,7 @@ const requireRemoteAgent = (state: AppState): string | undefined =>
   requireConnected(state) ?? requireAgent(state);
 
 export function newTabUnavailableReason(state: AppState): string | undefined {
+  if (state.newWorkspace) return "Finish or cancel the New workspace composer first";
   const workspace = requireWorkspace(state);
   if (workspace) return workspace;
   if (state.modal.type !== "none") return "Close the dialog first";
@@ -80,12 +87,16 @@ export const deckCommands: readonly DeckCommand[] = [
     palette: false,
     disabledReason: (state) =>
       selectedComposerDraft(state).trim() &&
-      (activeSessionDraftWorkspaceId(state) || state.selectedAgentId)
+      (activeLaunchWorkspaceId(state) ||
+        activeSessionDraftWorkspaceId(state) ||
+        state.selectedAgentId)
         ? undefined
         : "No prompt to send",
     intent: (state) => {
       const workspaceId = activeSessionDraftWorkspaceId(state);
       const prompt = selectedComposerDraft(state);
+      const launchId = activeLaunchWorkspaceId(state);
+      if (launchId) return { type: "submit-launch", workspaceId: launchId, prompt };
       return workspaceId
         ? { type: "submit-session-draft", workspaceId, prompt }
         : { type: "submit-composer", agentId: state.selectedAgentId ?? "", prompt };
@@ -172,6 +183,7 @@ export const deckCommands: readonly DeckCommand[] = [
       "create-agent",
       "new-tab",
       "draft-setting",
+      "launch-profile",
       "palette",
       "help",
       "mode",
@@ -645,17 +657,14 @@ export const deckCommands: readonly DeckCommand[] = [
     intent: () => ({ type: "open-filter" }),
   },
   {
-    id: "create-agent",
-    label: "Create agent",
-    group: "Sessions",
+    id: "new-workspace",
+    label: "New workspace",
+    group: "Workspaces",
     shortcuts: ["c"],
     contexts: ["tree"],
-    disabledReason: (state) => requireConnected(state) ?? requireWorkspace(state),
-    intent: (state) => ({
-      type: "open-create-agent",
-      workspaceId: state.selectedWorkspaceId ?? "",
-      step: "provider",
-    }),
+    disabledReason: (state) =>
+      state.newWorkspace ? "Finish or cancel the New workspace composer first" : undefined,
+    intent: () => ({ type: "open-new-workspace" }),
   },
   {
     id: "permissions",

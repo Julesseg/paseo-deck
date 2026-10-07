@@ -32,6 +32,10 @@ Keys depend on the active region. In composer and timeline Normal or Visual mode
 | Composer Normal/Visual | `\h`, `\H` | Previous or next prompt from history. |
 | Composer Normal/Visual | `\o` | Operational mode. |
 | Composer Normal/Visual | `\m` | Model control; live switching is currently unavailable. |
+| Launch composer Normal/Visual | `\c` | Toggle Session or Terminal while creation has not started. |
+| Launch Session composer Normal/Visual | `\p`, `\m`, `\z`, `\o` | Choose provider, model, thinking level, or operational mode. |
+| Launch Terminal composer Normal/Visual | `\p` | Choose the default shell or a daemon terminal profile. |
+| Launch composer Normal/Visual | `\s` | Launch the resource with the first message or single-line command; retry failed input on the resource already created. |
 | Session draft composer Normal/Visual | `\p`, `\m`, `\z`, `\o` | Choose provider, model, thinking level, or operational mode for the draft. |
 | Tree or terminal Normal | `T` | New tab, where available. |
 | Tree or terminal Normal | `q`, `?`, `r`, `N`, `R`, `E`, `/`, `p`, `v`, `!`, `x`, `A`, `d`, `e`, `z` | Quit; help; refresh; notifications; retry; error details; filter; permissions; archived/attention filters; stop/archive/detach/rename session; thinking level, where available. Terminal `q` focuses the sidebar. |
@@ -101,7 +105,7 @@ These work in composer and timeline Normal/Visual modes unless the context colum
 | --- | --- | --- |
 | Sidebar | `j`/`k`, `Down`/`Up`; `h`/`l`, `Left`/`Right` | Move selection; collapse/expand branch. |
 | Sidebar | `g`, `G`, `Enter` | First/last row; activate workspace or open selection. |
-| Sidebar | `[`, `]`, `o`, `c`, `m`, `t` | Resize tree, toggle order, create session, choose operational mode, or choose thinking level. |
+| Sidebar | `[`, `]`, `o`, `c`, `m`, `t` | Resize tree, toggle order, create workspace, choose operational mode, or choose thinking level. |
 | Sidebar | `Esc` | Return to composer or active terminal. |
 | Terminal Normal | `i`, `Esc`, `q`, `n`, `r` | Enter terminal Insert, focus sidebar, or reconnect terminal. |
 | Terminal Normal | `Up`, `Down`, `Ctrl-U`, `Ctrl-D` | Scroll captured terminal output. |
@@ -116,3 +120,7 @@ These work in composer and timeline Normal/Visual modes unless the context colum
 The terminal combines some keys: `Ctrl-I`/Tab, `Ctrl-M`/Enter, `Ctrl-H`/Backspace, and `Ctrl-[`/Escape are indistinguishable without an enhanced keyboard protocol. File, tag, syntax, and window motions have no target inside these buffers. Marks currently retain numeric positions after earlier text edits or timeline reflow; place the mark again if its content shifts.
 
 Vim references: [motion commands](https://vimhelp.org/motion.txt.html), [complete command index](https://vimhelp.org/index.txt.html), and [Visual mode](https://vimhelp.org/visual.txt.html).
+
+An existing empty workspace shows the Launch composer with no tab row. Session and Terminal retain separate input when switching. Creation keeps the composer visible until the first message or command has been sent. After a resource has been created, its type and settings remain fixed during retry to avoid creating a duplicate resource.
+
+Sidebar `c` opens the New workspace composer with the highlighted project's original checkout selected (or the highlighted workspace's project). `\j` changes the project and `\n` edits the optional workspace title. Local uses the original checkout; repeated creation makes fresh workspaces for that same directory. The Launch composer controls above also apply here. `Esc` leaves Insert or Visual mode first; a second `Esc` in Normal mode cancels creation and returns to sidebar navigation. `T` is unavailable until creation finishes or is cancelled. If workspace creation succeeds but launch fails, the new workspace stays active with its inputs in the Launch composer; `\s` retries the resource without creating another workspace.

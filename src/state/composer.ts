@@ -1,4 +1,5 @@
 import type { AppState, ComposerState } from "../contracts/app-state.js";
+import { activeLaunchWorkspaceId, launchDraft } from "./launch.js";
 
 export type ComposerUnavailableReason =
   | "disconnected"
@@ -24,6 +25,11 @@ export function createComposerState(): ComposerState {
 }
 
 export function selectedComposerDraft(state: AppState): string {
+  const launchId = activeLaunchWorkspaceId(state);
+  if (launchId) {
+    const draft = launchDraft(state, launchId);
+    return draft.kind === "session" ? draft.prompt : draft.command;
+  }
   const workspaceId = activeSessionDraftWorkspaceId(state);
   if (workspaceId) return state.sessionDrafts[workspaceId]?.prompt ?? "";
   return state.selectedAgentId ? (state.composer.drafts[state.selectedAgentId] ?? "") : "";

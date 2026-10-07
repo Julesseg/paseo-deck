@@ -1462,3 +1462,618 @@ describe("New Tab terminals", () => {
     expect(app.state.modal.type).toBe("none");
   });
 });
+
+describe("empty workspace launch", () => {
+  it("launches the first session with its message and replaces Launch with its tab", async () => {
+    const gateway = new FakePaseoGateway({ ...snapshot, agents: [] });
+    const app = new ApplicationController(gateway);
+    await app.start();
+    await app.handleIntent({
+      type: "submit-launch",
+      workspaceId: "workspace-1",
+      prompt: "Build the first feature",
+    });
+    expect(gateway.commands).toEqual([
+      {
+        type: "create-agent",
+        workspaceId: "workspace-1",
+        providerId: "codex",
+        modelId: "gpt-5.6",
+        prompt: "",
+      },
+      { type: "send-prompt", agentId: "fake-agent-1", prompt: "Build the first feature" },
+    ]);
+    expect(app.state.activeTabIds["workspace-1"]).toBe("session:fake-agent-1");
+    expect(app.state.sessionDrafts).toEqual({});
+  });
+});
+
+describe("Launch recovery", () => {
+  it("keeps the first message and hides a partially created session until retry sends it", async () => {
+    class FailedFirstInput extends FakePaseoGateway {
+      fail = true;
+      override async execute(command: import("../contracts/commands.js").AgentCommand) {
+        if (command.type === "send-prompt" && this.fail) {
+          const template = snapshot.agents[0];
+          if (!template) throw new Error("Missing session fixture");
+          this.emitDirectory({
+            type: "agent-upserted",
+            agent: { ...template, id: command.agentId },
+          });
+          throw new Error("first message rejected");
+        }
+        return super.execute(command);
+      }
+    }
+    const gateway = new FailedFirstInput({ ...snapshot, agents: [] });
+    const app = new ApplicationController(gateway);
+    await app.start();
+    await app.handleIntent({
+      type: "submit-launch",
+      workspaceId: "workspace-1",
+      prompt: "Retain this message",
+    });
+    expect(app.state.launchDrafts?.["workspace-1"]).toMatchObject({
+      prompt: "Retain this message",
+      createdAgentId: "fake-agent-1",
+      submitting: false,
+      error: expect.stringContaining("retry"),
+    });
+    expect(app.state.tabOrder["workspace-1"]).toEqual([]);
+    gateway.fail = false;
+    await app.handleIntent({
+      type: "submit-launch",
+      workspaceId: "workspace-1",
+      prompt: "Retain this message",
+    });
+    expect(gateway.commands.filter((command) => command.type === "create-agent")).toHaveLength(1);
+    expect(app.state.activeTabIds["workspace-1"]).toBe("session:fake-agent-1");
+    expect(app.state.launchDrafts?.["workspace-1"]).toBeUndefined();
+  });
+});
+
+describe("Terminal Launch", () => {
+  it("retains separate messages across mode switches and launches the chosen profile with the first command", async () => {
+    const gateway = new FakePaseoGateway({ ...snapshot, agents: [] });
+    gateway.terminalProfiles = [{ id: "tools", name: "Tools", command: "zsh" }];
+    const app = new ApplicationController(gateway);
+    await app.start();
+    app.setComposerText("Session idea");
+    await app.handleIntent({ type: "toggle-launch-kind" });
+    app.setComposerText("pwd");
+    await app.handleIntent({ type: "open-launch-profile" });
+    await app.handleIntent({ type: "launch-profile-choice", profileId: "tools" });
+    await app.handleIntent({ type: "toggle-launch-kind" });
+    expect(selectedComposerDraft(app.state)).toBe("Session idea");
+    await app.handleIntent({ type: "toggle-launch-kind" });
+    expect(selectedComposerDraft(app.state)).toBe("pwd");
+    await app.handleIntent({ type: "submit-launch", workspaceId: "workspace-1", prompt: "pwd" });
+    expect(gateway.createdTerminals[0]?.options).toMatchObject({ command: "zsh" });
+    expect(gateway.terminalInput).toEqual([{ terminalId: "fake-terminal-1", data: "pwd\r" }]);
+    expect(app.state.activeTerminalId).toBe("fake-terminal-1");
+    expect(app.state.launchDrafts?.["workspace-1"]).toBeUndefined();
+  });
+});
+
+describe("Launch settings", () => {
+  it("uses selected session settings without making a Session draft", async () => {
+    const gateway = new FakePaseoGateway({ ...snapshot, agents: [] });
+    const app = new ApplicationController(gateway);
+    await app.start();
+    await app.handleIntent({ type: "open-draft-setting", setting: "thinking" });
+    expect(app.state.modal).toMatchObject({ type: "draft-setting", setting: "thinking" });
+    await app.handleIntent({ type: "draft-setting-choice", choice: "medium" });
+    await app.handleIntent({
+      type: "submit-launch",
+      workspaceId: "workspace-1",
+      prompt: "Think carefully",
+    });
+    expect(gateway.commands[0]).toMatchObject({ type: "create-agent", thinkingLevel: "medium" });
+    expect(app.state.sessionDrafts).toEqual({});
+  });
+});
+
+describe("Launch availability", () => {
+  it("loads terminal profiles and daemon model defaults when opening an empty workspace", async () => {
+    const provider = snapshot.providers[0];
+    if (!provider) throw new Error("Missing provider fixture");
+    const gateway = new FakePaseoGateway({
+      ...snapshot,
+      agents: [],
+      providers: [
+        {
+          ...provider,
+          defaultModelId: "preferred",
+          models: [
+            ...provider.models,
+            { id: "preferred", name: "Preferred", selectable: true, thinkingLevels: [] },
+          ],
+        },
+      ],
+    });
+    gateway.terminalProfiles = [{ id: "tools", name: "Tools", command: "zsh" }];
+    const app = new ApplicationController(gateway);
+    await app.start();
+    expect(app.state.launchDrafts?.["workspace-1"]).toMatchObject({
+      modelId: "preferred",
+      profiles: gateway.terminalProfiles,
+    });
+  });
+});
+
+describe("Terminal Launch failures", () => {
+  it("retains a created terminal after input fails and retries without creating a duplicate", async () => {
+    class FailedInput extends FakePaseoGateway {
+      fail = true;
+      override sendTerminalInput(id: string, data: string) {
+        if (this.fail) throw new Error("transport offline");
+        super.sendTerminalInput(id, data);
+      }
+    }
+    const gateway = new FailedInput({ ...snapshot, agents: [] });
+    const app = new ApplicationController(gateway);
+    await app.start();
+    await app.handleIntent({ type: "toggle-launch-kind" });
+    app.setComposerText("printf hello");
+    await app.handleIntent({
+      type: "submit-launch",
+      workspaceId: "workspace-1",
+      prompt: "printf hello",
+    });
+    expect(app.state.launchDrafts?.["workspace-1"]).toMatchObject({
+      kind: "terminal",
+      command: "printf hello",
+      error: expect.stringContaining("retry"),
+      submitting: false,
+    });
+    expect(app.state.activeTerminalId).toBeUndefined();
+    await app.handleIntent({ type: "toggle-launch-kind" });
+    expect(app.state.launchDrafts?.["workspace-1"]?.kind).toBe("terminal");
+    gateway.fail = false;
+    await app.handleIntent({
+      type: "submit-launch",
+      workspaceId: "workspace-1",
+      prompt: "printf hello",
+    });
+    expect(gateway.createdTerminals).toHaveLength(1);
+    expect(gateway.terminalInput).toEqual([
+      { terminalId: "fake-terminal-1", data: "printf hello\r" },
+    ]);
+    expect(app.state.activeTerminalId).toBe("fake-terminal-1");
+  });
+
+  it.each(["pwd\nrm -rf .", "pwd\r", "\u001b[31m", "\u0000", " "])(
+    "rejects an unsafe first command %j before terminal creation",
+    async (command) => {
+      const gateway = new FakePaseoGateway({ ...snapshot, agents: [] });
+      const app = new ApplicationController(gateway);
+      await app.start();
+      await app.handleIntent({ type: "toggle-launch-kind" });
+      app.setComposerText(command);
+      await app.handleIntent({
+        type: "submit-launch",
+        workspaceId: "workspace-1",
+        prompt: command,
+      });
+      expect(gateway.createdTerminals).toEqual([]);
+      expect(selectedComposerDraft(app.state)).toBe(command);
+      expect(app.state.launchDrafts?.["workspace-1"]?.error).toContain("one command");
+    },
+  );
+});
+
+describe("Launch submission lifecycle", () => {
+  it("keeps the launch visible during creation and preserves its input after a creation failure", async () => {
+    let rejectCreation!: (error: Error) => void;
+    class DelayedCreation extends FakePaseoGateway {
+      override async createTerminal(
+        _id: string,
+      ): Promise<import("../contracts/terminal.js").TerminalRecord> {
+        return new Promise((_resolve, reject) => {
+          rejectCreation = reject;
+        });
+      }
+    }
+    const gateway = new DelayedCreation({ ...snapshot, agents: [] });
+    const app = new ApplicationController(gateway);
+    await app.start();
+    await app.handleIntent({ type: "toggle-launch-kind" });
+    app.setComposerText("ls -la");
+    const submission = app.handleIntent({
+      type: "submit-launch",
+      workspaceId: "workspace-1",
+      prompt: "ls -la",
+    });
+    expect(app.state.launchDrafts?.["workspace-1"]).toMatchObject({
+      kind: "terminal",
+      submitting: true,
+    });
+    expect(app.state.tabOrder["workspace-1"]).toEqual([]);
+    await app.handleIntent({ type: "toggle-launch-kind" });
+    app.setComposerText("accidental edit");
+    expect(selectedComposerDraft(app.state)).toBe("ls -la");
+    rejectCreation(new Error("creation denied"));
+    await submission;
+    expect(app.state.launchDrafts?.["workspace-1"]).toMatchObject({
+      kind: "terminal",
+      command: "ls -la",
+      submitting: false,
+      error: expect.stringContaining("creation denied"),
+    });
+  });
+});
+
+describe("New workspace composer", () => {
+  it("preselects the highlighted workspace's project and cancels without changing the active workspace", async () => {
+    const gateway = new FakePaseoGateway({
+      ...snapshot,
+      projects: [{ id: "project-1", name: "Deck", path: "/original" }],
+    });
+    const app = new ApplicationController(gateway);
+    await app.start();
+    await app.handleIntent({ type: "set-focus", focus: "tree" });
+    await app.handleIntent({ type: "open-new-workspace" });
+    expect(app.state.newWorkspace).toMatchObject({
+      projectId: "project-1",
+      title: "",
+      launch: { kind: "session" },
+    });
+    expect(app.state.focus).toBe("composer");
+    await app.handleIntent({ type: "cancel-new-workspace" });
+    expect(app.state.newWorkspace).toBeUndefined();
+    expect(app.state.selectedWorkspaceId).toBe("workspace-1");
+    expect(app.state.focus).toBe("tree");
+  });
+});
+
+describe("Local workspace creation", () => {
+  it("creates fresh Local workspaces at the original checkout for both launch types", async () => {
+    const gateway = new FakePaseoGateway({
+      ...snapshot,
+      projects: [{ id: "project-1", name: "Deck", path: "/original" }],
+    });
+    const app = new ApplicationController(gateway);
+    await app.start();
+    await app.handleIntent({ type: "set-focus", focus: "tree" });
+    await app.handleIntent({ type: "open-new-workspace" });
+    await app.handleIntent({ type: "set-new-workspace-title", title: "Feature" });
+    await app.handleIntent({
+      type: "submit-launch",
+      workspaceId: "new-workspace-draft",
+      prompt: "Build it",
+    });
+    const firstId = app.state.selectedWorkspaceId;
+    expect(firstId).not.toBe("workspace-1");
+    expect(
+      app.state.directory.workspaces.find((workspace) => workspace.id === firstId),
+    ).toMatchObject({ directory: "/original", title: "Feature" });
+    expect(gateway.commands).toContainEqual(
+      expect.objectContaining({ type: "create-agent", workspaceId: firstId }),
+    );
+    expect(app.state.newWorkspace).toBeUndefined();
+    await app.handleIntent({ type: "set-focus", focus: "tree" });
+    await app.handleIntent({ type: "open-new-workspace" });
+    await app.handleIntent({ type: "toggle-launch-kind" });
+    await app.handleIntent({
+      type: "submit-launch",
+      workspaceId: "new-workspace-draft",
+      prompt: "pwd",
+    });
+    expect(app.state.selectedWorkspaceId).not.toBe(firstId);
+    expect(
+      app.state.directory.workspaces.filter((workspace) => workspace.directory === "/original"),
+    ).toHaveLength(2);
+    expect(gateway.terminalInput).toEqual([{ terminalId: "fake-terminal-1", data: "pwd\r" }]);
+    expect(app.state.activeTerminalId).toBe("fake-terminal-1");
+  });
+});
+
+describe("New workspace validation", () => {
+  it("retains input and creates nothing until project and initial resource are valid", async () => {
+    const gateway = new FakePaseoGateway({
+      ...snapshot,
+      projects: [
+        { id: "project-1", name: "Deck" },
+        { id: "project-2", name: "Other", path: "/other" },
+      ],
+    });
+    const app = new ApplicationController(gateway);
+    await app.start();
+    await app.handleIntent({ type: "set-focus", focus: "tree" });
+    await app.handleIntent({ type: "open-new-workspace" });
+    await app.handleIntent({
+      type: "submit-launch",
+      workspaceId: "new-workspace-draft",
+      prompt: "Build",
+    });
+    expect(app.state.newWorkspace?.launch.error).toContain("original checkout");
+    expect(gateway.createdWorkspaces).toHaveLength(0);
+    await app.handleIntent({ type: "new-workspace-project-choice", projectId: "project-2" });
+    await app.handleIntent({
+      type: "submit-launch",
+      workspaceId: "new-workspace-draft",
+      prompt: "",
+    });
+    expect(app.state.newWorkspace?.launch.error).toContain("first message");
+    await app.handleIntent({ type: "toggle-launch-kind" });
+    await app.handleIntent({
+      type: "submit-launch",
+      workspaceId: "new-workspace-draft",
+      prompt: "pwd\nwhoami",
+    });
+    expect(app.state.newWorkspace?.launch.error).toContain("one command");
+    expect(app.state.newWorkspace?.launch.command).toBe("pwd\nwhoami");
+    expect(gateway.createdWorkspaces).toHaveLength(0);
+  });
+});
+
+describe("New workspace recovery", () => {
+  it("activates a created workspace after resource failure and retries without creating another", async () => {
+    class FailingGateway extends FakePaseoGateway {
+      fail = true;
+      override async createTerminal(workspaceId: string) {
+        if (this.fail) throw new Error("shell unavailable");
+        return super.createTerminal(workspaceId);
+      }
+    }
+    const gateway = new FailingGateway({
+      ...snapshot,
+      projects: [{ id: "project-1", name: "Deck", path: "/original" }],
+    });
+    const app = new ApplicationController(gateway);
+    await app.start();
+    await app.handleIntent({ type: "set-focus", focus: "tree" });
+    await app.handleIntent({ type: "open-new-workspace" });
+    await app.handleIntent({ type: "toggle-launch-kind" });
+    await app.handleIntent({
+      type: "submit-launch",
+      workspaceId: "new-workspace-draft",
+      prompt: "pwd",
+    });
+    expect(app.state.selectedWorkspaceId).toBe("fake-workspace-1");
+    expect(gateway.releaseCount).toBeGreaterThan(0);
+    expect(app.state.newWorkspace).toBeUndefined();
+    expect(app.state.launchDrafts?.["fake-workspace-1"]).toMatchObject({
+      kind: "terminal",
+      command: "pwd",
+      submitting: false,
+      error: expect.stringContaining("shell unavailable"),
+    });
+    gateway.fail = false;
+    await app.handleIntent({
+      type: "submit-launch",
+      workspaceId: "fake-workspace-1",
+      prompt: "pwd",
+    });
+    expect(gateway.createdWorkspaces).toHaveLength(1);
+    expect(app.state.activeTerminalId).toBe("fake-terminal-1");
+  });
+});
+
+describe("New workspace retained state", () => {
+  it("preselects a highlighted project and retains settings when workspace creation fails", async () => {
+    class FailingGateway extends FakePaseoGateway {
+      override async createWorkspace(): Promise<never> {
+        throw new Error("disk unavailable");
+      }
+    }
+    const gateway = new FailingGateway({
+      ...snapshot,
+      projects: [{ id: "project-1", name: "Deck", path: "/original" }],
+    });
+    const app = new ApplicationController(gateway);
+    await app.start();
+    await app.handleIntent({ type: "set-focus", focus: "tree" });
+    await app.handleIntent({ type: "select-boundary", boundary: "start" });
+    expect(app.state.sidebarSelection).toEqual({ kind: "project", id: "project-1" });
+    await app.handleIntent({ type: "open-new-workspace" });
+    await app.handleIntent({ type: "set-new-workspace-title", title: "Feature" });
+    await app.handleIntent({ type: "open-draft-setting", setting: "mode" });
+    expect(app.state.modal).toMatchObject({ type: "draft-setting" });
+    await app.handleIntent({ type: "draft-setting-choice", choice: "default" });
+    await app.handleIntent({
+      type: "submit-launch",
+      workspaceId: "new-workspace-draft",
+      prompt: "Build it",
+    });
+    expect(app.state.newWorkspace).toMatchObject({
+      projectId: "project-1",
+      title: "Feature",
+      launch: {
+        kind: "session",
+        prompt: "Build it",
+        modelId: "gpt-5.6",
+        modeId: "default",
+        submitting: false,
+        error: expect.stringContaining("disk unavailable"),
+      },
+    });
+    expect(app.state.selectedWorkspaceId).toBe("workspace-1");
+  });
+});
+
+describe("Worktree workspace creation", () => {
+  it("defaults to Worktree and the repository remote base for both initial resource kinds", async () => {
+    for (const kind of ["session", "terminal"] as const) {
+      const gateway = new FakePaseoGateway({
+        ...snapshot,
+        projects: [{ id: "project-1", name: "Deck", path: "/original" }],
+      });
+      gateway.workspacePlacement = {
+        supportsWorktree: true,
+        defaultRef: "refs/remotes/origin/main",
+        refs: [
+          { label: "main", ref: "refs/remotes/origin/main", remote: true },
+          { label: "main (local)", ref: "refs/heads/main", remote: false },
+        ],
+      };
+      const app = new ApplicationController(gateway);
+      await app.start();
+      await app.handleIntent({ type: "set-focus", focus: "tree" });
+      await app.handleIntent({ type: "open-new-workspace" });
+      expect(app.state.newWorkspace).toMatchObject({
+        placement: "worktree",
+        baseRef: "refs/remotes/origin/main",
+        launch: { kind: "session", modelId: "gpt-5.6" },
+      });
+      await app.handleIntent({ type: "set-new-workspace-title", title: "Feature" });
+      if (kind === "terminal") await app.handleIntent({ type: "toggle-launch-kind" });
+      await app.handleIntent({
+        type: "submit-launch",
+        workspaceId: "new-workspace-draft",
+        prompt: kind === "session" ? "Build feature" : "pwd",
+      });
+      expect(gateway.createdWorkspaces).toEqual([
+        {
+          projectId: "project-1",
+          directory: "/original",
+          title: "Feature",
+          baseRef: "refs/remotes/origin/main",
+          firstAgentPrompt: kind === "session" ? "Build feature" : "Feature",
+        },
+      ]);
+      expect(app.state.newWorkspace).toBeUndefined();
+      if (kind === "session")
+        expect(gateway.commands).toContainEqual(
+          expect.objectContaining({ type: "create-agent", workspaceId: "fake-workspace-1" }),
+        );
+      else expect(app.state.activeTerminalId).toBe("fake-terminal-1");
+    }
+  });
+});
+
+describe("Worktree refresh recovery", () => {
+  it("retains all inputs on refresh failure and retries the same remote base without a Local fallback", async () => {
+    class FetchFailure extends FakePaseoGateway {
+      fail = true;
+      override async createWorkspace(options: Parameters<FakePaseoGateway["createWorkspace"]>[0]) {
+        if (this.fail) throw new Error("Remote base refresh failed: authentication denied");
+        return super.createWorkspace(options);
+      }
+    }
+    const gateway = new FetchFailure({
+      ...snapshot,
+      projects: [{ id: "project-1", name: "Deck", path: "/original" }],
+    });
+    gateway.workspacePlacement = {
+      supportsWorktree: true,
+      defaultRef: "refs/remotes/origin/main",
+      refs: [{ label: "main", ref: "refs/remotes/origin/main", remote: true }],
+    };
+    const app = new ApplicationController(gateway);
+    await app.start();
+    await app.handleIntent({ type: "set-focus", focus: "tree" });
+    await app.handleIntent({ type: "open-new-workspace" });
+    await app.handleIntent({ type: "set-new-workspace-title", title: "Feature" });
+    app.setComposerText("Build it");
+    await app.handleIntent({ type: "toggle-launch-kind" });
+    app.setComposerText("pwd");
+    await app.handleIntent({
+      type: "submit-launch",
+      workspaceId: "new-workspace-draft",
+      prompt: "pwd",
+    });
+    expect(app.state.newWorkspace).toMatchObject({
+      projectId: "project-1",
+      title: "Feature",
+      placement: "worktree",
+      baseRef: "refs/remotes/origin/main",
+      launch: {
+        kind: "terminal",
+        prompt: "Build it",
+        command: "pwd",
+        modelId: "gpt-5.6",
+        submitting: false,
+        error: expect.stringContaining("authentication denied"),
+      },
+    });
+    expect(gateway.createdWorkspaces).toHaveLength(0);
+    expect(gateway.createdTerminals).toHaveLength(0);
+    expect(app.state.selectedWorkspaceId).toBe("workspace-1");
+    gateway.fail = false;
+    await app.handleIntent({
+      type: "submit-launch",
+      workspaceId: "new-workspace-draft",
+      prompt: "pwd",
+    });
+    expect(gateway.createdWorkspaces).toHaveLength(1);
+    expect(gateway.createdWorkspaces[0]?.baseRef).toBe("refs/remotes/origin/main");
+    expect(app.state.activeTerminalId).toBe("fake-terminal-1");
+  });
+});
+
+describe("Workspace placement discovery recovery", () => {
+  it("does not silently create Local on metadata failure and retries discovery with retained input", async () => {
+    class MetadataFailure extends FakePaseoGateway {
+      fail = true;
+      override async getWorkspacePlacement(directory: string) {
+        if (this.fail) throw new Error("metadata unavailable");
+        return super.getWorkspacePlacement(directory);
+      }
+    }
+    const gateway = new MetadataFailure({
+      ...snapshot,
+      projects: [{ id: "project-1", name: "Deck", path: "/original" }],
+    });
+    gateway.workspacePlacement = {
+      supportsWorktree: true,
+      defaultRef: "refs/heads/main",
+      refs: [{ label: "main (local)", ref: "refs/heads/main", remote: false }],
+    };
+    const app = new ApplicationController(gateway);
+    await app.start();
+    await app.handleIntent({ type: "set-focus", focus: "tree" });
+    await app.handleIntent({ type: "open-new-workspace" });
+    await app.handleIntent({
+      type: "submit-launch",
+      workspaceId: "new-workspace-draft",
+      prompt: "Build feature",
+    });
+    expect(gateway.createdWorkspaces).toHaveLength(0);
+    expect(app.state.newWorkspace?.launch.error).toContain("metadata unavailable");
+    gateway.fail = false;
+    await app.handleIntent({
+      type: "submit-launch",
+      workspaceId: "new-workspace-draft",
+      prompt: "Build feature",
+    });
+    expect(gateway.createdWorkspaces[0]?.baseRef).toBe("refs/heads/main");
+  });
+});
+
+describe("Workspace placement async ownership", () => {
+  it("does not submit a replacement draft when a canceled discovery retry completes late", async () => {
+    let complete!: () => void;
+    const pending = new Promise<void>((resolve) => {
+      complete = resolve;
+    });
+    class DelayedMetadata extends FakePaseoGateway {
+      requests = 0;
+      override async getWorkspacePlacement(directory: string) {
+        this.requests += 1;
+        if (this.requests === 1) throw new Error("unavailable");
+        if (this.requests === 2) await pending;
+        return super.getWorkspacePlacement(directory);
+      }
+    }
+    const gateway = new DelayedMetadata({
+      ...snapshot,
+      projects: [{ id: "project-1", name: "Deck", path: "/original" }],
+    });
+    const app = new ApplicationController(gateway);
+    await app.start();
+    await app.handleIntent({ type: "set-focus", focus: "tree" });
+    await app.handleIntent({ type: "open-new-workspace" });
+    const retry = app.handleIntent({
+      type: "submit-launch",
+      workspaceId: "new-workspace-draft",
+      prompt: "Old prompt",
+    });
+    await app.handleIntent({ type: "cancel-new-workspace" });
+    await app.handleIntent({ type: "open-new-workspace" });
+    complete();
+    await retry;
+    expect(gateway.createdWorkspaces).toHaveLength(0);
+    expect(app.state.newWorkspace?.launch.prompt).toBe("");
+  });
+});
