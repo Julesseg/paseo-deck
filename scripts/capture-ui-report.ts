@@ -54,6 +54,20 @@ const launchState: AppState = {
     },
   },
 };
+const newWorkspaceState: AppState = {
+  ...baseState,
+  focus: "composer",
+  composerMode: "normal",
+  directory: {
+    ...baseState.directory,
+    projects: [{ id: "live-project", name: "Deck Labs", path: "/demo/deck" }],
+  },
+  newWorkspace: {
+    projectId: "live-project",
+    title: "",
+    launch: { ...draftFixture, kind: "session", command: "" },
+  },
+};
 const emptyState = withoutSelection(baseState);
 const overflowTemplate = baseState.directory.agents[0];
 if (!overflowTemplate) throw new Error("UI report needs a session fixture");
@@ -129,6 +143,71 @@ const shots: Array<{
         profiles: [{ id: "codex", name: "Codex", command: "codex" }],
       },
     },
+  },
+  { name: "new-workspace-local-session", columns: 100, rows: 28, state: newWorkspaceState },
+  { name: "new-workspace-local-narrow", columns: 52, rows: 18, state: newWorkspaceState },
+  {
+    name: "new-workspace-local-terminal",
+    columns: 100,
+    rows: 28,
+    state: {
+      ...newWorkspaceState,
+      newWorkspace: {
+        projectId: "live-project",
+        title: "Dev server",
+        launch: { ...draftFixture, kind: "terminal", command: "npm run dev" },
+      },
+    },
+  },
+  {
+    name: "new-workspace-local-submitting",
+    columns: 100,
+    rows: 28,
+    state: {
+      ...newWorkspaceState,
+      newWorkspace: {
+        projectId: "live-project",
+        title: "Feature",
+        launch: {
+          ...draftFixture,
+          kind: "session",
+          command: "",
+          prompt: "Build the Local workspace flow",
+          submitting: true,
+        },
+      },
+    },
+  },
+  {
+    name: "new-workspace-local-error",
+    columns: 100,
+    rows: 28,
+    state: {
+      ...newWorkspaceState,
+      newWorkspace: {
+        projectId: "live-project",
+        title: "Feature",
+        launch: {
+          ...draftFixture,
+          kind: "session",
+          command: "",
+          prompt: "Build the Local workspace flow",
+          error: "Could not create workspace: disconnected. Press \\s to retry.",
+        },
+      },
+    },
+  },
+  {
+    name: "new-workspace-project-picker",
+    columns: 100,
+    rows: 28,
+    state: { ...newWorkspaceState, modal: { type: "new-workspace-project" } },
+  },
+  {
+    name: "new-workspace-title",
+    columns: 100,
+    rows: 28,
+    state: { ...newWorkspaceState, modal: { type: "new-workspace-title" } },
   },
   { name: "launch-session", columns: 100, rows: 28, state: launchState },
   { name: "launch-session-narrow", columns: 52, rows: 18, state: launchState },

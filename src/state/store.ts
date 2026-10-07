@@ -21,9 +21,10 @@ import type {
 } from "../contracts/domain.js";
 import type { TerminalRecord } from "../contracts/terminal.js";
 import { activeSessionDraftWorkspaceId, createComposerState } from "./composer.js";
-import { activeLaunchWorkspaceId, launchDraft } from "./launch.js";
+import { activeLaunchWorkspaceId, launchDraft, NEW_WORKSPACE_DRAFT_ID } from "./launch.js";
 
 export type AppAction =
+  | { type: "set-new-workspace"; draft: AppState["newWorkspace"] }
   | {
       type: "set-launch-draft";
       workspaceId: string;
@@ -760,7 +761,17 @@ function reconcilePermissionRemovals(state: AppState, directory: DirectorySnapsh
 
 export function reduceApp(state: AppState, action: AppAction): AppState {
   switch (action.type) {
+    case "set-new-workspace":
+      return { ...state, newWorkspace: action.draft };
     case "set-launch-draft":
+      if (action.workspaceId === NEW_WORKSPACE_DRAFT_ID && state.newWorkspace)
+        return {
+          ...state,
+          newWorkspace: {
+            ...state.newWorkspace,
+            launch: { ...state.newWorkspace.launch, ...action.changes },
+          },
+        };
       return {
         ...state,
         launchDrafts: {

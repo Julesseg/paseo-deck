@@ -89,7 +89,7 @@ describe("command registry", () => {
       ...withoutSelection
     } = state();
     const disconnected: AppState = { ...withoutSelection, connection: "disconnected" };
-    expect(commandById(disconnected, "create-agent")?.disabledReason).toContain("Reconnect");
+    expect(commandById(disconnected, "new-workspace")?.disabledReason).toBeUndefined();
     expect(commandById(disconnected, "stop-agent")?.disabledReason).toContain("Reconnect");
     expect(commandById(disconnected, "permissions")?.disabledReason).toContain("No pending");
     expect(commandById(disconnected, "error-details")?.disabledReason).toContain("No error");

@@ -105,7 +105,7 @@ These work in composer and timeline Normal/Visual modes unless the context colum
 | --- | --- | --- |
 | Sidebar | `j`/`k`, `Down`/`Up`; `h`/`l`, `Left`/`Right` | Move selection; collapse/expand branch. |
 | Sidebar | `g`, `G`, `Enter` | First/last row; activate workspace or open selection. |
-| Sidebar | `[`, `]`, `o`, `c`, `m`, `t` | Resize tree, toggle order, create session, choose operational mode, or choose thinking level. |
+| Sidebar | `[`, `]`, `o`, `c`, `m`, `t` | Resize tree, toggle order, create workspace, choose operational mode, or choose thinking level. |
 | Sidebar | `Esc` | Return to composer or active terminal. |
 | Terminal Normal | `i`, `Esc`, `q`, `n`, `r` | Enter terminal Insert, focus sidebar, or reconnect terminal. |
 | Terminal Normal | `Up`, `Down`, `Ctrl-U`, `Ctrl-D` | Scroll captured terminal output. |
@@ -122,3 +122,5 @@ The terminal combines some keys: `Ctrl-I`/Tab, `Ctrl-M`/Enter, `Ctrl-H`/Backspac
 Vim references: [motion commands](https://vimhelp.org/motion.txt.html), [complete command index](https://vimhelp.org/index.txt.html), and [Visual mode](https://vimhelp.org/visual.txt.html).
 
 An existing empty workspace shows the Launch composer with no tab row. Session and Terminal retain separate input when switching. Creation keeps the composer visible until the first message or command has been sent. After a resource has been created, its type and settings remain fixed during retry to avoid creating a duplicate resource.
+
+Sidebar `c` opens the New workspace composer with the highlighted project's original checkout selected (or the highlighted workspace's project). `\j` changes the project and `\n` edits the optional workspace title. Local uses the original checkout; repeated creation makes fresh workspaces for that same directory. The Launch composer controls above also apply here. `Esc` leaves Insert or Visual mode first; a second `Esc` in Normal mode cancels creation and returns to sidebar navigation. `T` is unavailable until creation finishes or is cancelled. If workspace creation succeeds but launch fails, the new workspace stays active with its inputs in the Launch composer; `\s` retries the resource without creating another workspace.

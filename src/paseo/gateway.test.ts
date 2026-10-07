@@ -882,3 +882,38 @@ describe("ProductionPaseoGateway", () => {
     ]);
   });
 });
+
+describe("Local workspace gateway", () => {
+  it("creates fresh directory workspaces without opening or deduplicating them", async () => {
+    const fixture = testClient();
+    let nextId = 0;
+    const create = vi.fn(async () => {
+      const id = `local-${++nextId}`;
+      return {
+        id,
+        current: () => ({ id, projectId: "project-1", directory: "/original", title: "Feature" }),
+      };
+    });
+    Object.assign(fixture.client.workspaces, { create });
+    const gateway = new ProductionPaseoGateway({
+      host: "localhost:1234",
+      createClient: () => fixture.client as never,
+    });
+    await gateway.connect();
+    const options = { projectId: "project-1", directory: "/original", title: "Feature" };
+    const first = await gateway.createWorkspace(options);
+    const second = await gateway.createWorkspace(options);
+    expect(first).toMatchObject({
+      id: "local-1",
+      directory: "/original",
+      title: "Feature",
+      projectId: "project-1",
+    });
+    expect(second.id).toBe("local-2");
+    expect(create).toHaveBeenCalledWith({
+      source: { kind: "directory", path: "/original", projectId: "project-1" },
+      title: "Feature",
+    });
+    await gateway.close();
+  });
+});

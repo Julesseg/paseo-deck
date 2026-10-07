@@ -10,7 +10,7 @@ import type {
 } from "../contracts/terminal.js";
 import { PaseoGatewayError, paseoFailure, redactTransportDetail } from "../paseo/errors.js";
 import { activeSessionDraftWorkspaceId, composerAvailability } from "../state/composer.js";
-import { activeLaunchWorkspaceId, launchDraft } from "../state/launch.js";
+import { activeLaunchWorkspaceId, launchDraft, NEW_WORKSPACE_DRAFT_ID } from "../state/launch.js";
 import {
   type AppAction,
   activeNotification,
@@ -461,6 +461,7 @@ export class ApplicationController {
         return;
       case "open-new-tab":
         if (
+          !this.#state.newWorkspace &&
           intent.workspaceId === this.#state.selectedWorkspaceId &&
           this.activeWorkspace(intent.workspaceId) &&
           this.#state.modal.type === "none"
@@ -524,8 +525,8 @@ export class ApplicationController {
         return;
       }
       case "open-draft-setting": {
-        const id = this.#state.selectedWorkspaceId;
         const launchId = activeLaunchWorkspaceId(this.#state);
+        const id = launchId ?? this.#state.selectedWorkspaceId;
         const launch = launchId ? launchDraft(this.#state, launchId) : undefined;
         if (launch && (launch.kind !== "session" || launch.submitting || launch.createdAgentId))
           return;
@@ -626,6 +627,73 @@ export class ApplicationController {
         if (wasActive) await this.showActiveResource();
         return;
       }
+      case "open-new-workspace": {
+        if (
+          this.#state.focus !== "tree" ||
+          this.#state.modal.type !== "none" ||
+          this.#state.newWorkspace
+        )
+          return;
+        const selection = this.#state.sidebarSelection;
+        const projectId =
+          selection?.kind === "project"
+            ? selection.id
+            : this.#state.directory.workspaces.find((workspace) => workspace.id === selection?.id)
+                ?.projectId;
+        this.apply({
+          type: "set-new-workspace",
+          draft: { projectId, title: "", launch: launchDraft(this.#state, NEW_WORKSPACE_DRAFT_ID) },
+        });
+        this.apply({ type: "set-focus", focus: "composer" });
+        this.apply({ type: "set-composer-mode", mode: "normal" });
+        return;
+      }
+      case "open-new-workspace-project":
+      case "open-new-workspace-title":
+        if (
+          this.#state.newWorkspace &&
+          !this.#state.newWorkspace.launch.submitting &&
+          this.#state.modal.type === "none"
+        )
+          this.apply({
+            type: "open-modal",
+            modal: {
+              type:
+                intent.type === "open-new-workspace-project"
+                  ? "new-workspace-project"
+                  : "new-workspace-title",
+            },
+          });
+        return;
+      case "new-workspace-project-choice":
+        if (
+          this.#state.newWorkspace &&
+          !this.#state.newWorkspace.launch.submitting &&
+          this.#state.directory.projects.some((project) => project.id === intent.projectId)
+        )
+          this.apply({
+            type: "set-new-workspace",
+            draft: {
+              ...this.#state.newWorkspace,
+              projectId: intent.projectId,
+              launch: { ...this.#state.newWorkspace.launch, error: undefined },
+            },
+          });
+        this.apply({ type: "close-modal" });
+        return;
+      case "set-new-workspace-title":
+        if (this.#state.newWorkspace && !this.#state.newWorkspace.launch.submitting)
+          this.apply({
+            type: "set-new-workspace",
+            draft: { ...this.#state.newWorkspace, title: intent.title },
+          });
+        this.apply({ type: "close-modal" });
+        return;
+      case "cancel-new-workspace":
+        if (!this.#state.newWorkspace || this.#state.newWorkspace.launch.submitting) return;
+        this.apply({ type: "set-new-workspace", draft: undefined });
+        this.apply({ type: "set-focus", focus: "tree" });
+        return;
       case "toggle-launch-kind": {
         const id = activeLaunchWorkspaceId(this.#state);
         if (!id) return;
@@ -1088,7 +1156,94 @@ export class ApplicationController {
     return this.#state.connection === "connected";
   }
 
+  private async submitNewWorkspace(prompt: string): Promise<void> {
+    const draft = this.#state.newWorkspace;
+    if (!draft || draft.launch.submitting) return;
+    const project = this.#state.directory.projects.find((item) => item.id === draft.projectId);
+    const provider = this.#state.directory.providers.find(
+      (item) => item.id === draft.launch.providerId && item.ready,
+    );
+    const model = provider?.models.find(
+      (item) => item.id === draft.launch.modelId && item.selectable,
+    );
+    const error = !project?.path
+      ? "Choose a project with an original checkout directory."
+      : !this.isConnected()
+        ? "Reconnect to Paseo, then retry."
+        : draft.launch.kind === "session"
+          ? !prompt.trim()
+            ? "Write a first message before creating a workspace."
+            : !provider || !model
+              ? "Choose an available provider and model."
+              : undefined
+          : !prompt.trim() ||
+              Array.from(prompt).some((character) => {
+                const code = character.charCodeAt(0);
+                return code < 32 || (code >= 127 && code <= 159);
+              })
+            ? "Enter one command without control characters or line breaks, then retry."
+            : draft.launch.profileId &&
+                !draft.launch.profiles?.some((profile) => profile.id === draft.launch.profileId)
+              ? "Choose an available terminal profile."
+              : undefined;
+    if (error || !project?.path) {
+      this.apply({
+        type: "set-launch-draft",
+        workspaceId: NEW_WORKSPACE_DRAFT_ID,
+        changes: { error, [draft.launch.kind === "session" ? "prompt" : "command"]: prompt },
+      });
+      return;
+    }
+    this.apply({
+      type: "set-launch-draft",
+      workspaceId: NEW_WORKSPACE_DRAFT_ID,
+      changes: {
+        submitting: true,
+        [draft.launch.kind === "session" ? "prompt" : "command"]: prompt,
+        error: undefined,
+      },
+    });
+    try {
+      const workspace = await this.gateway.createWorkspace({
+        projectId: project.id,
+        directory: project.path,
+        ...(draft.title.trim() ? { title: draft.title.trim() } : {}),
+      });
+      this.apply({ type: "directory", update: { type: "workspace-upserted", workspace } });
+      this.apply({
+        type: "set-launch-draft",
+        workspaceId: workspace.id,
+        changes: {
+          ...draft.launch,
+          [draft.launch.kind === "session" ? "prompt" : "command"]: prompt,
+          submitting: false,
+          error: undefined,
+        },
+      });
+      this.apply({ type: "set-new-workspace", draft: undefined });
+      this.#focusGeneration += 1;
+      const previous = this.#timelineObservation;
+      this.#timelineObservation = undefined;
+      this.#observedAgentId = undefined;
+      void previous?.release();
+      this.apply({ type: "activate-workspace", workspaceId: workspace.id });
+      this.apply({ type: "reveal-workspace", workspaceId: workspace.id });
+      this.apply({ type: "set-focus", focus: "composer" });
+      await this.submitLaunch(workspace.id, prompt);
+    } catch (error) {
+      this.apply({
+        type: "set-launch-draft",
+        workspaceId: NEW_WORKSPACE_DRAFT_ID,
+        changes: {
+          submitting: false,
+          error: `Could not create workspace: ${errorDetail(error)}. Press \\s to retry.`,
+        },
+      });
+    }
+  }
+
   private async submitLaunch(workspaceId: string, prompt: string): Promise<void> {
+    if (workspaceId === NEW_WORKSPACE_DRAFT_ID) return this.submitNewWorkspace(prompt);
     if (
       !this.activeWorkspace(workspaceId) ||
       activeLaunchWorkspaceId({ ...this.#state, selectedWorkspaceId: workspaceId }) !== workspaceId

@@ -20,7 +20,7 @@ import type {
   UsageSummary,
   WorkspaceRecord,
 } from "../contracts/domain.js";
-import type { Observation, PaseoGateway } from "../contracts/gateway.js";
+import type { Observation, PaseoGateway, WorkspaceCreateOptions } from "../contracts/gateway.js";
 import type {
   TerminalCapture,
   TerminalCreateOptions,
@@ -74,6 +74,21 @@ export class ProductionPaseoGateway implements PaseoGateway {
           // owned observation errors are surfaced through the gateway instead.
           logger: quietPaseoLogger,
         }));
+  }
+
+  public async createWorkspace(options: WorkspaceCreateOptions): Promise<WorkspaceRecord> {
+    const handle = await this.requireClient().workspaces.create({
+      source: { kind: "directory", path: options.directory, projectId: options.projectId },
+      ...(options.title ? { title: options.title } : {}),
+    });
+    return workspaceRecord(
+      asRecord(handle.current()) ?? {
+        id: handle.id,
+        directory: handle.directory,
+        projectId: handle.projectId,
+        title: options.title,
+      },
+    );
   }
 
   public async connect(): Promise<void> {

@@ -1268,6 +1268,8 @@ class ComposerView implements Component, Focusable {
     };
   }
   update(state: AppState): void {
+    if (Boolean(state.newWorkspace) !== Boolean(this.state.newWorkspace))
+      this.vim = createComposerVim(selectedComposerDraft(state));
     this.state = state;
     this.selectedAgentId = state.selectedAgentId;
     this.draftWorkspaceId = activeSessionDraftWorkspaceId(state);
@@ -1298,9 +1300,11 @@ class ComposerView implements Component, Focusable {
     const launch = launchId ? launchDraft(this.state, launchId) : undefined;
     const destination = launch
       ? this.theme.label(
-          launch.kind === "session"
-            ? "Launch Session · First message"
-            : "Launch Terminal · First command",
+          this.state.newWorkspace
+            ? `New workspace · ${launch.kind === "session" ? "First message" : "First command"}`
+            : launch.kind === "session"
+              ? "Launch Session · First message"
+              : "Launch Terminal · First command",
         )
       : this.draftWorkspaceId
         ? this.theme.label("First message → New session")
@@ -1339,6 +1343,13 @@ class ComposerView implements Component, Focusable {
         this.focused ? "focus" : "muted",
         ` ${this.theme.clipRendered(heading, Math.max(1, innerWidth - 1))}`,
       ),
+      ...(this.state.newWorkspace
+        ? [
+            ` ${this.theme.clipOwnedLabel(`[\\j] Project · ${this.state.directory.projects.find((project) => project.id === this.state.newWorkspace?.projectId)?.name ?? "Choose project"}`, Math.max(1, innerWidth - 1))}`,
+            ` ${this.theme.clipOwnedLabel(`Local · ${this.state.directory.projects.find((project) => project.id === this.state.newWorkspace?.projectId)?.path ?? "Original checkout unavailable"}`, Math.max(1, innerWidth - 1))}`,
+            ` ${this.theme.clipOwnedLabel(`[\\n] Title · ${this.state.newWorkspace.title || "Optional"}`, Math.max(1, innerWidth - 1))}`,
+          ]
+        : []),
       ...body,
       ` ${this.theme.clipRendered(controls, Math.max(1, innerWidth - 1))}`,
     ];
@@ -1530,7 +1541,13 @@ class SessionActivityView implements Component {
       return [
         this.theme.style(
           "muted",
-          launchDraft(state, launchId).submitting ? "Launching…" : "Workspace activity · idle",
+          state.newWorkspace
+            ? state.newWorkspace.launch.submitting
+              ? "Creating workspace…"
+              : "Workspace draft · unsent"
+            : launchDraft(state, launchId).submitting
+              ? "Launching…"
+              : "Workspace activity · idle",
         ),
       ];
     const draftId = activeSessionDraftWorkspaceId(state);
@@ -1593,22 +1610,24 @@ class StatusView implements Component {
           .filter(Boolean)
           .join(separator)
       : undefined;
-    const details = selected
-      ? [selected.providerId ?? "unknown", selected.modelId ?? "unknown"]
-          .map((value) => sanitizeTerminalText(value))
-          .join("/")
-          .concat(
-            selected.modeId ? `${separator}${sanitizeTerminalText(selected.modeId)}` : "",
-            selected.thinkingLevel
-              ? `${separator}${sanitizeTerminalText(selected.thinkingLevel)}`
-              : "",
-            usageDetails ? `${separator}${usageDetails}` : "",
-          )
-      : activeTerminal
-        ? `terminal ${sanitizeTerminalText(activeTerminal.name)}`
-        : activeSessionDraftWorkspaceId(this.state)
-          ? "session draft"
-          : "no active resource";
+    const details = this.state.newWorkspace
+      ? "new workspace draft"
+      : selected
+        ? [selected.providerId ?? "unknown", selected.modelId ?? "unknown"]
+            .map((value) => sanitizeTerminalText(value))
+            .join("/")
+            .concat(
+              selected.modeId ? `${separator}${sanitizeTerminalText(selected.modeId)}` : "",
+              selected.thinkingLevel
+                ? `${separator}${sanitizeTerminalText(selected.thinkingLevel)}`
+                : "",
+              usageDetails ? `${separator}${usageDetails}` : "",
+            )
+        : activeTerminal
+          ? `terminal ${sanitizeTerminalText(activeTerminal.name)}`
+          : activeSessionDraftWorkspaceId(this.state)
+            ? "session draft"
+            : "no active resource";
     const permissions = this.state.directory.agents.reduce(
       (total, agent) => total + agent.pendingPermissions.length,
       0,
@@ -2282,7 +2301,8 @@ export class DeckTui {
                         basis: 1,
                         minSize: 0,
                         visible: (viewport) =>
-                          viewport.height >= 20 && !this.state.activeTerminalId,
+                          viewport.height >= 20 &&
+                          (!this.state.activeTerminalId || Boolean(this.state.newWorkspace)),
                       },
                       { component: this.transcript, basis: 0, grow: 1, minSize: 3 },
                       {
@@ -2290,7 +2310,8 @@ export class DeckTui {
                         basis: 2,
                         minSize: 0,
                         visible: (viewport) =>
-                          viewport.height >= 24 && !this.state.activeTerminalId,
+                          viewport.height >= 24 &&
+                          (!this.state.activeTerminalId || Boolean(this.state.newWorkspace)),
                       },
                       {
                         component: new Spacer(1),
@@ -2299,20 +2320,22 @@ export class DeckTui {
                         visible: (viewport) =>
                           viewport.height >= 18 &&
                           viewport.height < 24 &&
-                          !this.state.activeTerminalId,
+                          (!this.state.activeTerminalId || Boolean(this.state.newWorkspace)),
                       },
                       {
                         component: new SessionActivityView(() => this.state, this.theme),
                         basis: 1,
                         minSize: 1,
                         visible: (viewport) =>
-                          viewport.height >= 24 && !this.state.activeTerminalId,
+                          viewport.height >= 24 &&
+                          (!this.state.activeTerminalId || Boolean(this.state.newWorkspace)),
                       },
                       {
                         component: this.composer,
                         basis: "auto",
                         minSize: 4,
-                        visible: () => !this.state.activeTerminalId,
+                        visible: () =>
+                          !this.state.activeTerminalId || Boolean(this.state.newWorkspace),
                       },
                     ]),
                     basis: 100,
@@ -2424,6 +2447,7 @@ export class DeckTui {
     const visible =
       this.state.focus === "timeline" &&
       !this.state.activeTerminalId &&
+      !this.state.newWorkspace &&
       this.state.modal.type === "none" &&
       !this.localOverlay;
     if (this.tui.getShowHardwareCursor() === visible) return;
@@ -2450,7 +2474,11 @@ export class DeckTui {
     this.syncTimelineCursor();
     this.composer.update(state);
     this.status.update(state);
-    this.tui.setFocus(state.focus === "composer" && !state.activeTerminalId ? this.composer : null);
+    this.tui.setFocus(
+      state.focus === "composer" && (!state.activeTerminalId || Boolean(state.newWorkspace))
+        ? this.composer
+        : null,
+    );
     this.syncModal();
     this.syncSidebarOverlay();
     if (
@@ -2909,7 +2937,10 @@ export class DeckTui {
     }
     if (!this.appOverlay)
       this.tui.setFocus(
-        this.state.focus === "composer" && !this.state.activeTerminalId ? this.composer : null,
+        this.state.focus === "composer" &&
+          (!this.state.activeTerminalId || Boolean(this.state.newWorkspace))
+          ? this.composer
+          : null,
       );
     this.syncTimelineCursor();
     this.renderScheduler.requestImmediate();
@@ -3071,7 +3102,10 @@ export class DeckTui {
     this.disposeLocalOverlay();
     this.appOverlay?.unfocus({
       target:
-        this.state.focus === "composer" && !this.state.activeTerminalId ? this.composer : null,
+        this.state.focus === "composer" &&
+        (!this.state.activeTerminalId || Boolean(this.state.newWorkspace))
+          ? this.composer
+          : null,
     });
     this.appOverlay?.hide();
     this.appOverlay = undefined;
@@ -3159,6 +3193,35 @@ export class DeckTui {
         maxHeight: Math.max(1, this.terminal.rows - 2),
         margin: 1,
         visible: (columns, rows) => shellLayout(columns, rows, this.treeWidth).supported,
+      };
+    } else if (modal.type === "new-workspace-title") {
+      component = new InputDialog(
+        "Workspace title (optional)",
+        this.state.newWorkspace?.title ?? "",
+        (title) => this.emit({ type: "set-new-workspace-title", title }),
+        close,
+        this.theme,
+      );
+    } else if (modal.type === "new-workspace-project") {
+      const choices = this.state.directory.projects.map((project) => ({
+        value: project.id,
+        label: project.name,
+        description: project.path ?? "Original checkout unavailable",
+        disabled: !project.path,
+      }));
+      component = new SearchableChoiceDialog(
+        "Choose project",
+        choices,
+        (projectId) => this.emit({ type: "new-workspace-project-choice", projectId }),
+        close,
+        this.state.newWorkspace?.projectId,
+        this.choicePickerMaxVisible(true),
+        this.theme,
+      );
+      overlayOptions = {
+        width: centeredChoicePickerWidth(this.terminal.columns, "Choose project", choices),
+        maxHeight: Math.max(1, this.terminal.rows - 2),
+        margin: 1,
       };
     } else if (modal.type === "launch-profile") {
       const draft = launchDraft(this.state, modal.workspaceId);
