@@ -2064,11 +2064,11 @@ describe("DeckTui viewport and focus", () => {
     await terminal.waitForRender();
     await deck.stop();
 
-    expect(copied).toEqual(["  hello"]);
+    expect(copied).toEqual(["hello"]);
     expect(intents).toContainEqual({ type: "notify", message: "Copied." });
   });
 
-  it("yiv yanks message source, error detail, and tool output", async () => {
+  it("yiv is excluded for message, error and tool output", async () => {
     const cases = [
       {
         item: {
@@ -2095,7 +2095,7 @@ describe("DeckTui viewport and focus", () => {
         expected: "tool output",
       },
     ];
-    for (const { item, expected } of cases) {
+    for (const { item } of cases) {
       const terminal = new RecordingTerminal(80, 16);
       const copied: string[] = [];
       const deck = new DeckTui(
@@ -2116,11 +2116,11 @@ describe("DeckTui viewport and focus", () => {
       for (const key of ["y", "i", "v"]) terminal.sendInput(key);
       await terminal.waitForRender();
       await deck.stop();
-      expect(copied).toEqual([expected]);
+      expect(copied).toEqual([]);
     }
   });
 
-  it("yiv reports when the current event has no source text", async () => {
+  it("yiv has no copy action on a turn", async () => {
     const terminal = new RecordingTerminal(80, 16);
     const intents: unknown[] = [];
     const deck = new DeckTui(
@@ -2148,10 +2148,7 @@ describe("DeckTui viewport and focus", () => {
     await deck.stop();
 
     expect(terminal.viewport().join("\n")).not.toContain("Copy selected timeline item");
-    expect(intents).toContainEqual({
-      type: "notify",
-      message: "No timeline text at cursor.",
-    });
+    expect(intents).not.toContainEqual(expect.objectContaining({ type: "notify" }));
   });
 
   it("yields a local search overlay when an app modal opens", async () => {
@@ -2513,7 +2510,7 @@ describe("DeckTui viewport and focus", () => {
     expect(terminal.viewport().join("\n")).toContain("Error: failed");
   });
 
-  it("renders a block cursor and line background, yanks the current event, and opens its link", async () => {
+  it("renders a block cursor and line background, yanks the displayed row, and opens its link", async () => {
     const terminal = new RecordingTerminal(80, 16);
     const copied: string[] = [];
     const opened: string[] = [];
@@ -2549,7 +2546,7 @@ describe("DeckTui viewport and focus", () => {
     expect(terminal.viewportBackgrounds()[row]).toContain("#332e27");
     for (const key of ["y", "i", "v"]) terminal.sendInput(key);
     await terminal.waitForRender();
-    expect(copied).toEqual(["[docs](https://example.test/path)"]);
+    expect(copied).toEqual([]);
     terminal.sendInput("0");
     terminal.sendInput("w");
     terminal.sendInput("g");
@@ -2744,7 +2741,7 @@ describe("DeckTui viewport and focus", () => {
     expect(timeline.selectedItem()?.id).toBe("second");
   });
 
-  it("shows a rectangular Visual Block selection over the highlighted cursor line", async () => {
+  it("keeps Visual Block excluded with only the Normal cursor highlight", async () => {
     const terminal = new RecordingTerminal(80, 16);
     const initial: AppState = {
       ...state(),
@@ -2779,7 +2776,7 @@ describe("DeckTui viewport and focus", () => {
     await terminal.waitForRender();
     const backgrounds = terminal.viewportBackgrounds().flat();
     await deck.stop();
-    expect(backgrounds).toContain("#65452b");
+    expect(backgrounds).not.toContain("#65452b");
     expect(backgrounds).toContain("#332e27");
   });
 

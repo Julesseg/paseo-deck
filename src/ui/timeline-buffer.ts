@@ -9,7 +9,7 @@ import {
   positionAt,
   wordClass,
 } from "./logical-text.js";
-import { findTextCharacter } from "./text-buffer.js";
+import { characterStep, findTextCharacter } from "./text-buffer.js";
 /** Read-only, Vim-like state for the rendered timeline text.
  *
  * This deliberately operates on rendered plain lines rather than TimelineEvent
@@ -149,7 +149,7 @@ export function moveTimelineBuffer(
 ): TimelineBufferState {
   if (key === ";" || key === ",")
     return repeatTimelineCharacterFind(state, key === ",", Math.max(1, count));
-  const moved = moveLogicalText(state, key, count);
+  const moved = moveLogicalText(state, key === "_" ? "^" : key, count);
   const next = { ...state, ...moved };
   if (moved.goalColumn === undefined) delete (next as { goalColumn?: number }).goalColumn;
   delete (next as { selectionRange?: TimelineTextRange }).selectionRange;
@@ -194,7 +194,7 @@ export function timelineSelection(
   const a = offsetAt(state.lines, state.anchor);
   const b = offsetAt(state.lines, { line: state.line, column: state.column });
   const start = Math.min(a, b);
-  const end = Math.max(a, b) + 1;
+  const end = characterStep(flattenLines(state.lines), Math.max(a, b), 1);
   if (state.selectionMode === "line") {
     const startLine = Math.min(state.anchor.line, state.line);
     const endLine = Math.max(state.anchor.line, state.line);
