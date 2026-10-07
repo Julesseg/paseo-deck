@@ -58,7 +58,12 @@ export type ModalState =
   | { type: "notifications"; index: number }
   | { type: "filter"; query: string }
   | { type: "create-terminal"; workspaceId: string; name: string; error?: string }
-  | { type: "new-tab"; workspaceId: string; profiles?: readonly TerminalProfile[] }
+  | {
+      type: "new-tab";
+      workspaceId: string;
+      profiles?: readonly TerminalProfile[];
+      createdTerminalId?: string;
+    }
   | {
       type: "draft-setting";
       workspaceId: string;

@@ -195,7 +195,7 @@ it("Composer and Timeline counted tabs resolve once across Terminals, reject inv
     expect(app.state.modal.type).toBe("none");
     expect(app.state.activeTabIds.w).toBe("session:b");
     await app.handleIntent({ type: "set-focus", focus: "tree" });
-    for (const key of ["2", "g", "t", "g", "T", "\u0018", "\u0014"]) terminal.sendInput(key);
+    for (const key of ["2", "g", "t", "g", "T", "\u0018"]) terminal.sendInput(key);
     expect(app.state.modal.type).toBe("none");
     expect(app.state.activeTabIds.w).toBe("session:b");
   } finally {

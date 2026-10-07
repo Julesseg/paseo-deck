@@ -3217,6 +3217,7 @@ export class DeckTui {
         : null,
     );
     this.syncModal();
+    (this.localOverlay ?? this.appOverlay)?.focus();
     this.syncSidebarOverlay();
     if (
       state.modal.type === "permission" &&
@@ -4040,7 +4041,7 @@ export class DeckTui {
         {
           value: "session",
           choice: { kind: "session" as const },
-          label: "Agent",
+          label: "Session",
           disabled: false,
         },
         {

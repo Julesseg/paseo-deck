@@ -306,7 +306,7 @@ describe("creation picker choices", () => {
 });
 
 describe("composer controls", () => {
-  it("shows Agent and Terminal above the named Terminal profiles section", async () => {
+  it("shows Session and Terminal above the named Terminal profiles section", async () => {
     const terminal = new RecordingTerminal(100, 30);
     const intents: unknown[] = [];
     const pickerState: AppState = {
@@ -326,7 +326,7 @@ describe("composer controls", () => {
     await terminal.waitForRender();
     const screen = terminal.viewport().join("\n");
     expect(screen).toContain("New Tab");
-    expect(screen).toContain("> Agent");
+    expect(screen).toContain("> Session");
     expect(screen).toContain("Terminal");
     expect(screen).toContain("Terminal profiles");
     expect(screen).toContain("Codex");
@@ -363,7 +363,7 @@ describe("composer controls", () => {
     const top = lines.findIndex((line) => line.includes("New Tab"));
     const left = lines[top]?.indexOf("┌") ?? -1;
     const inputRow = top + 1;
-    const selectedRow = lines.findIndex((line) => line.includes("Agent") && line.includes("│"));
+    const selectedRow = lines.findIndex((line) => line.includes("Session") && line.includes("│"));
     const terminalRow = lines.findIndex((line) => line.includes("Terminal") && line.includes("│"));
     const backgrounds = terminal.viewportBackgrounds();
 
@@ -371,7 +371,7 @@ describe("composer controls", () => {
     expect(left).toBeGreaterThanOrEqual(0);
     expect(selectedRow).toBeGreaterThan(inputRow);
     expect(terminalRow).toBeGreaterThan(selectedRow);
-    expect(lines[selectedRow]).not.toContain("> Agent");
+    expect(lines[selectedRow]).not.toContain("> Session");
     expect(lines.join("\n")).not.toContain("Filter:");
     expect(backgrounds[inputRow]?.[left + 2]).toBeDefined();
     expect(terminal.viewportInverseCells()[inputRow]?.[left + 2]).toBe(true);
@@ -3939,7 +3939,7 @@ describe("Launch composer", () => {
 });
 
 describe("New workspace composer", () => {
-  it("opens only from sidebar c with project/title controls, normal/insert cancellation, and T blocked", async () => {
+  it("opens only from sidebar n with project/title controls, normal/insert cancellation, and T blocked", async () => {
     const { ApplicationController } = await import("../app/controller.js");
     const { FakePaseoGateway } = await import("../paseo/fake-gateway.js");
     const directory = state().directory;
@@ -3955,10 +3955,10 @@ describe("New workspace composer", () => {
     const unsubscribe = app.subscribe((next) => deck.update(next));
     deck.start();
     try {
-      terminal.sendInput("c");
+      terminal.sendInput("n");
       expect(app.state.newWorkspace).toBeUndefined();
       await app.handleIntent({ type: "set-focus", focus: "tree" });
-      terminal.sendInput("c");
+      terminal.sendInput("n");
       await terminal.waitForRender();
       let screen = terminal.viewport().join("\n");
       expect(screen).toContain("New workspace");
@@ -4032,7 +4032,7 @@ describe("New workspace over an active terminal", () => {
     deck.start();
     try {
       await app.handleIntent({ type: "set-focus", focus: "tree" });
-      terminal.sendInput("c");
+      terminal.sendInput("n");
       await terminal.waitForRender();
       expect(terminal.viewport().join("\n")).toContain("New workspace");
       expect(terminal.viewport().join("\n")).not.toContain("terminal old-shell");
@@ -4080,7 +4080,7 @@ describe("Worktree workspace controls", () => {
     deck.start();
     try {
       await app.handleIntent({ type: "set-focus", focus: "tree" });
-      terminal.sendInput("c");
+      terminal.sendInput("n");
       await terminal.waitForRender();
       let screen = terminal.viewport().join("\n");
       expect(screen).toContain("Worktree");

@@ -51,6 +51,7 @@ export type UiIntent =
   | { type: "reconnect-terminal" }
   | { type: "open-create-terminal"; workspaceId: string }
   | { type: "open-new-tab"; workspaceId: string }
+  | { type: "open-workspace-session-draft"; workspaceId: string }
   | {
       type: "new-tab-choice";
       choice: { kind: "session" } | { kind: "terminal" } | { kind: "profile"; profileId: string };
