@@ -334,3 +334,26 @@ function terminalInput(shortcut: string): string | undefined {
   };
   return inputs[shortcut] ?? (shortcut.length === 1 ? shortcut : undefined);
 }
+
+it("Sidebar Workspace actions use its highlighted eligible Workspace and never fall back on Project rows", () => {
+  const current = state();
+  const highlighted = {
+    ...current,
+    sidebarSelection: { kind: "workspace" as const, id: "other" },
+    directory: {
+      ...current.directory,
+      workspaces: [
+        ...current.directory.workspaces,
+        { id: "other", title: "Other", directory: "/other", archived: false },
+      ],
+    },
+  };
+  expect(commandById(highlighted, "terminal-create")?.intent(highlighted)).toEqual({
+    type: "open-create-terminal",
+    workspaceId: "other",
+  });
+  const project = { ...highlighted, sidebarSelection: { kind: "project" as const, id: "p" } };
+  expect(commandById(project, "terminal-create")?.disabledReason).toContain("workspace");
+  expect(commandById(project, "rename-agent")).toBeUndefined();
+  expect(commandById(project, "detach-agent")).toBeUndefined();
+});
