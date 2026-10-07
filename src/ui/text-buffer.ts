@@ -34,7 +34,6 @@ export function completeDelimiterPairs(text: string): DelimiterPair[] {
     if (escapes % 2) continue;
     if (quote) {
       if (char === quote.open) {
-        pairs.push({ ...quote, end: index });
         quote = undefined;
       }
       continue;
@@ -48,6 +47,21 @@ export function completeDelimiterPairs(text: string): DelimiterPair[] {
       const top = stack.pop();
       if (top?.open === close[char]) pairs.push({ ...top, end: index });
       else stack.length = 0;
+    }
+  }
+  for (const open of "\"'`") {
+    let start: number | undefined;
+    for (let index = 0; index < text.length; index++) {
+      if (text[index] === "\n") start = undefined;
+      if (text[index] !== open) continue;
+      let escapes = 0;
+      for (let before = index - 1; before >= 0 && text[before] === "\\"; before--) escapes++;
+      if (escapes % 2) continue;
+      if (start === undefined) start = index;
+      else {
+        pairs.push({ start, end: index, open });
+        start = undefined;
+      }
     }
   }
   return pairs;

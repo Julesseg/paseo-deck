@@ -162,3 +162,8 @@ it("removes the preceding line separator when deleting the final complete line",
     cursor: 4,
   });
 });
+
+it("chooses the nearest complete quote type, including nested other quote types and escaped quotes", () => {
+  expect(keys(`"outer 'inner' end"`, 9, ["d", "i", "q"]).text).toBe(`"outer '' end"`);
+  expect(keys('before "a\\"b" after', 0, ["d", "i", "q"]).text).toBe('before "" after');
+});
