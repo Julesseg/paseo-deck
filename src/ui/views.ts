@@ -89,6 +89,7 @@ import {
   setTimelineMark,
   type TimelineBufferState,
   type TimelineSelectionMode,
+  timelineSelection,
   timelineSelectionColumns,
   timelineTextObjectRange,
   timelineTextObjectText,
@@ -494,6 +495,7 @@ class TimelineItemView implements Component {
   private readonly markdown?: Markdown;
   private renderedWidth: number | undefined;
   private renderedLines: readonly string[] | undefined;
+  private canonical: readonly string[] | undefined;
   constructor(
     item: TimelineItem,
     private expanded: boolean,
@@ -512,6 +514,7 @@ class TimelineItemView implements Component {
     if (this.item === item && this.expanded === expanded) return;
     this.item = item;
     this.expanded = expanded;
+    this.canonical = undefined;
     this.renderedWidth = undefined;
     this.renderedLines = undefined;
     if (this.markdown && (item.type === "user-message" || item.type === "assistant-message"))
@@ -521,6 +524,7 @@ class TimelineItemView implements Component {
     this.renderedWidth = undefined;
     this.renderedLines = undefined;
     this.markdown?.invalidate();
+    this.canonical = undefined;
   }
   render(width: number): string[] {
     if (this.renderedWidth === width && this.renderedLines) return [...this.renderedLines];
@@ -528,6 +532,15 @@ class TimelineItemView implements Component {
     this.renderedWidth = width;
     this.renderedLines = lines;
     return [...lines];
+  }
+  canonicalLines(): readonly string[] {
+    this.canonical ??= this.renderUncached(
+      Math.max(
+        80,
+        ...copyTargets(this.item).map((target) => terminalDisplayWidth(target.text) + 32),
+      ),
+    ).map(printableTimelineText);
+    return this.canonical;
   }
   private renderUncached(width: number): string[] {
     if (
@@ -586,10 +599,31 @@ class TimelineView implements Component {
   private buffer: TimelineBufferState = createTimelineBuffer();
   private bufferAnchor:
     | {
-        cursor: { itemId: string; offset: number };
-        selection?: { itemId: string; offset: number };
+        cursor: TimelineContentAnchor;
+        selection?: TimelineContentAnchor;
+        range?: { start: TimelineContentAnchor; end: TimelineContentAnchor };
       }
     | undefined;
+  private readonly sessions = new Map<
+    string,
+    {
+      buffer: TimelineBufferState;
+      anchor:
+        | {
+            cursor: TimelineContentAnchor;
+            selection?: TimelineContentAnchor;
+            range?: { start: TimelineContentAnchor; end: TimelineContentAnchor };
+          }
+        | undefined;
+      keepCursorAtEnd: boolean;
+      searchQuery: string;
+      viewportAnchor: TimelineContentAnchor | undefined;
+      expanded: Set<string>;
+    }
+  >();
+  private restoredContentPosition = false;
+  private viewportAnchor: TimelineContentAnchor | undefined;
+  private remappedViewport: number | undefined;
   private keepCursorAtEnd = true;
   private searchQuery = "";
   private selectionFeedback = "";
@@ -608,7 +642,10 @@ class TimelineView implements Component {
       lines: string[];
     }
   >();
-  constructor(private readonly theme: DeckTheme) {}
+  constructor(
+    private readonly theme: DeckTheme,
+    private readonly viewportLine: () => number,
+  ) {}
   updateSelection(state: AppState): void {
     const previousFollowing = this.state?.selectedAgentId
       ? this.state.timelineNavigation[this.state.selectedAgentId]?.following !== false
@@ -617,11 +654,31 @@ class TimelineView implements Component {
       ? state.timelineNavigation[state.selectedAgentId]?.following !== false
       : false;
     if (this.state?.selectedAgentId !== state.selectedAgentId) {
-      this.buffer = createTimelineBuffer();
-      this.bufferAnchor = undefined;
+      if (!this.bufferAnchor) this.captureBufferAnchor();
+      const previous = this.state?.selectedAgentId;
+      if (previous)
+        this.sessions.set(previous, {
+          buffer: this.buffer,
+          anchor: this.bufferAnchor,
+          keepCursorAtEnd: this.keepCursorAtEnd,
+          searchQuery: this.searchQuery,
+          viewportAnchor: this.viewportAnchor,
+          expanded: new Set(this.expanded),
+        });
+      const saved = state.selectedAgentId ? this.sessions.get(state.selectedAgentId) : undefined;
+      this.restoredContentPosition = Boolean(saved);
+      this.buffer = saved?.buffer ?? createTimelineBuffer();
+      this.bufferAnchor = saved?.anchor;
+      this.viewportAnchor = saved?.viewportAnchor;
+      this.expanded = saved?.expanded ?? new Set();
+      for (const event of this.events)
+        this.itemViews.get(event.item.id)?.update(event.item, this.expanded.has(event.item.id));
+      this.layout = undefined;
+      this.layouts.clear();
+      this.rendered.clear();
       this.selectedIndex = 0;
-      this.searchQuery = "";
-      this.keepCursorAtEnd = nextFollowing;
+      this.searchQuery = saved?.searchQuery ?? "";
+      this.keepCursorAtEnd = saved?.keepCursorAtEnd ?? nextFollowing;
     } else if (previousFollowing === false && nextFollowing) {
       this.keepCursorAtEnd = true;
     }
@@ -863,6 +920,7 @@ class TimelineView implements Component {
     if (selected) this.toggle(selected.item.id);
   }
   toggle(id: string): void {
+    this.captureBufferAnchor();
     if (this.expanded.has(id)) this.expanded.delete(id);
     else this.expanded.add(id);
     const event = this.events.find((candidate) => candidate.item.id === id);
@@ -888,6 +946,7 @@ class TimelineView implements Component {
         ? `${this.focused ? mode.slice(0, 1).toUpperCase() : ""} Timeline`.trimStart()
         : `${this.focused ? mode.toUpperCase() : "        "} ${this.heading}`;
     if (this.events.length === 0) {
+      if (!this.state?.timeline.loading) this.buffer = createTimelineBuffer();
       const message =
         width < 18
           ? this.state?.connection === "connecting"
@@ -933,16 +992,57 @@ class TimelineView implements Component {
     if (this.buffer.lines !== bodyLines)
       this.buffer = replaceTimelineBuffer(this.buffer, bodyLines, true);
     if (this.bufferAnchor) {
-      const cursorLine = this.resolveBufferAnchor(this.bufferAnchor.cursor, layout);
+      const cursorPosition = this.resolveBufferAnchor(
+        this.bufferAnchor.cursor,
+        layout,
+        false,
+        true,
+      );
+      const cursorLine = cursorPosition?.line;
       const selectionLine = this.bufferAnchor.selection
-        ? this.resolveBufferAnchor(this.bufferAnchor.selection, layout)
+        ? this.resolveBufferAnchor(this.bufferAnchor.selection, layout, true)
         : undefined;
-      if (cursorLine !== undefined) this.buffer = { ...this.buffer, line: cursorLine };
-      if (cursorLine === undefined || (this.bufferAnchor.selection && selectionLine === undefined))
+      if (cursorPosition) this.buffer = { ...this.buffer, ...cursorPosition };
+      else {
+        const nearest =
+          layout.events[Math.min(this.bufferAnchor.cursor.eventIndex, layout.events.length - 1)];
+        if (nearest) this.buffer = { ...this.buffer, line: nearest.bodyStart, column: 0 };
+      }
+      if (
+        cursorLine === undefined ||
+        (this.bufferAnchor.selection &&
+          (selectionLine === undefined ||
+            !this.resolveBufferAnchor(this.bufferAnchor.cursor, layout, true)))
+      )
         this.buffer = leaveTimelineVisual(this.buffer);
       else if (selectionLine !== undefined && this.buffer.anchor)
-        this.buffer = { ...this.buffer, anchor: { ...this.buffer.anchor, line: selectionLine } };
+        this.buffer = { ...this.buffer, anchor: selectionLine };
+      if (this.bufferAnchor.range && this.buffer.mode === "visual") {
+        const start = this.resolveBufferAnchor(this.bufferAnchor.range.start, layout, true);
+        const end = this.resolveBufferAnchor(this.bufferAnchor.range.end, layout, true);
+        if (!start || !end) this.buffer = leaveTimelineVisual(this.buffer);
+        else {
+          const offset = (line: number) =>
+            this.buffer.lines.slice(0, line).reduce((sum, text) => sum + text.length + 1, 0);
+          this.buffer = {
+            ...this.buffer,
+            selectionRange: {
+              start: offset(start.line) + (this.buffer.selectionMode === "line" ? 0 : start.column),
+              end:
+                offset(end.line) +
+                (this.buffer.selectionMode === "line"
+                  ? (this.buffer.lines[end.line]?.length ?? 0)
+                  : end.column + 1),
+            },
+          };
+        }
+      }
       this.bufferAnchor = undefined;
+    }
+    if (this.viewportAnchor) {
+      const position = this.resolveBufferAnchor(this.viewportAnchor, layout, false, true);
+      this.remappedViewport = position ? position.line + 1 : undefined;
+      this.viewportAnchor = undefined;
     }
     if (
       this.buffer.mode === "normal" &&
@@ -1052,6 +1152,7 @@ class TimelineView implements Component {
     return { start: line, end: line };
   }
   setCursorAtAnchor(cursor: { epoch: string; sequence: number }): void {
+    if (this.restoredContentPosition || this.bufferAnchor) return;
     const range = this.lineRangeForCursor(cursor);
     if (!range) return;
     this.buffer = { ...this.buffer, line: range.start - 1, column: 0 };
@@ -1065,31 +1166,97 @@ class TimelineView implements Component {
   private captureBufferAnchor(): void {
     const layout = this.layout;
     if (!layout) return;
-    const at = (line: number): { itemId: string; offset: number } | undefined => {
-      const index = layout.events.findIndex(
+    const at = (line: number, column: number): TimelineContentAnchor | undefined => {
+      const eventIndex = layout.events.findIndex(
         (event) => line >= event.start && line < event.start + event.lines.length,
       );
-      const event = layout.events[index];
-      const item = this.events[index]?.item;
-      return event && item ? { itemId: item.id, offset: line - event.start } : undefined;
+      const event = layout.events[eventIndex];
+      const row = event?.positions[line - event.start];
+      return event && row
+        ? {
+            itemId: event.itemId,
+            eventIndex,
+            eventOrder: layout.events.map((entry) => entry.itemId),
+            region: row.region,
+            offset: row.offsets[Math.min(column, row.offsets.length - 1)] ?? 0,
+            content: event.content,
+            folded: event.folded,
+          }
+        : undefined;
     };
-    const cursor = at(this.buffer.line);
-    const selection = this.buffer.anchor ? at(this.buffer.anchor.line) : undefined;
+    const following = this.state?.selectedAgentId
+      ? this.state.timelineNavigation[this.state.selectedAgentId]?.following !== false
+      : this.keepCursorAtEnd;
+    this.viewportAnchor = following
+      ? undefined
+      : at(Math.max(0, (this.remappedViewport ?? this.viewportLine()) - 1), 0);
+    const cursor = at(this.buffer.line, this.buffer.column);
+    const selection = this.buffer.anchor
+      ? at(this.buffer.anchor.line, this.buffer.anchor.column)
+      : undefined;
+    const range = timelineSelection(this.buffer);
+    const positionAtOffset = (offset: number) => {
+      for (let line = 0; line < this.buffer.lines.length; line++) {
+        const length = this.buffer.lines[line]?.length ?? 0;
+        if (offset <= length) return at(line, offset);
+        offset -= length + 1;
+      }
+      return undefined;
+    };
+    const rangeStart = range ? positionAtOffset(range.start) : undefined;
+    const rangeEnd = range ? positionAtOffset(Math.max(range.start, range.end - 1)) : undefined;
     if (cursor)
       this.bufferAnchor = {
         cursor,
         ...(selection ? { selection } : {}),
+        ...(rangeStart && rangeEnd ? { range: { start: rangeStart, end: rangeEnd } } : {}),
       };
   }
   private resolveBufferAnchor(
-    anchor: { itemId: string; offset: number },
+    anchor: TimelineContentAnchor,
     layout: TimelineLayout,
-  ): number | undefined {
-    const index = this.events.findIndex((event) => event.item.id === anchor.itemId);
-    const event = layout.events[index];
-    return event
-      ? event.start + Math.min(anchor.offset, Math.max(0, event.lines.length - 1))
-      : undefined;
+    strict = false,
+    allowNearest = false,
+  ): { line: number; column: number } | undefined {
+    const event = layout.events.find((event) => event.itemId === anchor.itemId);
+    if (!event) {
+      if (!allowNearest) return undefined;
+      for (let distance = 1; distance < anchor.eventOrder.length; distance++) {
+        for (const index of [anchor.eventIndex + distance, anchor.eventIndex - distance]) {
+          const survivor = layout.events.find((entry) => entry.itemId === anchor.eventOrder[index]);
+          if (survivor) return { line: survivor.bodyStart, column: 0 };
+        }
+      }
+      const fallback = layout.events[Math.min(anchor.eventIndex, layout.events.length - 1)];
+      return fallback ? { line: fallback.bodyStart, column: 0 } : undefined;
+    }
+    if (
+      strict &&
+      ((event.folded && !anchor.folded) ||
+        (anchor.region === "body" &&
+          !event.content.startsWith(anchor.content.slice(0, anchor.offset + 1))))
+    )
+      return undefined;
+    if (event.folded && !anchor.folded) return { line: event.bodyStart, column: 0 };
+    let nearest: { line: number; column: number } | undefined;
+    let distance = Number.POSITIVE_INFINITY;
+    for (const [rowIndex, row] of event.positions.entries()) {
+      if (row.region !== anchor.region) continue;
+      for (const [column, offset] of row.offsets.entries()) {
+        const delta = Math.abs(offset - anchor.offset);
+        if (delta < distance) {
+          nearest = { line: event.start + rowIndex, column };
+          distance = delta;
+        }
+      }
+    }
+    return nearest ?? { line: event.bodyStart, column: 0 };
+  }
+
+  takeRemappedViewport(): number | undefined {
+    const line = this.remappedViewport;
+    this.remappedViewport = undefined;
+    return line;
   }
 
   cursorAtLine(line: number): { epoch: string; sequence: number } | undefined {
@@ -1161,7 +1328,50 @@ class TimelineView implements Component {
             ]
           : [];
       const lines = [...gap, ...header, ...children];
-      const layout = { start, bodyStart: start + gap.length + header.length, lines };
+      // The canonical text is independent of viewport width. Map each displayed
+      // character sequentially into it, so repeated identical rows have separate
+      // offsets and rewrapping never uses row numbers as content identity.
+      const canonical = this.itemViews.get(item.id)?.canonicalLines() ?? [];
+      const contentStart = primary ? 1 : 0;
+      const canonicalText = canonical
+        .slice(contentStart)
+        .map((line) => line.trimEnd())
+        .join("\n");
+      let source = 0;
+      const positions = lines.map((line, index) => {
+        const itemRow = index - gap.length - header.length;
+        const region = itemRow < contentStart ? ("header" as const) : ("body" as const);
+        const text = printableTimelineText(line).trimEnd();
+        if (region === "header")
+          return {
+            region,
+            offsets: Array.from({ length: Math.max(1, text.length) }, (_, column) => column),
+          };
+        const offsets: number[] = [];
+        for (let column = 0; column < text.length; column++) {
+          const character = text[column] ?? "";
+          if (!/\s/u.test(character)) {
+            while (source < canonicalText.length && /\s/u.test(canonicalText[source] ?? ""))
+              source++;
+          }
+          offsets.push(source);
+          if (canonicalText[source] === character) source++;
+        }
+        if (offsets.length === 0) {
+          offsets.push(source);
+          if (canonicalText[source] === "\n") source++;
+        }
+        return { region, offsets };
+      });
+      const layout = {
+        itemId: item.id,
+        content: canonicalText,
+        folded: (item.type === "tool" || item.type === "reasoning") && !this.expanded.has(item.id),
+        positions,
+        start,
+        bodyStart: start + gap.length + header.length,
+        lines,
+      };
       start += lines.length;
       return layout;
     });
@@ -1173,11 +1383,29 @@ class TimelineView implements Component {
   }
 }
 
+type TimelineContentAnchor = {
+  itemId: string;
+  eventIndex: number;
+  eventOrder: readonly string[];
+  region: "header" | "body";
+  offset: number;
+  content: string;
+  folded: boolean;
+};
+
 type TimelineLayout = {
   width: number;
   lines: readonly string[];
   plainLines: readonly string[];
-  events: readonly { start: number; bodyStart: number; lines: readonly string[] }[];
+  events: readonly {
+    itemId: string;
+    content: string;
+    folded: boolean;
+    positions: readonly { region: "header" | "body"; offsets: readonly number[] }[];
+    start: number;
+    bodyStart: number;
+    lines: readonly string[];
+  }[];
 };
 
 function landmark(item: TimelineItem, kind: "turn" | "error"): boolean {
@@ -1213,8 +1441,19 @@ class TimelineScrollView extends ScrollView {
   constructor(
     component: Component,
     private readonly onFollowChange: (following: boolean) => void,
+    private readonly remappedViewport: () => number | undefined,
   ) {
     super(component, { follow: "end", primary: true, scrollbar: "auto" });
+  }
+
+  override updateLayout(
+    contentHeight: number,
+    viewportHeight: number,
+    requestRender: () => void,
+  ): void {
+    const remapped = this.remappedViewport();
+    super.updateLayout(contentHeight, viewportHeight, requestRender);
+    if (remapped !== undefined) this.scrollTo(remapped, { disableFollow: true });
   }
 
   override scrollBy(lines: number): number {
@@ -2302,7 +2541,7 @@ export class DeckTui {
     );
     this.tree = new TreeView(initialState, this.theme, options.paseoHost);
     this.tabs = new SessionTabsView(initialState, this.theme);
-    this.timeline = new TimelineView(this.theme);
+    this.timeline = new TimelineView(this.theme, () => this.transcript?.scrollTop ?? 0);
     this.timeline.update(initialState.timeline.items);
     this.timeline.updateSelection(initialState);
     this.contentPane = new ContentPane(this.timeline, this.theme, initialState);
@@ -2310,10 +2549,14 @@ export class DeckTui {
     this.status = new StatusView(initialState, this.theme, () => this.reconnectClock.now());
     this.minimumSize = new MinimumSizeView(this.theme);
     this.treeTranscript = new SidebarScrollView(this.tree, { follow: "none", scrollbar: "auto" });
-    this.transcript = new TimelineScrollView(this.contentPane, (following) => {
-      if (following) this.setTimelineFollowing(true);
-      else this.pauseTimeline();
-    });
+    this.transcript = new TimelineScrollView(
+      this.contentPane,
+      (following) => {
+        if (following) this.setTimelineFollowing(true);
+        else this.pauseTimeline();
+      },
+      () => this.timeline.takeRemappedViewport(),
+    );
     this.setShellLayout();
     this.tui.addInputListener((data) => {
       const terminalOwns =
@@ -2625,6 +2868,7 @@ export class DeckTui {
   private syncTimelineCursor(): void {
     const visible =
       this.state.focus === "timeline" &&
+      this.state.timeline.items.length > 0 &&
       !this.state.activeTerminalId &&
       !this.state.newWorkspace &&
       this.state.modal.type === "none" &&
