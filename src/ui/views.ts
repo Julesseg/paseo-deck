@@ -50,6 +50,7 @@ import {
   syncComposerVim,
 } from "./composer-vim.js";
 import { DeckController, type UiIntent } from "./controller.js";
+import { ownedInputTerminal } from "./input.js";
 import {
   adjustTreeWidth,
   MIN_TERMINAL_COLUMNS,
@@ -1365,9 +1366,18 @@ class ComposerView implements Component, Focusable {
       ),
     );
   }
+  get hasPendingCommand(): boolean {
+    return Boolean(this.vim.pending || this.vim.count);
+  }
+
   handleInput(data: string): void {
     const launchId = activeLaunchWorkspaceId(this.state);
     if (launchId && launchDraft(this.state, launchId).submitting) return;
+    if (data.startsWith("\u001b[200~")) {
+      this.editor.handleInput(data);
+      this.vim = syncComposerVim(this.vim, this.editor.getText(), this.editor.getCursor());
+      return;
+    }
     if (this.state.composerMode === "visual" || this.state.composerMode === "normal") {
       this.handleVimInput(data);
       return;
@@ -1375,7 +1385,13 @@ class ComposerView implements Component, Focusable {
     // pi-tui's editor treats Enter as submit. In Insert mode the composer is
     // a multiline buffer, so normalize the terminal's Enter byte to the
     // editor's explicit newline path. Normal mode owns submission instead.
-    if (data === "\r" || data === "\n") {
+    if (
+      data === "\r" ||
+      data === "\n" ||
+      matchesKey(data, "alt+enter") ||
+      matchesKey(data, "shift+enter") ||
+      data === "\u001b\r"
+    ) {
       this.editor.handleInput("\n");
       this.vim = syncComposerVim(this.vim, this.editor.getText(), this.editor.getCursor());
       return;
@@ -1398,6 +1414,10 @@ class ComposerView implements Component, Focusable {
       0,
       this.visibleEditorLines,
     );
+    if (data === "\r" && current.mode === "normal" && !current.pending && !current.count) {
+      this.editor.onSubmit?.(current.text);
+      return;
+    }
     this.applyVimResult(handleComposerVim(current, data));
   }
 
@@ -2187,9 +2207,21 @@ export class DeckTui {
     this.onPreferencesChanged = options.onPreferencesChanged;
     this.theme = new DeckTheme(this.effectiveAppearance());
     this.reconnectClock = options.renderClock ?? systemRenderClock;
-    this.tui = new TuiAltScreen(terminal, undefined, undefined, {
-      scrollToEndIndicator: () => this.scrollToEndIndicator(),
-    });
+    this.tui = new TuiAltScreen(
+      ownedInputTerminal(
+        terminal,
+        () =>
+          Boolean(this.state.activeTerminalId) &&
+          this.state.focus === "timeline" &&
+          this.state.modal.type === "none" &&
+          !this.localOverlayKey,
+      ),
+      undefined,
+      undefined,
+      {
+        scrollToEndIndicator: () => this.scrollToEndIndicator(),
+      },
+    );
     this.lifecycle = new TerminalLifecycle(this.tui, terminal);
     this.renderScheduler = new RenderScheduler(
       () => this.tui.requestRender(),
@@ -2218,6 +2250,22 @@ export class DeckTui {
     });
     this.setShellLayout();
     this.tui.addInputListener((data) => {
+      if (
+        !this.localOverlayKey &&
+        this.state.modal.type === "none" &&
+        !this.state.activeTerminalId
+      ) {
+        if (data.startsWith("\u001b[200~")) {
+          if (this.state.focus === "composer") this.composer.handleInput(data);
+          return { consume: true };
+        }
+        if (this.state.focus === "composer" && !commandForKey(this.state, data)) {
+          if (!this.composer.hasPendingCommand && this.controller.handleKey(data))
+            return { consume: true };
+          this.composer.handleInput(data);
+          return { consume: true };
+        }
+      }
       // Local overlays have no AppState modal, so keep global bindings from
       // interpreting their editor/list input.
       // Help and palette are intentionally global nested overlays. They are
@@ -2848,6 +2896,12 @@ export class DeckTui {
       new Dialog(
         [
           `Paseo Deck keys · ${context}`,
+          ...(context === "composer"
+            ? [
+                "Normal Enter sends; Insert Enter/Alt-Enter adds a newline.",
+                "Pending-command and Visual Enter never send.",
+              ]
+            : []),
           ...contextualHelp(this.state, context).map((command) => commandHelpLine(command)),
         ],
         (data) => {
@@ -3130,6 +3184,12 @@ export class DeckTui {
       component = new Dialog(
         [
           `Paseo Deck keys · ${this.state.focus}`,
+          ...(this.state.focus === "composer"
+            ? [
+                "Normal Enter sends; Insert Enter/Alt-Enter adds a newline.",
+                "Pending-command and Visual Enter never send.",
+              ]
+            : []),
           ...contextualHelp(this.state).map((command) => commandHelpLine(command)),
         ],
         (data) => {

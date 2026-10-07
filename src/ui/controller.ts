@@ -371,6 +371,11 @@ export class DeckController {
     // before resolving the broader command registry (where j/k/g/G/Enter/y
     // also have unrelated meanings in other regions).
     if (state.modal.type === "none" && state.focus === "timeline") {
+      if (data === "\r" || data === "\n") {
+        this.#timelinePrefix = "";
+        this.#timelineCount = "";
+        return true;
+      }
       if (!this.#timelinePrefix && state.timeline.items.length && (data === "/" || data === "?")) {
         this.#timelineSearchDirection = data === "/" ? 1 : -1;
         return this.send({
@@ -575,8 +580,6 @@ export class DeckController {
         });
       if (data === "G")
         return this.send({ type: "move-timeline-selection-boundary", boundary: "end" });
-      if (data === "\r" && state.timeline.items.length)
-        return this.send({ type: "move-timeline-text", key: "+" });
       if (data === "y" && state.timeline.items.length) {
         if ((state.timelineMode ?? "normal") === "visual")
           return this.send({ type: "timeline-yank" });
