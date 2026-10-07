@@ -505,6 +505,21 @@ export class ProductionPaseoGateway implements PaseoGateway {
     try {
       const client = this.requireClient();
       switch (command.type) {
+        case "archive-workspace":
+          await this.runFallback(["workspace", "archive", command.workspaceId]);
+          return { type: "ok" };
+        case "rename-workspace":
+          await this.runFallback(["workspace", "rename", command.workspaceId, command.name]);
+          return { type: "ok" };
+        case "rename-terminal": {
+          const result = await (await this.mutationClient()).renameTerminal({
+            terminalId: command.terminalId,
+            title: command.name,
+          });
+          if (!result.success || result.error)
+            throw new PaseoGatewayError(result.error ?? "Terminal rename was rejected.");
+          return { type: "ok" };
+        }
         case "send-prompt":
           await client.agents.ref(command.agentId).send(command.prompt);
           return { type: "ok" };
@@ -545,22 +560,7 @@ export class ProductionPaseoGateway implements PaseoGateway {
           const agent = snapshot.agents.find((item) => item.id === command.agentId);
           const reason = existingModelSwitchReason(agent?.providerId);
           if (reason) throw new PaseoGatewayError(reason);
-          if (!this.settings) {
-            const target = this.target;
-            if (!target) throw new PaseoGatewayError("Paseo Deck is not connected.");
-            const settings = (this.options.createSettingsClient ?? createSessionSettingsClient)(
-              target,
-            );
-            this.settings = settings
-              .connect()
-              .then(() => settings)
-              .catch(async (error) => {
-                this.settings = undefined;
-                await settings.close().catch(() => {});
-                throw error;
-              });
-          }
-          const settings = await this.settings;
+          const settings = await this.mutationClient();
           await settings.setAgentModel(command.agentId, command.modelId);
           const notice = await settings.setAgentThinkingOption(
             command.agentId,
@@ -585,6 +585,24 @@ export class ProductionPaseoGateway implements PaseoGateway {
     } catch (error) {
       throw paseoFailure(error, "command");
     }
+  }
+
+  private async mutationClient(): Promise<SessionSettingsClient> {
+    this.requireClient();
+    if (!this.settings) {
+      const target = this.target;
+      if (!target) throw new PaseoGatewayError("Paseo Deck is not connected.");
+      const settings = (this.options.createSettingsClient ?? createSessionSettingsClient)(target);
+      this.settings = settings
+        .connect()
+        .then(() => settings)
+        .catch(async (error) => {
+          this.settings = undefined;
+          await settings.close().catch(() => {});
+          throw error;
+        });
+    }
+    return this.settings;
   }
 
   private async verifyLocalFetchTarget(): Promise<void> {

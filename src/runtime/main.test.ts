@@ -287,7 +287,7 @@ describe("runCli", () => {
     terminal.sendInput("Terminate active terminal");
     terminal.sendInput("\r");
     await terminal.waitForRender();
-    expect(terminal.viewport().join("\n")).toContain("kill-terminal fake-terminal-1?");
+    expect(terminal.viewport().join("\n")).toContain("Terminate Terminal");
     terminal.sendInput("\r");
     await terminal.waitForRender();
     expect(gateway.terminals).toHaveLength(0);

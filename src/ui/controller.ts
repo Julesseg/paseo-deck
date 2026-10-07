@@ -86,11 +86,13 @@ export type UiIntent =
   | { type: "creation-back" }
   | {
       type: "open-confirmation";
-      action: "stop" | "archive" | "detach" | "kill-terminal";
+      action: "archive-workspace" | "stop" | "archive" | "detach" | "kill-terminal";
+      workspaceId?: string;
       agentId?: string;
       terminalId?: string;
     }
   | { type: "open-rename"; agentId: string }
+  | { type: "open-resource-rename"; workspaceId: string; terminalId?: string }
   | { type: "open-mode"; agentId: string }
   | { type: "open-thinking"; agentId: string }
   | { type: "open-error-details"; message: string; detail: string }
@@ -513,6 +515,7 @@ export class DeckController {
         return this.send({ type: "set-terminal-name", name: state.modal.name + data });
       return true;
     }
+    if (isTextEditing(state.modal)) return false;
     // Ctrl-K/Cmd-P, help, and quit are explicit global precedence paths. The
     // composer otherwise behaves like a Vim buffer: normal mode owns commands,
     // insert mode yields ordinary bytes to the editor.
@@ -613,6 +616,14 @@ export class DeckController {
     if (modal.action === "kill-terminal") {
       if (modal.terminalId)
         this.emit({ type: "kill-terminal-confirmed", terminalId: modal.terminalId });
+      return;
+    }
+    if (modal.action === "archive-workspace") {
+      if (modal.workspaceId)
+        this.emit({
+          type: "command",
+          command: { type: "archive-workspace", workspaceId: modal.workspaceId },
+        });
       return;
     }
     if (!modal.agentId) return;
