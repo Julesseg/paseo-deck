@@ -39,6 +39,7 @@ import {
   resolvedCommands,
 } from "./commands.js";
 import {
+  applyComposerInsertText,
   applyComposerNativePaste,
   applyComposerPaste,
   type ComposerVimState,
@@ -47,6 +48,7 @@ import {
   handleComposerVim,
   offsetToPosition,
   positionToOffset,
+  recallComposerPrompt,
   setComposerViewport,
   syncComposerVim,
 } from "./composer-vim.js";
@@ -1679,38 +1681,60 @@ class ComposerView implements Component, Focusable {
       return;
     }
     if (data.startsWith("\u001b[200~")) {
-      this.editor.handleInput(data);
-      this.vim = syncComposerVim(this.vim, this.editor.getText(), this.editor.getCursor());
+      const payload = data.slice(6, data.endsWith("\u001b[201~") ? -6 : undefined);
+      this.applyVimResult({
+        state: applyComposerInsertText(
+          syncComposerVim(this.vim, this.editor.getText(), this.editor.getCursor()),
+          payload,
+          true,
+        ),
+        handled: true,
+      });
       return;
     }
     if (this.state.composerMode === "visual" || this.state.composerMode === "normal") {
       this.handleVimInput(data);
       return;
     }
-    // pi-tui's editor treats Enter as submit. In Insert mode the composer is
-    // a multiline buffer, so normalize the terminal's Enter byte to the
-    // editor's explicit newline path. Normal mode owns submission instead.
-    if (
-      data === "\r" ||
-      data === "\n" ||
-      matchesKey(data, "alt+enter") ||
-      matchesKey(data, "shift+enter") ||
-      data === "\u001b\r"
-    ) {
-      this.editor.handleInput("\n");
-      this.vim = syncComposerVim(this.vim, this.editor.getText(), this.editor.getCursor());
+    const current = syncComposerVim(this.vim, this.editor.getText(), this.editor.getCursor());
+    if (matchesKey(data, "up") || matchesKey(data, "down")) {
+      const up = matchesKey(data, "up");
+      if ((up && current.cursor === 0) || (!up && current.cursor === current.text.length)) {
+        this.applyVimResult({
+          state: recallComposerPrompt(current, this.sentPrompts(), up ? -1 : 1),
+          handled: true,
+        });
+      } else {
+        this.editor.handleInput(up ? "\u001b[A" : "\u001b[B");
+        this.vim = syncComposerVim(current, this.editor.getText(), this.editor.getCursor());
+      }
       return;
     }
-    const result = handleComposerVim(
-      syncComposerVim(this.vim, this.editor.getText(), this.editor.getCursor()),
-      data,
-    );
-    if (result.handled) {
-      this.applyVimResult(result);
-      return;
-    }
-    this.editor.handleInput(data);
-    this.vim = syncComposerVim(this.vim, this.editor.getText(), this.editor.getCursor());
+    const bindings: readonly [string, readonly Parameters<typeof matchesKey>[1][]][] = [
+      ["insert-left", ["left", "ctrl+b"]],
+      ["insert-right", ["right", "ctrl+f"]],
+      ["insert-word-left", ["alt+left", "ctrl+left", "alt+b"]],
+      ["insert-word-right", ["alt+right", "ctrl+right", "alt+f"]],
+      ["insert-home", ["home", "ctrl+home", "ctrl+a"]],
+      ["insert-end", ["end", "ctrl+end", "ctrl+e"]],
+      ["insert-backspace", ["backspace", "shift+backspace"]],
+      ["insert-delete", ["delete", "shift+delete"]],
+      ["insert-delete-word-left", ["ctrl+w", "alt+backspace"]],
+      ["insert-delete-word-right", ["alt+d", "alt+delete"]],
+      ["insert-newline", ["enter", "alt+enter", "shift+enter", "ctrl+j"]],
+      ["insert-redo", ["ctrl+shift+z"]],
+      ["\u001a", ["ctrl+z"]],
+    ];
+    const key =
+      bindings.find(([, chords]) => chords.some((chord) => matchesKey(data, chord)))?.[0] ??
+      (data === "\n" || data === "\u001b\r" ? "insert-newline" : data);
+    this.applyVimResult(handleComposerVim(current, key));
+  }
+
+  private sentPrompts(): readonly string[] {
+    return this.resourceKey.startsWith("session:") && this.selectedAgentId
+      ? (this.state.composer.histories[this.selectedAgentId] ?? [])
+      : [];
   }
 
   private handleVimInput(data: string): void {
@@ -1724,6 +1748,19 @@ class ComposerView implements Component, Focusable {
       0,
       this.visibleEditorLines,
     );
+    if (
+      current.mode === "normal" &&
+      !current.pending &&
+      !current.count &&
+      ((data === "k" && offsetToPosition(current.text, current.cursor).line === 0) ||
+        (data === "j" && !current.text.slice(current.cursor).includes("\n")))
+    ) {
+      this.applyVimResult({
+        state: recallComposerPrompt(current, this.sentPrompts(), data === "k" ? -1 : 1),
+        handled: true,
+      });
+      return;
+    }
     if (data === "\r" && current.mode === "normal" && !current.pending && !current.count) {
       this.editor.onSubmit?.(current.text);
       return;
@@ -1836,9 +1873,14 @@ class ComposerView implements Component, Focusable {
   private placeCursor(target: { line: number; col: number }): void {
     const current = this.editor.getCursor();
     if (current.line === target.line && current.col === target.col) return;
-    const vertical = target.line - current.line;
-    const arrow = vertical < 0 ? "\u001b[A" : "\u001b[B";
-    for (let index = 0; index < Math.abs(vertical); index++) this.editor.handleInput(arrow);
+    const arrow = target.line < current.line ? "\u001b[A" : "\u001b[B";
+    // Arrows traverse displayed rows; a logical line can span several of them.
+    for (
+      let remaining = this.editor.getText().length + 1;
+      this.editor.getCursor().line !== target.line && remaining > 0;
+      remaining--
+    )
+      this.editor.handleInput(arrow);
     this.editor.handleInput("\u0001");
     const prefix = (this.editor.getText().split("\n")[target.line] ?? "").slice(0, target.col);
     for (let index = 0; index < characterOffsets(prefix).length - 1; index++)
@@ -2680,8 +2722,16 @@ export class DeckTui {
           if (this.state.focus === "composer") this.composer.handleInput(data);
           return { consume: true };
         }
-        if (this.state.focus === "composer" && !commandForKey(this.state, data)) {
-          if (!this.composer.hasPendingCommand && this.controller.handleKey(data))
+        if (
+          this.state.focus === "composer" &&
+          ((data === "\u001b" && this.state.composerMode !== undefined) ||
+            !commandForKey(this.state, data))
+        ) {
+          if (
+            !(data === "\u001b" && this.state.composerMode !== undefined) &&
+            !this.composer.hasPendingCommand &&
+            this.controller.handleKey(data)
+          )
             return { consume: true };
           this.composer.handleInput(data);
           return { consume: true };
@@ -3356,6 +3406,10 @@ export class DeckTui {
                 "i/a/I/A/o/O Insert; x/X s/S D/C; d/c/y + motion; dd/cc/yy/Y lines.",
                 "i/a objects: w/W s/p q nearest quote; b nearest bracket; explicit delimiters.",
                 "r replaces; J joins; ~ toggles case; u/Ctrl-R undo/redo. No counted objects.",
+                "Uncounted j/k recalls at logical boundaries; counted/operator/Visual stays in draft.",
+                "Insert: arrows move wrapped rows, reach outer start/end, then recall history.",
+                "Insert: Enter/Alt-Enter newline; Ctrl-Z/Ctrl-Shift-Z shares draft undo; Esc finishes group.",
+                "Insert: Ctrl-B/F character, Alt-B/F word, Home/End line; Ctrl-W/Alt-D delete word.",
                 "p/P reads system clipboard; Deck-owned line copies paste below/above.",
                 "Visual: v/V character/line; o/O swaps endpoints; gv restores/exchanges selection.",
                 "Visual d/x c/s; D/X C/S/R whole lines; y/Y copies; u/U/~ case; r replaces.",
@@ -3697,6 +3751,10 @@ export class DeckTui {
                 "i/a/I/A/o/O Insert; x/X s/S D/C; d/c/y + motion; dd/cc/yy/Y lines.",
                 "i/a objects: w/W s/p q nearest quote; b nearest bracket; explicit delimiters.",
                 "r replaces; J joins; ~ toggles case; u/Ctrl-R undo/redo. No counted objects.",
+                "Uncounted j/k recalls at logical boundaries; counted/operator/Visual stays in draft.",
+                "Insert: arrows move wrapped rows, reach outer start/end, then recall history.",
+                "Insert: Enter/Alt-Enter newline; Ctrl-Z/Ctrl-Shift-Z shares draft undo; Esc finishes group.",
+                "Insert: Ctrl-B/F character, Alt-B/F word, Home/End line; Ctrl-W/Alt-D delete word.",
                 "p/P reads system clipboard; Deck-owned line copies paste below/above.",
                 "Visual: v/V character/line; o/O swaps endpoints; gv restores/exchanges selection.",
                 "Visual d/x c/s; D/X C/S/R whole lines; y/Y copies; u/U/~ case; r replaces.",

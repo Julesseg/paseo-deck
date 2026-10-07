@@ -1,4 +1,9 @@
-import { logicalTextObjectRange, logicalWordOffset, moveLogicalText } from "./logical-text.js";
+import {
+  logicalTextObjectRange,
+  logicalWordOffset,
+  moveLogicalText,
+  wordClass,
+} from "./logical-text.js";
 import { characterStep, findTextCharacter, isCharacter } from "./text-buffer.js";
 
 export type ComposerVimMode = "normal" | "insert" | "visual";
@@ -18,6 +23,8 @@ export interface ComposerVimState {
   readonly operatorCountExplicit?: boolean;
   readonly undo: readonly ComposerSnapshot[];
   readonly redo: readonly ComposerSnapshot[];
+  readonly historyIndex?: number | undefined;
+  readonly historyDraft?: ComposerSnapshot | undefined;
   readonly goalColumn?: number | undefined;
   readonly lastFind?: { key: "f" | "F" | "t" | "T"; character: string };
   readonly searchQuery?: string;
@@ -173,6 +180,8 @@ function changed(state: ComposerVimState, text: string, cursor: number): Compose
     cursor: normalCursor(text, cursor),
     undo: [...state.undo, { text: state.text, cursor: state.cursor }],
     redo: [],
+    historyIndex: undefined,
+    historyDraft: undefined,
   };
 }
 
@@ -539,6 +548,186 @@ export function composerVisualSelection(
   return { ...visualRange(state), kind: state.visualKind };
 }
 
+/** Browse immutable sent copies; each recall is a draft undo operation. */
+export function recallComposerPrompt(
+  state: ComposerVimState,
+  history: readonly string[],
+  direction: -1 | 1,
+): ComposerVimState {
+  const current = state.historyIndex ?? -1;
+  const index = Math.max(-1, Math.min(history.length - 1, current - direction));
+  if (!history.length || index === current) return state;
+  const before = finishComposerInsert(state);
+  const saved = current === -1 ? { text: before.text, cursor: before.cursor } : before.historyDraft;
+  const text = index === -1 ? (saved?.text ?? "") : (history[index] ?? "");
+  const cursor = index === -1 ? (saved?.cursor ?? 0) : direction === -1 ? 0 : text.length;
+  return {
+    ...remapSelection(before, text),
+    text,
+    cursor: before.mode === "insert" ? cursor : normalCursor(text, cursor),
+    historyIndex: index,
+    historyDraft: index === -1 ? undefined : saved,
+    undo: [...before.undo, { text: before.text, cursor: before.cursor }],
+    redo: [],
+  };
+}
+
+/** Insert literal terminal paste without allowing payload bytes to become commands. */
+export function applyComposerInsertText(
+  state: ComposerVimState,
+  text: string,
+  atomic = false,
+): ComposerVimState {
+  const before = atomic ? finishComposerInsert(state) : state;
+  const inserted = before.text.slice(0, before.cursor) + text + before.text.slice(before.cursor);
+  const next: ComposerVimState = {
+    ...remapSelection(before, inserted),
+    mode: "insert",
+    text: inserted,
+    cursor: before.cursor + text.length,
+    insertSnapshot: before.insertSnapshot ?? { text: before.text, cursor: before.cursor },
+    historyIndex: undefined,
+    historyDraft: undefined,
+  };
+  return atomic ? finishComposerInsert(next) : next;
+}
+
+/** Close a typing group without changing mode or caret. */
+export function finishComposerInsert(state: ComposerVimState): ComposerVimState {
+  const snapshot = state.insertSnapshot;
+  return {
+    ...state,
+    insertSnapshot: undefined,
+    undo:
+      snapshot && snapshot.text !== state.text && state.undo.at(-1)?.text !== snapshot.text
+        ? [...state.undo, snapshot]
+        : state.undo,
+    redo: snapshot && snapshot.text !== state.text ? [] : state.redo,
+  };
+}
+
+export function undoComposer(state: ComposerVimState, redo = false, amount = 1): ComposerVimState {
+  let next = state;
+  for (let index = 0; index < amount; index++) {
+    const source = redo ? next.redo : next.undo;
+    const snapshot = source.at(-1);
+    if (!snapshot) break;
+    const current = { text: next.text, cursor: next.cursor };
+    next = {
+      ...remapSelection(next, snapshot.text),
+      ...snapshot,
+      cursor:
+        next.mode === "normal" ? normalCursor(snapshot.text, snapshot.cursor) : snapshot.cursor,
+      insertSnapshot: undefined,
+      historyIndex: undefined,
+      historyDraft: undefined,
+      undo: redo ? [...next.undo, current] : source.slice(0, -1),
+      redo: redo ? source.slice(0, -1) : [...next.redo, current],
+    };
+  }
+  return next;
+}
+
+function handleComposerInsert(state: ComposerVimState, key: string): ComposerVimResult {
+  if (key === "\u001a" || key === "insert-redo")
+    return {
+      state: undoComposer(finishComposerInsert(state), key === "insert-redo"),
+      handled: true,
+    };
+  let cursor = state.cursor;
+  let start = cursor;
+  let end = cursor;
+  let insertion: string | undefined;
+  const word = (direction: -1 | 1): number => {
+    let at = cursor;
+    if (direction === -1) {
+      while (at > 0 && /\s/u.test(state.text.slice(characterStep(state.text, at, -1), at)))
+        at = characterStep(state.text, at, -1);
+      const kind = wordClass(state.text.slice(characterStep(state.text, at, -1), at), false);
+      while (
+        at > 0 &&
+        wordClass(state.text.slice(characterStep(state.text, at, -1), at), false) === kind
+      )
+        at = characterStep(state.text, at, -1);
+    } else {
+      while (
+        at < state.text.length &&
+        /\s/u.test(state.text.slice(at, characterStep(state.text, at, 1)))
+      )
+        at = characterStep(state.text, at, 1);
+      const kind = wordClass(state.text.slice(at, characterStep(state.text, at, 1)), false);
+      while (
+        at < state.text.length &&
+        wordClass(state.text.slice(at, characterStep(state.text, at, 1)), false) === kind
+      )
+        at = characterStep(state.text, at, 1);
+    }
+    return at;
+  };
+  switch (key) {
+    case "insert-left":
+      cursor = characterStep(state.text, cursor, -1);
+      break;
+    case "insert-right":
+      cursor = characterStep(state.text, cursor, 1);
+      break;
+    case "insert-word-left":
+      cursor = word(-1);
+      break;
+    case "insert-word-right":
+      cursor = word(1);
+      break;
+    case "insert-home":
+      cursor = lineStart(state.text, cursor);
+      break;
+    case "insert-end":
+      cursor = lineEnd(state.text, cursor);
+      break;
+    case "insert-backspace":
+      start = characterStep(state.text, cursor, -1);
+      insertion = "";
+      break;
+    case "insert-delete":
+      end = characterStep(state.text, cursor, 1);
+      insertion = "";
+      break;
+    case "insert-delete-word-left":
+      start = word(-1);
+      insertion = "";
+      break;
+    case "insert-delete-word-right":
+      end = word(1);
+      insertion = "";
+      break;
+    case "insert-newline":
+      insertion = "\n";
+      break;
+    default:
+      if (
+        key &&
+        [...key].every(
+          (character) => character.charCodeAt(0) >= 32 && character.charCodeAt(0) !== 127,
+        )
+      )
+        insertion = key;
+      else return { state, handled: true };
+  }
+  if (insertion === undefined) return { state: { ...state, cursor }, handled: true };
+  const text = state.text.slice(0, start) + insertion + state.text.slice(end);
+  if (text === state.text) return { state, handled: true };
+  return {
+    state: {
+      ...remapSelection(state, text),
+      text,
+      cursor: start + insertion.length,
+      historyIndex: undefined,
+      historyDraft: undefined,
+      insertSnapshot: state.insertSnapshot ?? { text: state.text, cursor: state.cursor },
+    },
+    handled: true,
+  };
+}
+
 export function handleComposerVim(state: ComposerVimState, key: string): ComposerVimResult {
   if (key === "\u001b" && state.mode === "visual") {
     return {
@@ -547,36 +736,20 @@ export function handleComposerVim(state: ComposerVimState, key: string): Compose
     };
   }
   if (key === "\u001b") {
-    const snapshot = state.mode === "insert" ? state.insertSnapshot : undefined;
-    const alreadyStored = snapshot && state.undo.at(-1)?.text === snapshot.text;
+    const finished = state.mode === "insert" ? finishComposerInsert(state) : state;
     return {
       state: {
-        ...clearCommand(state),
+        ...clearCommand(finished),
         mode: "normal",
         anchor: undefined,
         cursor: normalCursor(state.text, state.cursor),
         searchInput: undefined,
         insertSnapshot: undefined,
-        undo:
-          snapshot && snapshot.text !== state.text && !alreadyStored
-            ? [...state.undo, snapshot]
-            : state.undo,
-        redo: snapshot && snapshot.text !== state.text ? [] : state.redo,
       },
       handled: true,
     };
   }
-  if (state.mode === "insert") {
-    if (key === "\u0015" || key === "\u0017") {
-      const start =
-        key === "\u0015"
-          ? lineStart(state.text, state.cursor)
-          : wordObject({ ...state, cursor: Math.max(0, state.cursor - 1) }, false, false).start;
-      const text = state.text.slice(0, start) + state.text.slice(state.cursor);
-      return { state: { ...state, text, cursor: start }, handled: true };
-    }
-    return { state, handled: false };
-  }
+  if (state.mode === "insert") return handleComposerInsert(state, key);
   if (state.pending === "/" || state.pending === "?") {
     if (key === "\r" || key === "\n") {
       const query = state.searchInput || state.searchQuery || "";
@@ -984,21 +1157,12 @@ export function handleComposerVim(state: ComposerVimState, key: string): Compose
       };
     }
     if (key === "u" || key === "\u0012") {
-      let next = state;
-      for (let index = 0; index < count(state); index++) {
-        const source = key === "u" ? next.undo : next.redo;
-        const snapshot = source.at(-1);
-        if (!snapshot) break;
-        const current = { text: next.text, cursor: next.cursor };
-        next = {
-          ...remapSelection(next, snapshot.text),
-          ...snapshot,
-          undo: key === "u" ? source.slice(0, -1) : [...next.undo, current],
-          redo: key === "u" ? [...next.redo, current] : source.slice(0, -1),
-        };
-      }
-      return { state: clearCommand(next), handled: true };
+      return {
+        state: clearCommand(undoComposer(state, key === "\u0012", count(state))),
+        handled: true,
+      };
     }
+
     if (key === "r") return { state: { ...state, pending: "r" }, handled: true };
   }
   if (["f", "F", "t", "T", "g", "[", "]"].includes(key))
