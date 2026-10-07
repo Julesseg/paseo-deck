@@ -3667,6 +3667,7 @@ export class DeckTui {
             ? [
                 "Read-only: shared motions/counts/finds; yy/Y counted rows; y + motion/object.",
                 "v/V character/row selection; o/O swaps; gv restores; y/Y copies then Normal.",
+                "/ or ? opens bottom query; Enter confirms; Esc restores; n/N repeats; */# whole words.",
                 "Ctrl-U/D: Normal moves cursor with viewport; Visual/background preserves endpoints.",
                 "Ctrl-B/F or PageUp/Down pages; H/M/L targets visible rows. Only bare Normal G follows.",
                 "Normal gx opens cursor link; za folds; [t/]t turns; [e/]e errors, never retry.",
@@ -3689,6 +3690,7 @@ export class DeckTui {
                 "Insert: Ctrl-B/F character, Alt-B/F word, Home/End line; Ctrl-W/Alt-D delete word.",
                 "p/P reads system clipboard; Deck-owned line copies paste below/above.",
                 "Visual: v/V character/line; o/O swaps endpoints; gv restores/exchanges selection.",
+                "/ or ? opens bottom query; Enter confirms; Esc restores; n/N repeats; */# whole words.",
                 "Visual d/x c/s; D/X C/S/R whole lines; y/Y copies; u/U/~ case; r replaces.",
                 "Visual J/gJ joins; counted >/< shifts by two spaces; p replaces and copies removed text; P preserves clipboard.",
                 "Native Visual paste replaces once and enters Insert; Escape cancels pending input before exiting.",
@@ -4012,6 +4014,7 @@ export class DeckTui {
                 "Insert: Ctrl-B/F character, Alt-B/F word, Home/End line; Ctrl-W/Alt-D delete word.",
                 "p/P reads system clipboard; Deck-owned line copies paste below/above.",
                 "Visual: v/V character/line; o/O swaps endpoints; gv restores/exchanges selection.",
+                "/ or ? opens bottom query; Enter confirms; Esc restores; n/N repeats; */# whole words.",
                 "Visual d/x c/s; D/X C/S/R whole lines; y/Y copies; u/U/~ case; r replaces.",
                 "Visual J/gJ joins; counted >/< shifts by two spaces; p replaces and copies removed text; P preserves clipboard.",
                 "Native Visual paste replaces once and enters Insert; Escape cancels pending input before exiting.",

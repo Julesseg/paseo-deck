@@ -201,7 +201,7 @@ it("query sits below visible settings and remains clipped in narrow Main pane", 
     f.terminal.setSize(64, 20);
     await f.keys("xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx");
     expect(f.terminal.viewport().every((row) => [...row].length <= 64)).toBe(true);
-    expect(f.terminal.viewport().join("\n")).toContain("Think");
+    expect(f.terminal.viewport().join("\n")).toContain("[mt]");
   } finally {
     await f.close();
   }
@@ -274,6 +274,40 @@ it("streaming during unconfirmed Visual search and Sidebar focus preserve the se
     await f.keys("\u0013", "\u000b", "y");
     expect(f.clipboard()).toBe("al");
     expect(f.terminal.viewport().join("\n")).not.toContain("/ omega");
+  } finally {
+    await f.close();
+  }
+});
+
+it("Timeline backward confirmation and opposite repeat follow the confirmed direction", async () => {
+  const f = await fixture("alpha target beta target");
+  try {
+    await f.keys("\u000b", "g", "g", "j", "^", "?", "target", "\r", "y", "w");
+    expect(f.clipboard()).toBe("target");
+    await f.keys("N", "y", "w");
+    expect(f.clipboard()).toBe("target ");
+  } finally {
+    await f.close();
+  }
+});
+it("Composer Visual query confirmation retains its anchor and mode", async () => {
+  const f = await fixture();
+  try {
+    await f.keys(
+      "\u000b",
+      "\u001b",
+      "i",
+      "alpha target omega",
+      "\u001b",
+      "0",
+      "v",
+      "/",
+      "target",
+      "\r",
+    );
+    expect(f.app.state.composerMode).toBe("visual");
+    await f.keys("y");
+    expect(f.clipboard()).toBe("alpha t");
   } finally {
     await f.close();
   }
