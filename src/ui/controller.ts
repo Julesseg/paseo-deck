@@ -120,13 +120,8 @@ export type UiIntent =
   | { type: "timeline-repeat-find"; reverse: boolean }
   | { type: "timeline-viewport-motion"; key: "H" | "M" | "L"; count: number }
   | { type: "timeline-page"; direction: -1 | 1 }
-  | { type: "timeline-scroll-viewport"; direction: -1 | 1 }
-  | { type: "timeline-align"; position: "top" | "middle" | "bottom" }
-  | { type: "timeline-mark-set"; mark: string }
-  | { type: "timeline-mark-jump"; mark: string; linewise: boolean }
-  | { type: "timeline-jump-history"; direction: -1 | 1; count: number }
   | { type: "timeline-word-search"; key: "*" | "#" | "g*" | "g#"; count: number }
-  | { type: "timeline-visual"; selection: "character" | "line" | "block" }
+  | { type: "timeline-visual"; selection: "character" | "line" }
   | { type: "timeline-search-text"; query: string; direction: -1 | 1 }
   | { type: "timeline-repeat-search"; direction: -1 | 1 }
   | { type: "timeline-yank"; rows?: boolean }
@@ -418,8 +413,13 @@ export class DeckController {
       }
       return true;
     }
-    if ((data === "\u0015" || data === "\u0004") && !state.activeTerminalId)
+    if ((data === "\u0015" || data === "\u0004") && !state.activeTerminalId) {
+      if (state.focus === "timeline" && (this.#timelinePrefix || this.#timelineCount)) {
+        this.cancelPendingInput();
+        return true;
+      }
       return this.send({ type: "scroll-timeline", direction: data === "\u0015" ? -1 : 1 });
+    }
     if (
       state.focus === "tree" &&
       state.modal.type === "none" &&

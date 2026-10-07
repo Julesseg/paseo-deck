@@ -78,10 +78,8 @@ import {
   createTimelineBuffer,
   enterTimelineVisual,
   findTimelineCharacter,
-  jumpTimelineMark,
   leaveTimelineVisual,
   moveTimelineBuffer,
-  moveTimelineJump,
   moveTimelineViewport,
   osc52,
   pageTimelineBuffer,
@@ -91,7 +89,6 @@ import {
   searchTimelineBuffer,
   searchTimelineWord,
   selectTimelineTextRange,
-  setTimelineMark,
   type TimelineBufferState,
   type TimelineSelectionMode,
   timelineSelection,
@@ -732,19 +729,6 @@ class TimelineView implements Component {
     this.keepCursorAtEnd = key === "G" && count === 0 && this.buffer.mode === "normal";
     this.syncSelectedIndex();
   }
-  setMark(mark: string): void {
-    this.buffer = setTimelineMark(this.buffer, mark);
-  }
-  jumpMark(mark: string, linewise: boolean): void {
-    this.buffer = jumpTimelineMark(this.buffer, mark, linewise);
-    this.keepCursorAtEnd = false;
-    this.syncSelectedIndex();
-  }
-  jumpHistory(direction: -1 | 1, count: number): void {
-    this.buffer = moveTimelineJump(this.buffer, direction, count);
-    this.keepCursorAtEnd = false;
-    this.syncSelectedIndex();
-  }
   searchWord(key: "*" | "#" | "g*" | "g#", count: number): void {
     this.buffer = searchTimelineWord(this.buffer, key, count);
     this.keepCursorAtEnd = false;
@@ -825,6 +809,16 @@ class TimelineView implements Component {
       this.previousSelection = undefined;
       return false;
     }
+    const rangeStart = previous.anchor.range
+      ? this.resolveBufferAnchor(previous.anchor.range.start, layout, true)
+      : undefined;
+    const rangeEnd = previous.anchor.range
+      ? this.resolveBufferAnchor(previous.anchor.range.end, layout, true)
+      : undefined;
+    if (previous.anchor.range && (!rangeStart || !rangeEnd)) {
+      this.previousSelection = undefined;
+      return false;
+    }
     if (this.buffer.mode === "visual") {
       this.captureBufferAnchor();
       this.previousSelection = { buffer: this.buffer, anchor: this.bufferAnchor };
@@ -832,12 +826,13 @@ class TimelineView implements Component {
     }
     this.buffer = { ...previous.buffer, lines: this.buffer.lines, ...cursor, anchor };
     delete (this.buffer as { selectionRange?: unknown }).selectionRange;
-    if (previous.anchor.range) {
-      const start = this.resolveBufferAnchor(previous.anchor.range.start, layout, true);
-      const end = this.resolveBufferAnchor(previous.anchor.range.end, layout, true);
-      if (!start || !end) return false;
-      const from = offsetAt(this.buffer.lines, start);
-      const to = characterStep(this.buffer.lines.join("\n"), offsetAt(this.buffer.lines, end), 1);
+    if (rangeStart && rangeEnd) {
+      const from = offsetAt(this.buffer.lines, rangeStart);
+      const to = characterStep(
+        this.buffer.lines.join("\n"),
+        offsetAt(this.buffer.lines, rangeEnd),
+        1,
+      );
       this.buffer = { ...this.buffer, selectionRange: { start: from, end: to } };
     }
     this.keepCursorAtEnd = false;
@@ -886,7 +881,15 @@ class TimelineView implements Component {
       character === undefined
         ? moveTimelineBuffer(original, key, count)
         : findTimelineCharacter(original, key as "f" | "F" | "t" | "T", character, count || 1);
-    if (target.line === original.line && target.column === original.column) return undefined;
+    if (
+      target.line === original.line &&
+      target.column === original.column &&
+      !(
+        ["e", "E", "ge", "gE", "$", "g$", "g_"].includes(key) &&
+        (original.lines[original.line]?.length ?? 0) > 0
+      )
+    )
+      return undefined;
     if (["j", "k", "gj", "gk", "gg", "G", "{", "}", "[[", "]]", "[]", "]["].includes(key)) {
       return {
         text: this.copyRows(
@@ -2879,6 +2882,14 @@ export class DeckTui {
           return { consume: true };
         }
         if (data === "\u0015" || data === "\u0004") {
+          if (
+            this.state.focus === "timeline" &&
+            !this.localOverlayKey &&
+            this.state.modal.type === "none"
+          ) {
+            this.controller.handleKey(data);
+            return { consume: true };
+          }
           this.handleControllerIntent({
             type: "scroll-timeline",
             direction: data === "\u0015" ? -1 : 1,
@@ -3258,20 +3269,8 @@ export class DeckTui {
   }
 
   private handleControllerIntent(intent: UiIntent): void {
-    if (intent.type === "timeline-mark-set") {
-      this.timeline.setMark(intent.mark);
-      return;
-    }
-    if (
-      intent.type === "timeline-mark-jump" ||
-      intent.type === "timeline-jump-history" ||
-      intent.type === "timeline-word-search"
-    ) {
-      if (intent.type === "timeline-mark-jump")
-        this.timeline.jumpMark(intent.mark, intent.linewise);
-      else if (intent.type === "timeline-jump-history")
-        this.timeline.jumpHistory(intent.direction, intent.count);
-      else this.timeline.searchWord(intent.key, intent.count);
+    if (intent.type === "timeline-word-search") {
+      this.timeline.searchWord(intent.key, intent.count);
       this.revealTimelineCursor();
       this.pauseTimeline();
       this.renderScheduler.requestImmediate();
@@ -3317,26 +3316,6 @@ export class DeckTui {
       this.timeline.pageText(intent.direction, amount + 1);
       this.transcript.scrollBy(intent.direction * amount);
       this.revealTimelineCursor();
-      this.pauseTimeline();
-      this.renderScheduler.requestImmediate();
-      return;
-    }
-    if (intent.type === "timeline-scroll-viewport") {
-      this.transcript.scrollBy(intent.direction);
-      this.pauseTimeline();
-      this.renderScheduler.requestImmediate();
-      return;
-    }
-    if (intent.type === "timeline-align") {
-      const position = this.timeline.cursorBodyLine();
-      const height = Math.max(1, this.transcript.viewportHeight);
-      const offset =
-        intent.position === "top"
-          ? 0
-          : intent.position === "middle"
-            ? Math.floor(height / 2)
-            : height - 1;
-      this.transcript.scrollTo(Math.max(0, position - offset + 1), { disableFollow: true });
       this.pauseTimeline();
       this.renderScheduler.requestImmediate();
       return;
@@ -3404,7 +3383,7 @@ export class DeckTui {
       if (intent.action === "yank") {
         if (value === undefined)
           this.emit({ type: "notify", message: "No text object at timeline cursor." });
-        else void this.copyTimelineTarget(value);
+        else if (value) void this.copyTimelineTarget(value);
       } else this.renderScheduler.requestImmediate();
       return;
     }

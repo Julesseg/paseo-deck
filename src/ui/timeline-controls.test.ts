@@ -280,3 +280,106 @@ it("previous row selections retain their content extent after reflow and copies 
     await f.close();
   }
 });
+it("consumes native paste and editing input without Composer or clipboard side effects", async () => {
+  const f = await fixture("safe text");
+  try {
+    await f.keys("i", "draft");
+    await f.keys(
+      "\u000b",
+      "g",
+      "g",
+      "j",
+      "^",
+      "\u001b[200~iyyp\r\nx\u001b[201~",
+      "d",
+      "c",
+      "r",
+      "x",
+      "p",
+      "P",
+      "u",
+      "\u0012",
+      "J",
+      "~",
+      ">",
+      "<",
+    );
+    expect(f.clipboard()).toBe("outside");
+    expect(f.app.state.composer.drafts.a).toBe("draft");
+    expect(f.app.state.focus).toBe("timeline");
+    expect(f.app.state.composerMode).toBe("insert");
+  } finally {
+    await f.close();
+  }
+});
+it("empty Timeline bare G follows future output while numbered G stays paused", async () => {
+  const f = await fixture();
+  try {
+    await f.keys("\u000b", "1", "G");
+    expect(f.app.state.timelineNavigation.a?.following).toBe(false);
+    await f.keys("G");
+    expect(f.app.state.timelineNavigation.a?.following).toBe(true);
+    f.gateway.emitTimeline("a", {
+      type: "event",
+      agentId: "a",
+      event: {
+        epoch: "e",
+        sequence: 1,
+        item: { id: "new", type: "user-message", text: "future output" },
+      },
+    });
+    await f.terminal.waitForRender();
+    expect(f.terminal.viewport().join("\n")).toContain("future output");
+    expect(f.app.state.timelineNavigation.a?.following).toBe(true);
+  } finally {
+    await f.close();
+  }
+});
+it("failed counted finds and missing objects preserve cursor, selection, mode and clipboard", async () => {
+  const f = await fixture("a😀b😀c");
+  try {
+    await f.keys("\u000b", "g", "g", "j", "^");
+    const cursor = f.terminal.viewportCursor();
+    for (const keys of [
+      ["3", "f", "😀"],
+      ["3", "y", "f", "😀"],
+      ["y", "i", "q"],
+      ["y", "i", "b"],
+      ["y", "%"],
+    ]) {
+      await f.keys(...keys);
+      expect(f.terminal.viewportCursor()).toEqual(cursor);
+      expect(f.clipboard()).toBe("outside");
+    }
+    await f.keys("l", "v", "y");
+    expect(f.clipboard()).toBe("😀");
+    await f.keys("g", "v", "3", "f", "😀", "y");
+    expect(f.clipboard()).toBe("😀");
+  } finally {
+    await f.close();
+  }
+});
+it("unsupported counted half-pages cancel instead of falling back to uncounted scrolling", async () => {
+  const f = await fixture(Array.from({ length: 40 }, (_, i) => `count ${i}`).join("\n\n"));
+  try {
+    await f.keys("\u000b", "g", "g", "j", "^");
+    const before = f.terminal.viewport();
+    await f.keys("2", "\u0004");
+    expect(f.terminal.viewport()).toEqual(before);
+    await f.keys("l", "v", "y");
+    expect(f.clipboard()).toBe("o");
+  } finally {
+    await f.close();
+  }
+});
+it("inclusive row-end yanks copy the final character while empty backward ranges preserve clipboard", async () => {
+  const f = await fixture("last");
+  try {
+    await f.keys("\u000b", "g", "g", "j", "$", "y", "$");
+    expect(f.clipboard()).toBe("t");
+    await f.keys("^", "y", "^");
+    expect(f.clipboard()).toBe("t");
+  } finally {
+    await f.close();
+  }
+});
