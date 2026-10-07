@@ -64,7 +64,7 @@ These work in composer and timeline Normal/Visual modes unless the context colum
 | Context | Keys | Action |
 | --- | --- | --- |
 | Both | `h`, `l`, `Left`, `Right`; composer also `Backspace`, `Space` | Left/right by character. |
-| Both | `j`, `k`, `Down`, `Up`; composer also `Ctrl-N`, `Ctrl-P` | Down/up by line, preserving the target column. |
+| Both | `j`, `k`, `Down`, `Up`; composer history uses uncounted standalone Normal `j/k` at logical boundaries | Down/up by line, preserving the target column. |
 | Both | `0`, `^`, `$`, `g0`, `g^`, `g$`, `g_`, `\|` | Line start, first nonblank, end, display-line variants, last nonblank, or counted column. |
 | Both | `+`, `-`, `_`, `Enter` | Next/previous line at first nonblank, counted line, or next line via Enter. |
 | Both | `w`, `W`, `b`, `B`, `e`, `E`, `ge`, `gE` | Word and whitespace-delimited WORD starts/ends. |
@@ -104,9 +104,10 @@ These work in composer and timeline Normal/Visual modes unless the context colum
 | Composer | `d{motion}`, `c{motion}`, `y{motion}`, `dd`, `cc`, `yy`, `Y`, `di{object}`, `da{object}`, `ci{object}`, `ca{object}`, `yi{object}`, `ya{object}` | Delete, change, or yank by motion, line, or object. |
 | Composer | Visual `d`, `x`, `c`, `y` | Delete, change, or yank selection. |
 | Composer | `r{char}`, `p`, `P`, `u`, `Ctrl-R`, `J`, `~` | Replace a character, paste current system clipboard, undo/redo, join lines, or toggle case. |
-| Composer Insert | Type, `Enter`, `Ctrl-U`, `Ctrl-W`, `Esc` | Enter text/newline, delete to line start/previous word, or return to Normal. |
-| Composer Insert | `Ctrl-P`, `Ctrl-N` | Previous/next prompt from history. |
-| Composer Insert | `PageUp`, `PageDown`, `Ctrl-Up`, `Ctrl-Down` | Scroll the background timeline. |
+| Composer Insert | Type, `Enter`/`Alt-Enter`, `Ctrl-W`, `Esc` | Enter text/newline, delete previous word, or finish the Insert undo group and return to Normal. |
+| Composer Insert | `Up`, `Down` | Move displayed rows, then reach outer line start/end before recalling older/newer prompts. Restore the saved unfinished draft and cursor beyond newest. |
+| Composer Insert | `Ctrl-Z`, distinguishable `Ctrl-Shift-Z` | Shared per-draft undo/redo with Normal `u`/`Ctrl-R`; native paste is one operation. |
+| Composer Insert | `Tab`/`Shift-Tab`, `Ctrl-N`, `Ctrl-X`, `Ctrl-T`, page keys and modified vertical arrows | No local action. `Ctrl-P` opens the palette; `Ctrl-U`/`Ctrl-D` scroll Timeline globally. |
 | Composer Normal/Visual | `Esc` | Cancel a prefix or selection and return to Normal. |
 | Timeline Visual | `Esc` | Clear selection and return to Normal. |
 | Timeline Normal | `Esc` | Focus composer. |
@@ -125,7 +126,7 @@ These work in composer and timeline Normal/Visual modes unless the context colum
 | Permission dialog | `a`, `d`, `h`, `l`, `Left`, `Right`, `r`, `Esc` | Allow/deny, previous/next request, retry failed decision, close. |
 | Notifications | `j`, `k`, `Down`, `Up`, `Enter`, `Esc` | Move selection, open, close. |
 | Timeline search overlay | Type, `Ctrl-N`, `Ctrl-P`, `Enter`, `Esc` | Enter query, next/previous result, choose next result, cancel. |
-| Palette | Type, `Up`, `Down`, `Enter`, `Esc` | Filter, move selection, run command, close. |
+| Choice pickers (palette, New tab, settings) | Type, `Down`/`Ctrl-J`, `Up`/`Ctrl-K`, `Enter`, `Esc` | Edit query, select without wrapping, apply enabled result, cancel. Legacy LF selects next; CR or distinguishable enhanced Enter confirms. |
 | Help overlay | `?`, `Esc` | Close help and return to the previous view or overlay. |
 | Confirmation, new-tab, draft-setting, mode, thinking, error-details and other dialogs | Type or `Up`/`Down` where offered, `Enter`, `Esc` | Filter/edit/select/confirm or cancel according to the dialog. |
 
@@ -146,3 +147,11 @@ Timeline is read-only. Shared motions/counts/finds operate on displayed rows. `_
 `Ctrl-U`/`Ctrl-D` moves the Normal cursor with the viewport and preserves its screen row where possible. Visual and background half-page scrolling preserves saved endpoints even offscreen. Refocusing preserves that viewport; the next motion reveals its destination. `Ctrl-B`/`Ctrl-F` and page keys use a small overlap; Visual paging moves its active endpoint. `H`/`M`/`L` targets visible rows. Every manual motion/scroll pauses following; only bare Normal `G` resumes, including an empty Timeline.
 
 Normal `gx` opens the cursor link, `za` folds the entry, `[t`/`]t` navigates turns and `[e`/`]e` navigates errors without retrying. Escape cancels pending input first, otherwise leaves Visual or restores the saved Composer. Editing, native paste, entry objects, marks/jumps, Visual Block, percentage jumps, `+`/`-`/`|`/`gm`/`gM`, `zz`/`zt`/`zb` and fine-scroll `Ctrl-E`/`Ctrl-Y` are excluded.
+
+## Single-line fields
+
+Picker queries, Sidebar name filter and Rename use ordinary text editing. Left/Right and Ctrl-B/Ctrl-F move by character; Alt-Left/Right, Ctrl-Left/Right and Alt-B/Alt-F move by word. Home/End, Ctrl-Home/End and Ctrl-A/Ctrl-E move to field boundaries. Backspace/Shift-Backspace and Delete/Shift-Delete delete a character; Ctrl-W/Alt-Backspace delete the previous word and Alt-D/Alt-Delete the next word.
+
+Ctrl-Z undoes locally; distinguishable Ctrl-Shift-Z redoes locally, with no single-line fallback chord. Native paste inserts literal text, converting each line break to a space (CRLF counts once), as one undo step. Ctrl-Y/Alt-Y private paste history is removed.
+
+Deck globals take precedence. Ctrl-K focuses Timeline from ordinary fields and selects the previous result inside searchable Choice pickers. Caret movement preserves the highlighted result. Disabled results remain visible with reasons and cannot execute; empty results cannot execute. Clearing a query leaves the applied setting unchanged. Reconfirming a setting closes without resetting dependent settings; palette and New tab entries still execute. Escape discards unapplied edits and restores the origin.

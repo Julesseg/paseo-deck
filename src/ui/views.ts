@@ -6,13 +6,11 @@ import {
   type Focusable,
   getOsc8LinkAtColumn,
   HStack,
-  Input,
   Markdown,
   matchesKey,
   type OverlayHandle,
   ScrollView,
   type SelectItem,
-  SelectList,
   Spacer,
   sliceByColumn,
   type Terminal,
@@ -41,6 +39,7 @@ import {
   resolvedCommands,
 } from "./commands.js";
 import {
+  applyComposerInsertText,
   applyComposerNativePaste,
   applyComposerPaste,
   type ComposerVimState,
@@ -49,6 +48,7 @@ import {
   handleComposerVim,
   offsetToPosition,
   positionToOffset,
+  recallComposerPrompt,
   setComposerViewport,
   syncComposerVim,
 } from "./composer-vim.js";
@@ -64,6 +64,7 @@ import {
 } from "./layout.js";
 import { logicalWordOffset, offsetAt, positionAt } from "./logical-text.js";
 import { type RenderClock, RenderScheduler } from "./render-scheduler.js";
+import { choiceNavigation, SingleLineField } from "./single-line-field.js";
 import { TerminalLifecycle } from "./terminal.js";
 import { characterOffsets, characterStep } from "./text-buffer.js";
 import {
@@ -1859,38 +1860,60 @@ class ComposerView implements Component, Focusable {
       return;
     }
     if (data.startsWith("\u001b[200~")) {
-      this.editor.handleInput(data);
-      this.vim = syncComposerVim(this.vim, this.editor.getText(), this.editor.getCursor());
+      const payload = data.slice(6, data.endsWith("\u001b[201~") ? -6 : undefined);
+      this.applyVimResult({
+        state: applyComposerInsertText(
+          syncComposerVim(this.vim, this.editor.getText(), this.editor.getCursor()),
+          payload,
+          true,
+        ),
+        handled: true,
+      });
       return;
     }
     if (this.state.composerMode === "visual" || this.state.composerMode === "normal") {
       this.handleVimInput(data);
       return;
     }
-    // pi-tui's editor treats Enter as submit. In Insert mode the composer is
-    // a multiline buffer, so normalize the terminal's Enter byte to the
-    // editor's explicit newline path. Normal mode owns submission instead.
-    if (
-      data === "\r" ||
-      data === "\n" ||
-      matchesKey(data, "alt+enter") ||
-      matchesKey(data, "shift+enter") ||
-      data === "\u001b\r"
-    ) {
-      this.editor.handleInput("\n");
-      this.vim = syncComposerVim(this.vim, this.editor.getText(), this.editor.getCursor());
+    const current = syncComposerVim(this.vim, this.editor.getText(), this.editor.getCursor());
+    if (matchesKey(data, "up") || matchesKey(data, "down")) {
+      const up = matchesKey(data, "up");
+      if ((up && current.cursor === 0) || (!up && current.cursor === current.text.length)) {
+        this.applyVimResult({
+          state: recallComposerPrompt(current, this.sentPrompts(), up ? -1 : 1),
+          handled: true,
+        });
+      } else {
+        this.editor.handleInput(up ? "\u001b[A" : "\u001b[B");
+        this.vim = syncComposerVim(current, this.editor.getText(), this.editor.getCursor());
+      }
       return;
     }
-    const result = handleComposerVim(
-      syncComposerVim(this.vim, this.editor.getText(), this.editor.getCursor()),
-      data,
-    );
-    if (result.handled) {
-      this.applyVimResult(result);
-      return;
-    }
-    this.editor.handleInput(data);
-    this.vim = syncComposerVim(this.vim, this.editor.getText(), this.editor.getCursor());
+    const bindings: readonly [string, readonly Parameters<typeof matchesKey>[1][]][] = [
+      ["insert-left", ["left", "ctrl+b"]],
+      ["insert-right", ["right", "ctrl+f"]],
+      ["insert-word-left", ["alt+left", "ctrl+left", "alt+b"]],
+      ["insert-word-right", ["alt+right", "ctrl+right", "alt+f"]],
+      ["insert-home", ["home", "ctrl+home", "ctrl+a"]],
+      ["insert-end", ["end", "ctrl+end", "ctrl+e"]],
+      ["insert-backspace", ["backspace", "shift+backspace"]],
+      ["insert-delete", ["delete", "shift+delete"]],
+      ["insert-delete-word-left", ["ctrl+w", "alt+backspace"]],
+      ["insert-delete-word-right", ["alt+d", "alt+delete"]],
+      ["insert-newline", ["enter", "alt+enter", "shift+enter", "ctrl+j"]],
+      ["insert-redo", ["ctrl+shift+z"]],
+      ["\u001a", ["ctrl+z"]],
+    ];
+    const key =
+      bindings.find(([, chords]) => chords.some((chord) => matchesKey(data, chord)))?.[0] ??
+      (data === "\n" || data === "\u001b\r" ? "insert-newline" : data);
+    this.applyVimResult(handleComposerVim(current, key));
+  }
+
+  private sentPrompts(): readonly string[] {
+    return this.resourceKey.startsWith("session:") && this.selectedAgentId
+      ? (this.state.composer.histories[this.selectedAgentId] ?? [])
+      : [];
   }
 
   private handleVimInput(data: string): void {
@@ -1904,6 +1927,19 @@ class ComposerView implements Component, Focusable {
       0,
       this.visibleEditorLines,
     );
+    if (
+      current.mode === "normal" &&
+      !current.pending &&
+      !current.count &&
+      ((data === "k" && offsetToPosition(current.text, current.cursor).line === 0) ||
+        (data === "j" && !current.text.slice(current.cursor).includes("\n")))
+    ) {
+      this.applyVimResult({
+        state: recallComposerPrompt(current, this.sentPrompts(), data === "k" ? -1 : 1),
+        handled: true,
+      });
+      return;
+    }
     if (data === "\r" && current.mode === "normal" && !current.pending && !current.count) {
       this.editor.onSubmit?.(current.text);
       return;
@@ -2016,9 +2052,14 @@ class ComposerView implements Component, Focusable {
   private placeCursor(target: { line: number; col: number }): void {
     const current = this.editor.getCursor();
     if (current.line === target.line && current.col === target.col) return;
-    const vertical = target.line - current.line;
-    const arrow = vertical < 0 ? "\u001b[A" : "\u001b[B";
-    for (let index = 0; index < Math.abs(vertical); index++) this.editor.handleInput(arrow);
+    const arrow = target.line < current.line ? "\u001b[A" : "\u001b[B";
+    // Arrows traverse displayed rows; a logical line can span several of them.
+    for (
+      let remaining = this.editor.getText().length + 1;
+      this.editor.getCursor().line !== target.line && remaining > 0;
+      remaining--
+    )
+      this.editor.handleInput(arrow);
     this.editor.handleInput("\u0001");
     const prefix = (this.editor.getText().split("\n")[target.line] ?? "").slice(0, target.col);
     for (let index = 0; index < characterOffsets(prefix).length - 1; index++)
@@ -2285,7 +2326,7 @@ class Dialog implements Component, Focusable {
 
 class InputDialog implements Component, Focusable {
   focused = false;
-  private readonly input = new Input();
+  private readonly input = new SingleLineField();
   constructor(
     private readonly title: string,
     value: string,
@@ -2352,7 +2393,7 @@ class CreationPromptDialog implements Component, Focusable {
 
 class SearchDialog implements Component, Focusable {
   focused = false;
-  private readonly input = new Input();
+  private readonly input = new SingleLineField();
   constructor(
     private readonly result: () => string,
     private readonly change: (value: string) => void,
@@ -2457,46 +2498,9 @@ function centeredChoicePickerWidth(
   return Math.min(Math.max(1, terminalColumns - 2), Math.min(64, desired));
 }
 
-class ChoiceDialog implements Component {
-  private readonly list: SelectList;
-  constructor(
-    title: string,
-    items: SelectItem[],
-    choose: (value: string) => void,
-    cancel: () => void,
-    maxVisible: number,
-    preferredValue: string | undefined,
-    private readonly theme: DeckTheme,
-  ) {
-    this.list = new SelectList(items, maxVisible, selectTheme(theme));
-    if (preferredValue !== undefined) {
-      const index = items.findIndex((item) => item.value === preferredValue);
-      if (index >= 0) this.list.setSelectedIndex(index);
-    }
-    this.list.onSelect = (item) => choose(item.value);
-    this.list.onCancel = cancel;
-    this.title = title;
-  }
-  private readonly title: string;
-  invalidate(): void {
-    this.list.invalidate();
-  }
-  render(width: number): string[] {
-    return framedChoicePickerLines(
-      this.title,
-      this.list.render(Math.max(1, width - 2)),
-      width,
-      this.theme,
-    );
-  }
-  handleInput(data: string): void {
-    this.list.handleInput(data);
-  }
-}
-
-class SearchableChoiceDialog implements Component, Focusable {
+export class SearchableChoiceDialog implements Component, Focusable {
   focused = false;
-  private readonly query: Input;
+  private readonly query: SingleLineField;
   private selected = 0;
   constructor(
     private readonly title: string,
@@ -2508,7 +2512,7 @@ class SearchableChoiceDialog implements Component, Focusable {
     private readonly theme: DeckTheme = new DeckTheme(defaultTerminalAppearance),
     private readonly desktopNewTabStyle = false,
   ) {
-    this.query = new Input({ prompt: desktopNewTabStyle ? "" : "Filter: " });
+    this.query = new SingleLineField({ prompt: desktopNewTabStyle ? "" : "Filter: " });
     const index =
       preferredValue === undefined ? -1 : items.findIndex((item) => item.value === preferredValue);
     if (index >= 0) this.selected = index;
@@ -2519,6 +2523,7 @@ class SearchableChoiceDialog implements Component, Focusable {
   render(width: number): string[] {
     this.query.focused = this.focused;
     const matches = this.matches();
+    this.selected = Math.max(0, Math.min(this.selected, matches.length - 1));
     const start = Math.max(
       0,
       Math.min(this.selected - Math.floor(this.maxVisible / 2), matches.length - this.maxVisible),
@@ -2589,15 +2594,16 @@ class SearchableChoiceDialog implements Component, Focusable {
       return;
     }
     const matches = this.matches();
-    if (matchesKey(data, "up") || data === "\u000b") this.selected = Math.max(0, this.selected - 1);
-    else if (matchesKey(data, "down"))
-      this.selected = Math.min(Math.max(0, matches.length - 1), this.selected + 1);
-    else if (matchesKey(data, "enter")) {
+    const direction = choiceNavigation(data);
+    if (direction !== undefined)
+      this.selected = Math.max(0, Math.min(matches.length - 1, this.selected + direction));
+    else if (data !== "\n" && matchesKey(data, "enter")) {
       const item = matches[this.selected];
       if (item && !item.disabled) this.choose(item.value);
     } else {
+      const before = this.query.getValue();
       this.query.handleInput(data);
-      this.selected = 0;
+      if (before !== this.query.getValue()) this.selected = 0;
     }
   }
   private matches(): readonly CreationChoice[] {
@@ -2632,7 +2638,7 @@ function fuzzyChoiceScore(label: string, query: string): number {
 
 class CommandPaletteDialog implements Component, Focusable {
   focused = false;
-  private readonly query = new Input();
+  private readonly query = new SingleLineField();
   private selected = 0;
   constructor(
     private readonly commands: () => readonly ResolvedCommand[],
@@ -2646,14 +2652,16 @@ class CommandPaletteDialog implements Component, Focusable {
   render(width: number): string[] {
     this.query.focused = this.focused;
     const matches = this.matches();
+    this.selected = Math.max(0, Math.min(this.selected, matches.length - 1));
+    const start = Math.max(0, this.selected - 8);
     return [
       this.theme.clipOwnedLabel("Command palette", width),
       ...this.query.render(width),
-      ...matches.slice(0, 9).map((command, index) => {
+      ...matches.slice(start, start + 9).map((command, index) => {
         const shortcut = command.shortcuts.join(" / ");
         const suffix = command.disabledReason ? ` - ${command.disabledReason}` : "";
         return this.theme.clipOwnedLabel(
-          `${index === this.selected ? "> " : "  "}${command.label}  ${shortcut}${suffix}`,
+          `${start + index === this.selected ? "> " : "  "}${command.label}  ${shortcut}${suffix}`,
           width,
         );
       }),
@@ -2665,15 +2673,16 @@ class CommandPaletteDialog implements Component, Focusable {
       return;
     }
     const matches = this.matches();
-    if (matchesKey(data, "up") || data === "\u000b") this.selected = Math.max(0, this.selected - 1);
-    else if (matchesKey(data, "down"))
-      this.selected = Math.min(Math.max(0, matches.length - 1), this.selected + 1);
-    else if (matchesKey(data, "enter")) {
+    const direction = choiceNavigation(data);
+    if (direction !== undefined)
+      this.selected = Math.max(0, Math.min(matches.length - 1, this.selected + direction));
+    else if (data !== "\n" && matchesKey(data, "enter")) {
       const command = matches[this.selected];
       if (command && !command.disabledReason) this.choose(command.id);
     } else {
+      const before = this.query.getValue();
       this.query.handleInput(data);
-      this.selected = 0;
+      if (before !== this.query.getValue()) this.selected = 0;
     }
   }
   private matches(): readonly ResolvedCommand[] {
@@ -2839,7 +2848,10 @@ export class DeckTui {
               "mode",
               "thinking",
             ].includes(this.state.modal.type);
-          if (data === "\u000b" && picker) return undefined;
+          const creationPicker =
+            this.state.modal.type === "create-agent" &&
+            !["prompt", "confirm"].includes(this.state.modal.step);
+          if (data === "\u000b" && (picker || creationPicker)) return undefined;
           const destination = data === "\u0013" ? "tree" : "timeline";
           const available =
             destination === "tree" ||
@@ -2889,8 +2901,16 @@ export class DeckTui {
           if (this.state.focus === "composer") this.composer.handleInput(data);
           return { consume: true };
         }
-        if (this.state.focus === "composer" && !commandForKey(this.state, data)) {
-          if (!this.composer.hasPendingCommand && this.controller.handleKey(data))
+        if (
+          this.state.focus === "composer" &&
+          ((data === "\u001b" && this.state.composerMode !== undefined) ||
+            !commandForKey(this.state, data))
+        ) {
+          if (
+            !(data === "\u001b" && this.state.composerMode !== undefined) &&
+            !this.composer.hasPendingCommand &&
+            this.controller.handleKey(data)
+          )
             return { consume: true };
           this.composer.handleInput(data);
           return { consume: true };
@@ -3604,6 +3624,10 @@ export class DeckTui {
                 "i/a/I/A/o/O Insert; x/X s/S D/C; d/c/y + motion; dd/cc/yy/Y lines.",
                 "i/a objects: w/W s/p q nearest quote; b nearest bracket; explicit delimiters.",
                 "r replaces; J joins; ~ toggles case; u/Ctrl-R undo/redo. No counted objects.",
+                "Uncounted j/k recalls at logical boundaries; counted/operator/Visual stays in draft.",
+                "Insert: arrows move wrapped rows, reach outer start/end, then recall history.",
+                "Insert: Enter/Alt-Enter newline; Ctrl-Z/Ctrl-Shift-Z shares draft undo; Esc finishes group.",
+                "Insert: Ctrl-B/F character, Alt-B/F word, Home/End line; Ctrl-W/Alt-D delete word.",
                 "p/P reads system clipboard; Deck-owned line copies paste below/above.",
                 "Visual: v/V character/line; o/O swaps endpoints; gv restores/exchanges selection.",
                 "Visual d/x c/s; D/X C/S/R whole lines; y/Y copies; u/U/~ case; r replaces.",
@@ -3941,6 +3965,10 @@ export class DeckTui {
                 "i/a/I/A/o/O Insert; x/X s/S D/C; d/c/y + motion; dd/cc/yy/Y lines.",
                 "i/a objects: w/W s/p q nearest quote; b nearest bracket; explicit delimiters.",
                 "r replaces; J joins; ~ toggles case; u/Ctrl-R undo/redo. No counted objects.",
+                "Uncounted j/k recalls at logical boundaries; counted/operator/Visual stays in draft.",
+                "Insert: arrows move wrapped rows, reach outer start/end, then recall history.",
+                "Insert: Enter/Alt-Enter newline; Ctrl-Z/Ctrl-Shift-Z shares draft undo; Esc finishes group.",
+                "Insert: Ctrl-B/F character, Alt-B/F word, Home/End line; Ctrl-W/Alt-D delete word.",
                 "p/P reads system clipboard; Deck-owned line copies paste below/above.",
                 "Visual: v/V character/line; o/O swaps endpoints; gv restores/exchanges selection.",
                 "Visual d/x c/s; D/X C/S/R whole lines; y/Y copies; u/U/~ case; r replaces.",
@@ -4262,18 +4290,18 @@ export class DeckTui {
           this.theme,
         );
       } else {
-        component = new ChoiceDialog(
+        component = new SearchableChoiceDialog(
           titleForModal(modal.type),
           agentChoices(
             this.state,
             modal.type === "mode" || modal.type === "thinking" ? modal.type : "mode",
-          ),
+          ).map((item) => ({ ...item, disabled: false })),
           (choice) => this.emit({ type: "create-choice", choice }),
           close,
-          this.choicePickerMaxVisible(false),
           this.state.directory.agents.find((agent) => agent.id === modal.agentId)?.[
             modal.type === "mode" ? "modeId" : "thinkingLevel"
           ],
+          this.choicePickerMaxVisible(true),
           this.theme,
         );
       }
