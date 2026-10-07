@@ -45,6 +45,18 @@ Keys depend on the active region. In composer and timeline Normal or Visual mode
 | Terminal Normal | `gk` | Terminate active terminal after confirmation. |
 | Command palette only | Theme, terminal creation, and other listed actions | Run actions without a dedicated direct key. |
 
+## Reviewed Composer Normal
+
+Composer motions use logical lines, including `gj/gk`, `g0/g^/g$` and counted inclusive `g_`. `_` is exactly `^`, also after `d/c/y`. Bare `%` matches delimiters; numbered `%`, viewport motions, marks/jumps, column motions and `g*/g#` are excluded from Composer.
+
+`h/l` (arrows, Backspace/Space), `j/k` (arrows), `w/W/b/B/e/E/ge/gE`, `0/^/$`, `gg/G`, sentence `(`/`)`, paragraph `{`/`}`, section `[[/]]/[]/][` and `f/F/t/T` with `;/,` repeats also work after `d/c/y`. Operator and motion counts multiply (`2d3w`), and each edit is one undo step. Unsupported count combinations cancel.
+
+Use `i/a/I/A/o/O` to enter Insert; `x/X/s/S/D/C`, `d/c/y` plus a motion/object, `dd/cc/yy/Y`, `r`, `J`, `~`, `p/P`, `u/Ctrl-R` edit or copy. `J` joins two lines by default; a count names the number of lines. `r` cannot cross a logical newline.
+
+Objects are `iw/aw`, `iW/aW`, `is/as`, `ip/ap`, explicit quote/bracket pairs, `iq/aq` (nearest complete quote pair) and `ib/ab` (nearest complete bracket pair), even outside every pair. Plain `b` remains backward-word; `iB/aB` remains braces. Objects do not accept counts. Missing targets preserve the draft, cursor, mode and clipboard; complete empty pairs can be changed.
+
+Delete, change and yank write the shared system clipboard. Every `p/P` reads its current value; failures are reported without a private-register fallback. Only a successful Deck-owned linewise value retains linewise type, inserting complete lines below/above. External text is characterwise, including multiline text.
+
 ## Shared Vim buffer motions
 
 These work in composer and timeline Normal/Visual modes unless the context column says otherwise. The timeline moves across rendered lines; the composer moves across editable text. Some `g` screen-line variants share the same rendered-line movement in the timeline.
@@ -91,7 +103,7 @@ These work in composer and timeline Normal/Visual modes unless the context colum
 | Composer | `x`, `X`, `s`, `S`, `D`, `C` | Delete/substitute a character or line, or delete/change through line end. |
 | Composer | `d{motion}`, `c{motion}`, `y{motion}`, `dd`, `cc`, `yy`, `Y`, `di{object}`, `da{object}`, `ci{object}`, `ca{object}`, `yi{object}`, `ya{object}` | Delete, change, or yank by motion, line, or object. |
 | Composer | Visual `d`, `x`, `c`, `y` | Delete, change, or yank selection. |
-| Composer | `r{char}`, `p`, `P`, `u`, `Ctrl-R`, `J`, `~` | Replace a character, put the register, undo/redo, join lines, or toggle case. |
+| Composer | `r{char}`, `p`, `P`, `u`, `Ctrl-R`, `J`, `~` | Replace a character, paste current system clipboard, undo/redo, join lines, or toggle case. |
 | Composer Insert | Type, `Enter`, `Ctrl-U`, `Ctrl-W`, `Esc` | Enter text/newline, delete to line start/previous word, or return to Normal. |
 | Composer Insert | `Ctrl-P`, `Ctrl-N` | Previous/next prompt from history. |
 | Composer Insert | `PageUp`, `PageDown`, `Ctrl-Up`, `Ctrl-Down` | Scroll the background timeline. |

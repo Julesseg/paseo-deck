@@ -1,9 +1,5 @@
-import {
-  createTimelineBuffer,
-  findTimelineCharacter,
-  moveTimelineBuffer,
-  timelineTextObjectRange,
-} from "./timeline-buffer.js";
+import { logicalTextObjectRange, logicalWordOffset, moveLogicalText } from "./logical-text.js";
+import { characterStep, findTextCharacter, isCharacter } from "./text-buffer.js";
 
 export type ComposerVimMode = "normal" | "insert" | "visual";
 export type ComposerVisualKind = "character" | "line" | "block";
@@ -16,8 +12,7 @@ export interface ComposerVimState {
   readonly pending: string;
   readonly count: string;
   readonly operatorCount: number;
-  readonly register: string;
-  readonly registerKind: "character" | "line" | "block";
+  readonly operatorCountExplicit?: boolean;
   readonly undo: readonly ComposerSnapshot[];
   readonly redo: readonly ComposerSnapshot[];
   readonly goalColumn?: number | undefined;
@@ -28,9 +23,6 @@ export interface ComposerVimState {
   readonly insertSnapshot?: ComposerSnapshot | undefined;
   readonly viewportTop?: number;
   readonly viewportHeight?: number;
-  readonly marks: Readonly<Record<string, number>>;
-  readonly jumpHistory: readonly number[];
-  readonly jumpIndex: number;
 }
 
 interface ComposerSnapshot {
@@ -42,24 +34,21 @@ export interface ComposerVimResult {
   readonly state: ComposerVimState;
   readonly handled: boolean;
   readonly yank?: string;
+  readonly copy?: { text: string; kind: "character" | "line" };
+  readonly paste?: { before: boolean; count: number };
 }
 
 export function createComposerVim(text = "", cursor = 0): ComposerVimState {
   return {
     text,
-    cursor: clamp(cursor, 0, Math.max(0, text.length - 1)),
+    cursor: normalCursor(text, clamp(cursor, 0, Math.max(0, text.length - 1))),
     mode: "normal",
     visualKind: "character",
     pending: "",
     count: "",
     operatorCount: 1,
-    register: "",
-    registerKind: "character",
     undo: [],
     redo: [],
-    marks: {},
-    jumpHistory: [],
-    jumpIndex: -1,
   };
 }
 
@@ -100,7 +89,7 @@ function clamp(value: number, min: number, max: number): number {
 }
 
 function lineStart(text: string, offset: number): number {
-  return text.lastIndexOf("\n", Math.max(0, offset - 1)) + 1;
+  return offset <= 0 ? 0 : text.lastIndexOf("\n", offset - 1) + 1;
 }
 
 function lineEnd(text: string, offset: number): number {
@@ -110,19 +99,16 @@ function lineEnd(text: string, offset: number): number {
 
 function normalCursor(text: string, offset: number): number {
   const end = lineEnd(text, offset);
-  return clamp(offset, lineStart(text, offset), Math.max(lineStart(text, offset), end - 1));
+  const last = end > lineStart(text, offset) ? characterStep(text, end, -1) : end;
+  return characterStep(text, clamp(offset, lineStart(text, offset), last), 0);
 }
 
 function clearCommand(state: ComposerVimState): ComposerVimState {
-  return { ...state, pending: "", count: "", operatorCount: 1 };
+  return { ...state, pending: "", count: "", operatorCount: 1, operatorCountExplicit: false };
 }
 
 function jumpTo(state: ComposerVimState, cursor: number): ComposerVimState {
-  if (cursor === state.cursor) return { ...clearCommand(state), cursor };
-  const history = state.jumpHistory.slice(0, state.jumpIndex + 1);
-  if (history.at(-1) !== state.cursor) history.push(state.cursor);
-  history.push(cursor);
-  return { ...clearCommand(state), cursor, jumpHistory: history, jumpIndex: history.length - 1 };
+  return { ...clearCommand(state), cursor };
 }
 
 function changed(state: ComposerVimState, text: string, cursor: number): ComposerVimState {
@@ -158,8 +144,99 @@ function count(state: ComposerVimState): number {
   return Math.max(1, Number(state.count) || 1);
 }
 
-function motion(state: ComposerVimState, key: string, amount: number): number | undefined {
+function canonicalMotionKey(key: string): string {
+  return (
+    (
+      {
+        "\u007f": "h",
+        "\b": "h",
+        " ": "l",
+        "\u001b[A": "k",
+        "\u001b[B": "j",
+        "\u001b[C": "l",
+        "\u001b[D": "h",
+      } as Record<string, string>
+    )[key] ?? key
+  );
+}
+
+function motion(
+  state: ComposerVimState,
+  key: string,
+  amount: number,
+  operator = false,
+): number | undefined {
+  key = canonicalMotionKey(key);
+  if (operator && ["w", "W", "b", "B", "e", "E", "ge", "gE"].includes(key))
+    return logicalWordOffset(state.text, state.cursor, key, amount);
   const position = offsetToPosition(state.text, state.cursor);
+  if (
+    ![
+      "h",
+      "l",
+      "j",
+      "k",
+      "gj",
+      "gk",
+      "w",
+      "W",
+      "b",
+      "B",
+      "e",
+      "E",
+      "ge",
+      "gE",
+      "0",
+      "g0",
+      "^",
+      "_",
+      "g^",
+      "$",
+      "g$",
+      "g_",
+      "gg",
+      "G",
+      "(",
+      ")",
+      "{",
+      "}",
+      "[[",
+      "]]",
+      "[]",
+      "][",
+      "%",
+      ";",
+      ",",
+    ].includes(key)
+  )
+    return undefined;
+  if (
+    (state.count || state.operatorCountExplicit) &&
+    ["0", "g0", "^", "_", "g^", "%"].includes(key)
+  )
+    return undefined;
+  if (key === "h" || key === "l")
+    return normalCursor(
+      state.text,
+      Math.max(
+        lineStart(state.text, state.cursor),
+        Math.min(
+          lineEnd(state.text, state.cursor),
+          characterStep(state.text, state.cursor, key === "h" ? -amount : amount),
+        ),
+      ),
+    );
+  if (key === ";" || key === ",") {
+    const previous = state.lastFind;
+    if (!previous) return undefined;
+    const opposite = { f: "F", F: "f", t: "T", T: "t" } as const;
+    const repeated = key === ";" ? previous.key : opposite[previous.key];
+    const cursor =
+      repeated === "t" || repeated === "T"
+        ? characterStep(state.text, state.cursor, repeated === "t" ? 1 : -1)
+        : state.cursor;
+    return find({ ...state, cursor }, repeated, previous.character, amount);
+  }
   if (key === "^" || key === "_") {
     const line = state.text.slice(
       lineStart(state.text, state.cursor),
@@ -167,54 +244,11 @@ function motion(state: ComposerVimState, key: string, amount: number): number | 
     );
     return lineStart(state.text, state.cursor) + (line.search(/\S/) < 0 ? 0 : line.search(/\S/));
   }
-  if (key === "H" || key === "M" || key === "L") {
-    if (state.viewportHeight === undefined) return undefined;
-    const lines = state.text.split("\n");
-    const top = clamp(state.viewportTop ?? 0, 0, lines.length - 1);
-    const bottom = clamp(top + state.viewportHeight - 1, top, lines.length - 1);
-    const line =
-      key === "H"
-        ? clamp(top + amount - 1, top, bottom)
-        : key === "L"
-          ? clamp(bottom - amount + 1, top, bottom)
-          : Math.floor((top + bottom) / 2);
-    const value = lines[line] ?? "";
-    return positionToOffset(state.text, { line, col: Math.max(0, value.search(/\S/)) });
-  }
-  if (key === "(" || key === ")") {
-    let cursor = state.cursor;
-    for (let step = 0; step < amount; step++) {
-      const boundaries = [...state.text.matchAll(/[.!?](?:\s+|$)/g)].map(
-        (match) => (match.index ?? 0) + match[0].length,
-      );
-      if (key === ")") cursor = boundaries.find((index) => index > cursor) ?? state.text.length;
-      else cursor = boundaries.filter((index) => index < cursor).at(-1) ?? 0;
-    }
-    return normalCursor(state.text, cursor);
-  }
-  if (key === "{" || key === "}") {
-    const lines = state.text.split("\n");
-    let target = position.line;
-    for (let step = 0; step < amount; step++) {
-      if (key === "}") {
-        target = lines.findIndex((line, index) => index > target && line.trim() === "");
-        if (target < 0) target = lines.length - 1;
-      } else {
-        for (target = target - 1; target > 0 && (lines[target] ?? "").trim() !== ""; target--) {}
-        target = Math.max(0, target);
-      }
-    }
-    return positionToOffset(state.text, { line: target, col: 0 });
-  }
-  const timeline = createTimelineBuffer({
-    lines: state.text.split("\n"),
-    line: position.line,
-    column: position.col,
-  });
-  const moved = moveTimelineBuffer(
+  const timeline = { lines: state.text.split("\n"), line: position.line, column: position.col };
+  const moved = moveLogicalText(
     state.goalColumn === undefined ? timeline : { ...timeline, goalColumn: state.goalColumn },
     key,
-    amount,
+    key === "%" ? 0 : amount,
   );
   if (
     moved.line === timeline.line &&
@@ -231,23 +265,7 @@ function find(
   character: string,
   amount: number,
 ): number | undefined {
-  let cursor = state.cursor;
-  for (let index = 0; index < amount; index++) {
-    const position = offsetToPosition(state.text, cursor);
-    const found = findTimelineCharacter(
-      createTimelineBuffer({
-        lines: state.text.split("\n"),
-        line: position.line,
-        column: position.col,
-      }),
-      key,
-      character,
-    );
-    const next = positionToOffset(state.text, { line: found.line, col: found.column });
-    if (next === cursor) break;
-    cursor = next;
-  }
-  return cursor === state.cursor ? undefined : cursor;
+  return findTextCharacter(state.text, state.cursor, { key, character }, amount);
 }
 
 function search(
@@ -312,113 +330,67 @@ function wordObject(
   return { start, end };
 }
 
-function delimitedObject(
-  state: ComposerVimState,
-  delimiter: string,
-  around: boolean,
-): { start: number; end: number } | undefined {
-  const pairs: Record<string, [string, string]> = {
-    "(": ["(", ")"],
-    ")": ["(", ")"],
-    b: ["(", ")"],
-    "[": ["[", "]"],
-    "]": ["[", "]"],
-    "{": ["{", "}"],
-    "}": ["{", "}"],
-    B: ["{", "}"],
-    "<": ["<", ">"],
-    ">": ["<", ">"],
-    "'": ["'", "'"],
-    '"': ['"', '"'],
-    "`": ["`", "`"],
-  };
-  const pair = pairs[delimiter];
-  if (!pair) return undefined;
-  const [open, close] = pair;
-  let start = state.text.lastIndexOf(open, state.cursor);
-  let end = state.text.indexOf(
-    close,
-    state.cursor + (open === close && state.text[state.cursor] === open ? 1 : 0),
-  );
-  if (start < 0 || end < 0 || start === end) return undefined;
-  if (open !== close) {
-    let depth = 0;
-    for (let index = state.cursor; index >= 0; index--) {
-      if (state.text[index] === close) depth++;
-      if (state.text[index] === open && --depth < 0) {
-        start = index;
-        break;
-      }
-    }
-    depth = 0;
-    for (let index = start; index < state.text.length; index++) {
-      if (state.text[index] === open) depth++;
-      if (state.text[index] === close && --depth === 0) {
-        end = index;
-        break;
-      }
-    }
-  }
-  return { start: start + (around ? 0 : 1), end: end + (around ? 1 : 0) };
-}
-
 function textObject(
   state: ComposerVimState,
   key: string,
   around: boolean,
 ): { start: number; end: number; kind: "character" | "line" } | undefined {
-  if (key === "w" || key === "W")
-    return { ...wordObject(state, key === "W", around), kind: "character" };
-  if (key === "s") {
-    const position = offsetToPosition(state.text, state.cursor);
-    const range = timelineTextObjectRange(
-      createTimelineBuffer({
-        lines: state.text.split("\n"),
-        line: position.line,
-        column: position.col,
-      }),
-      "s",
-      around,
-    );
-    return range ? { ...range, kind: "character" } : undefined;
-  }
-  if (key === "p") {
-    let start = lineStart(state.text, state.cursor);
-    let end = lineEnd(state.text, state.cursor);
-    while (start > 0 && state.text.slice(lineStart(state.text, start - 2), start - 1).trim())
-      start = lineStart(state.text, start - 2);
-    while (
-      end < state.text.length &&
-      state.text.slice(end + 1, lineEnd(state.text, end + 1)).trim()
-    )
-      end = lineEnd(state.text, end + 1);
-    if (end < state.text.length) end++;
-    if (around && end < state.text.length) end++;
-    return { start, end, kind: "line" };
-  }
-  const range = delimitedObject(state, key, around);
-  return range ? { ...range, kind: "character" } : undefined;
+  const position = offsetToPosition(state.text, state.cursor);
+  const range = logicalTextObjectRange(
+    { lines: state.text.split("\n"), line: position.line, column: position.col },
+    key,
+    around,
+  );
+  return range
+    ? {
+        ...range,
+        end: key === "p" && state.text[range.end] === "\n" ? range.end + 1 : range.end,
+        kind: key === "p" ? "line" : "character",
+      }
+    : undefined;
+}
+
+function countedLineEnd(state: ComposerVimState): number {
+  let end = lineEnd(state.text, state.cursor);
+  for (let index = 1; index < count(state) && end < state.text.length; index++)
+    end = lineEnd(state.text, end + 1);
+  return end;
 }
 
 function applyOperator(
   state: ComposerVimState,
   operator: string,
   range: { start: number; end: number; kind: "character" | "line" },
+  allowEmpty = false,
 ): ComposerVimResult {
   const start = clamp(range.start, 0, state.text.length);
   const end = clamp(range.end, start, state.text.length);
+  if (start === end && range.kind !== "line" && !allowEmpty)
+    return { state: clearCommand(state), handled: true };
   const yank = state.text.slice(start, end);
   let next: ComposerVimState = {
     ...clearCommand(state),
-    register: yank,
-    registerKind: range.kind,
     mode: "normal",
     anchor: undefined,
   };
-  if (operator === "y") return { state: next, handled: true, yank };
-  next = replace(next, start, end, "");
+  if (operator === "y")
+    return { state: next, handled: true, yank, copy: { text: yank, kind: range.kind } };
+  const deletionStart =
+    operator === "d" &&
+    range.kind === "line" &&
+    end === state.text.length &&
+    start > 0 &&
+    state.text[end - 1] !== "\n"
+      ? start - 1
+      : start;
+  next = replace(
+    next,
+    deletionStart,
+    end,
+    operator === "c" && range.kind === "line" && state.text[end - 1] === "\n" ? "\n" : "",
+  );
   if (operator === "c") next = { ...enterInsert(state, next), cursor: start };
-  return { state: next, handled: true };
+  return { state: next, handled: true, copy: { text: yank, kind: range.kind } };
 }
 
 function visualRange(state: ComposerVimState): {
@@ -461,8 +433,6 @@ function applyVisualOperator(state: ComposerVimState, operator: string): Compose
     ...clearCommand(state),
     mode: "normal",
     anchor: undefined,
-    register: yank,
-    registerKind: "block",
     cursor: positionToOffset(state.text, { line: firstLine, col: firstColumn }),
   };
   if (operator === "y") return { state: next, handled: true, yank };
@@ -544,35 +514,43 @@ export function handleComposerVim(state: ComposerVimState, key: string): Compose
   }
   if (key === "\r" || key === "\n") return { state: clearCommand(state), handled: true };
   if (state.pending === "r") {
-    if (key.length !== 1) return { state: clearCommand(state), handled: true };
-    const end = Math.min(state.text.length, state.cursor + count(state));
+    if (!isCharacter(key)) return { state: clearCommand(state), handled: true };
+    const end = characterStep(state.text, state.cursor, count(state));
+    if (
+      end > lineEnd(state.text, state.cursor) ||
+      [
+        ...new Intl.Segmenter(undefined, { granularity: "grapheme" }).segment(
+          state.text.slice(state.cursor, end),
+        ),
+      ].length < count(state)
+    )
+      return { state: clearCommand(state), handled: true };
     return {
-      state: clearCommand(replace(state, state.cursor, end, key.repeat(end - state.cursor))),
+      state: clearCommand(replace(state, state.cursor, end, key.repeat(count(state)))),
       handled: true,
     };
   }
   if (["f", "F", "t", "T"].includes(state.pending)) {
     const pending = state.pending as "f" | "F" | "t" | "T";
-    const cursor = key.length === 1 ? find(state, pending, key, count(state)) : undefined;
+    const cursor = isCharacter(key) ? find(state, pending, key, count(state)) : undefined;
     return {
       state: {
         ...clearCommand(state),
         cursor: cursor ?? state.cursor,
-        lastFind: { key: pending, character: key },
+        ...(cursor === undefined ? {} : { lastFind: { key: pending, character: key } }),
       },
       handled: true,
     };
   }
   if (state.pending === "g") {
-    if (key === "*" || key === "#") return searchWordUnderCursor(state, key === "*" ? 1 : -1);
     const target =
       key === "g"
         ? motion(state, "gg", state.count ? count(state) : 0)
         : key === "e" || key === "E"
           ? motion(state, `g${key}`, count(state))
           : key === "_"
-            ? Math.max(lineStart(state.text, state.cursor), lineEnd(state.text, state.cursor) - 1)
-            : ["0", "^", "$", "j", "k", "m", "M"].includes(key)
+            ? motion(state, "g_", count(state))
+            : ["0", "^", "$", "j", "k"].includes(key)
               ? motion(state, `g${key}`, count(state))
               : undefined;
     return { state: { ...clearCommand(state), cursor: target ?? state.cursor }, handled: true };
@@ -581,24 +559,6 @@ export function handleComposerVim(state: ComposerVimState, key: string): Compose
     const target =
       key === "[" || key === "]" ? motion(state, state.pending + key, count(state)) : undefined;
     return { state: { ...clearCommand(state), cursor: target ?? state.cursor }, handled: true };
-  }
-  if (state.pending === "m") {
-    return key.length === 1
-      ? {
-          state: { ...clearCommand(state), marks: { ...state.marks, [key]: state.cursor } },
-          handled: true,
-        }
-      : { state: clearCommand(state), handled: true };
-  }
-  if (state.pending === "'" || state.pending === "`") {
-    const marked = state.marks[key];
-    if (marked === undefined) return { state: clearCommand(state), handled: true };
-    const value = state.text.slice(lineStart(state.text, marked), lineEnd(state.text, marked));
-    const cursor =
-      state.pending === "'"
-        ? lineStart(state.text, marked) + Math.max(0, value.search(/\S/))
-        : marked;
-    return { state: jumpTo(state, cursor), handled: true };
   }
   if (state.pending === "i" || state.pending === "a") {
     const range = textObject(state, key, state.pending === "a");
@@ -623,9 +583,12 @@ export function handleComposerVim(state: ComposerVimState, key: string): Compose
     state.pending.startsWith("yi") ||
     state.pending.startsWith("ya")
   ) {
-    const range = textObject(state, key, state.pending[1] === "a");
+    const range =
+      state.operatorCountExplicit || state.count
+        ? undefined
+        : textObject(state, key, state.pending[1] === "a");
     return range
-      ? applyOperator(state, state.pending[0] ?? "", range)
+      ? applyOperator(state, state.pending[0] ?? "", range, true)
       : { state: clearCommand(state), handled: true };
   }
   if (["d", "c", "y"].includes(state.pending)) {
@@ -634,53 +597,82 @@ export function handleComposerVim(state: ComposerVimState, key: string): Compose
       return { state: { ...state, count: state.count + key }, handled: true };
     if (key === "i" || key === "a")
       return { state: { ...state, pending: operator + key }, handled: true };
-    if (["f", "F", "t", "T", "g"].includes(key))
+    if (["f", "F", "t", "T", "g", "[", "]"].includes(key))
       return { state: { ...state, pending: operator + key }, handled: true };
     const amount = state.operatorCount * count(state);
-    if (key === operator || key === "_") {
+    if (key === operator) {
       const start = lineStart(state.text, state.cursor);
       let end = start;
       for (let index = 0; index < amount; index++)
         end = Math.min(state.text.length, lineEnd(state.text, end) + 1);
       return applyOperator(state, operator, { start, end, kind: "line" });
     }
+    const effectiveKey =
+      operator === "c" && ["w", "W"].includes(key) && /\S/u.test(state.text[state.cursor] ?? "")
+        ? key === "w"
+          ? "e"
+          : "E"
+        : canonicalMotionKey(key);
     const target = motion(
       state,
-      key,
-      key === "G" && !state.count && state.operatorCount === 1 ? 0 : amount,
+      effectiveKey,
+      key === "G" && !state.count && !state.operatorCountExplicit ? 0 : amount,
+      true,
     );
     if (target === undefined) return { state: clearCommand(state), handled: true };
     let start = Math.min(state.cursor, target);
     let end = Math.max(state.cursor, target);
-    if (["e", "E", "$", "%"].includes(key)) end++;
-    if (["j", "k", "gg", "G", "+", "-"].includes(key)) {
+    if (["e", "E", "$", "%", ";", ","].includes(effectiveKey))
+      end = characterStep(state.text, end, 1);
+    if (["j", "k", "gg", "G"].includes(effectiveKey)) {
       start = lineStart(state.text, start);
       end = Math.min(state.text.length, lineEnd(state.text, end) + 1);
     }
     return applyOperator(state, operator, {
       start,
       end,
-      kind: ["j", "k", "gg", "G"].includes(key) ? "line" : "character",
+      kind: ["j", "k", "gg", "G"].includes(effectiveKey) ? "line" : "character",
     });
   }
-  if (/^[dcy][fFtTg]$/.test(state.pending)) {
+  if (/^[dcy][fFtTg[\]]$/.test(state.pending)) {
     const operator = state.pending[0] ?? "";
     const prefix = state.pending[1] ?? "";
     const target =
-      prefix === "g"
-        ? key === "g"
-          ? motion(state, "gg", state.operatorCount * count(state))
-          : key === "e" || key === "E"
-            ? motion(state, `g${key}`, state.operatorCount * count(state))
-            : undefined
-        : key.length === 1
-          ? find(state, prefix as "f" | "F" | "t" | "T", key, state.operatorCount * count(state))
-          : undefined;
+      prefix === "[" || prefix === "]"
+        ? ["[", "]"].includes(key)
+          ? motion(state, prefix + key, state.operatorCount * count(state))
+          : undefined
+        : prefix === "g"
+          ? key === "g"
+            ? motion(state, "gg", state.operatorCount * count(state))
+            : ["e", "E", "0", "^", "$", "j", "k", "_"].includes(key)
+              ? motion(state, `g${key}`, state.operatorCount * count(state), true)
+              : undefined
+          : isCharacter(key)
+            ? find(state, prefix as "f" | "F" | "t" | "T", key, state.operatorCount * count(state))
+            : undefined;
     if (target === undefined) return { state: clearCommand(state), handled: true };
-    const inclusive = prefix === "f" || prefix === "F" || (prefix === "g" && key === "e");
-    const start = Math.min(state.cursor, target);
-    const end = Math.min(state.text.length, Math.max(state.cursor, target) + (inclusive ? 1 : 0));
-    return applyOperator(state, operator, { start, end, kind: "character" });
+    const inclusive =
+      "fFtT".includes(prefix) || (prefix === "g" && ["e", "E", "$", "_"].includes(key));
+    let start = Math.min(state.cursor, target);
+    let end = Math.min(
+      state.text.length,
+      inclusive
+        ? characterStep(state.text, Math.max(state.cursor, target), 1)
+        : Math.max(state.cursor, target),
+    );
+    const linewise = prefix === "g" && ["g", "j", "k"].includes(key);
+    if (linewise) {
+      start = lineStart(state.text, start);
+      end = Math.min(state.text.length, lineEnd(state.text, end) + 1);
+    }
+    return applyOperator(
+      !"fFtT".includes(prefix)
+        ? state
+        : { ...state, lastFind: { key: prefix as "f" | "F" | "t" | "T", character: key } },
+      operator,
+      { start, end, kind: linewise ? "line" : "character" },
+    );
   }
 
   if (state.mode === "visual") {
@@ -701,7 +693,13 @@ export function handleComposerVim(state: ComposerVimState, key: string): Compose
       return { state: { ...state, count: state.count + key }, handled: true };
     if (["d", "c", "y"].includes(key))
       return {
-        state: { ...state, pending: key, operatorCount: count(state), count: "" },
+        state: {
+          ...state,
+          pending: key,
+          operatorCount: count(state),
+          operatorCountExplicit: Boolean(state.count),
+          count: "",
+        },
         handled: true,
       };
     if (key === "v" || key === "V" || key === "\u0016")
@@ -715,9 +713,16 @@ export function handleComposerVim(state: ComposerVimState, key: string): Compose
         handled: true,
       };
     if (["i", "a", "I", "A", "o", "O"].includes(key)) {
+      if (state.count) return { state: clearCommand(state), handled: true };
       let next = clearCommand(state);
       if (key === "a")
-        next = { ...next, cursor: Math.min(lineEnd(state.text, state.cursor), state.cursor + 1) };
+        next = {
+          ...next,
+          cursor: Math.min(
+            lineEnd(state.text, state.cursor),
+            characterStep(state.text, state.cursor, 1),
+          ),
+        };
       if (key === "I") next = { ...next, cursor: motion(state, "^", 1) ?? state.cursor };
       if (key === "A") next = { ...next, cursor: lineEnd(state.text, state.cursor) };
       if (key === "o" || key === "O") {
@@ -731,12 +736,18 @@ export function handleComposerVim(state: ComposerVimState, key: string): Compose
     if (key === "x" || key === "X" || key === "s") {
       const start =
         key === "X"
-          ? Math.max(lineStart(state.text, state.cursor), state.cursor - count(state))
+          ? Math.max(
+              lineStart(state.text, state.cursor),
+              characterStep(state.text, state.cursor, -count(state)),
+            )
           : state.cursor;
       const end =
         key === "X"
           ? state.cursor
-          : Math.min(lineEnd(state.text, state.cursor), state.cursor + count(state));
+          : Math.min(
+              lineEnd(state.text, state.cursor),
+              characterStep(state.text, state.cursor, count(state)),
+            );
       const result = applyOperator(state, key === "s" ? "c" : "d", {
         start,
         end,
@@ -747,69 +758,55 @@ export function handleComposerVim(state: ComposerVimState, key: string): Compose
     if (key === "D" || key === "C")
       return applyOperator(state, key === "D" ? "d" : "c", {
         start: state.cursor,
-        end: lineEnd(state.text, state.cursor),
+        end: countedLineEnd(state),
         kind: "character",
       });
     if (key === "S")
       return applyOperator(state, "c", {
         start: lineStart(state.text, state.cursor),
-        end: Math.min(state.text.length, lineEnd(state.text, state.cursor) + 1),
+        end: Math.min(state.text.length, countedLineEnd(state) + 1),
         kind: "line",
       });
     if (key === "Y")
       return applyOperator(state, "y", {
         start: lineStart(state.text, state.cursor),
-        end: Math.min(state.text.length, lineEnd(state.text, state.cursor) + 1),
+        end: Math.min(state.text.length, countedLineEnd(state) + 1),
         kind: "line",
       });
     if (key === "p" || key === "P") {
-      if (state.registerKind === "block") {
-        const lines = state.text.split("\n");
-        const position = offsetToPosition(state.text, state.cursor);
-        const column = position.col + (key === "p" ? 1 : 0);
-        for (const [index, value] of state.register.split("\n").entries()) {
-          const line = position.line + index;
-          while (lines.length <= line) lines.push("");
-          const current = lines[line] ?? "";
-          const padded = current.padEnd(column, " ");
-          lines[line] = padded.slice(0, column) + value + padded.slice(column);
-        }
-        return {
-          state: clearCommand(changed(state, lines.join("\n"), state.cursor)),
-          handled: true,
-        };
-      }
-      const insertion =
-        state.registerKind === "line"
-          ? key === "p"
-            ? Math.min(state.text.length, lineEnd(state.text, state.cursor) + 1)
-            : lineStart(state.text, state.cursor)
-          : state.cursor + (key === "p" ? 1 : 0);
-      const register =
-        state.registerKind === "line" &&
-        key === "p" &&
-        insertion === state.text.length &&
-        !state.text.endsWith("\n")
-          ? `\n${state.register.replace(/\n$/, "")}`
-          : state.register;
-      const next = replace(state, insertion, insertion, register);
-      return { state: clearCommand(next), handled: true };
+      return {
+        state: clearCommand(state),
+        handled: true,
+        paste: { before: key === "P", count: count(state) },
+      };
     }
     if (key === "J") {
       let text = state.text;
       const start = lineEnd(text, state.cursor);
       let cursor = start;
-      for (let index = 0; index < count(state); index++) {
+      for (let index = 0; index < Math.max(2, count(state)) - 1; index++) {
         if (cursor >= text.length) break;
-        const after = text.slice(cursor + 1).match(/^\s*/)?.[0].length ?? 0;
-        text = `${text.slice(0, cursor)} ${text.slice(cursor + 1 + after)}`;
+        const after = text.slice(cursor + 1).match(/^[ \t]*/)?.[0].length ?? 0;
+        const right = text.slice(cursor + 1 + after);
+        const space =
+          cursor > 0 &&
+          !/[ \t]/u.test(text[cursor - 1] ?? "") &&
+          right &&
+          right[0] !== "\n" &&
+          right[0] !== ")"
+            ? " "
+            : "";
+        text = `${text.slice(0, cursor)}${space}${right}`;
         cursor = lineEnd(text, cursor);
       }
       return { state: clearCommand(changed(state, text, start)), handled: true };
     }
     if (key === "~") {
       const start = state.cursor;
-      const end = Math.min(lineEnd(state.text, start), start + count(state));
+      const end = Math.min(
+        lineEnd(state.text, start),
+        characterStep(state.text, start, count(state)),
+      );
       const swapped = [...state.text.slice(start, end)]
         .map((char) => (char === char.toUpperCase() ? char.toLowerCase() : char.toUpperCase()))
         .join("");
@@ -820,45 +817,25 @@ export function handleComposerVim(state: ComposerVimState, key: string): Compose
       };
     }
     if (key === "u" || key === "\u0012") {
-      const source = key === "u" ? state.undo : state.redo;
-      const snapshot = source.at(-1);
-      if (!snapshot) return { state: clearCommand(state), handled: true };
-      const current = { text: state.text, cursor: state.cursor };
-      return {
-        state: clearCommand({
-          ...state,
+      let next = state;
+      for (let index = 0; index < count(state); index++) {
+        const source = key === "u" ? next.undo : next.redo;
+        const snapshot = source.at(-1);
+        if (!snapshot) break;
+        const current = { text: next.text, cursor: next.cursor };
+        next = {
+          ...next,
           ...snapshot,
-          undo: key === "u" ? source.slice(0, -1) : [...state.undo, current],
-          redo: key === "u" ? [...state.redo, current] : source.slice(0, -1),
-        }),
-        handled: true,
-      };
+          undo: key === "u" ? source.slice(0, -1) : [...next.undo, current],
+          redo: key === "u" ? [...next.redo, current] : source.slice(0, -1),
+        };
+      }
+      return { state: clearCommand(next), handled: true };
     }
     if (key === "r") return { state: { ...state, pending: "r" }, handled: true };
   }
   if (["f", "F", "t", "T", "g", "[", "]"].includes(key))
     return { state: { ...state, pending: key }, handled: true };
-  if (key === "m" || key === "'" || key === "`")
-    return { state: { ...state, pending: key }, handled: true };
-  if (key === "\u000f" || key === "\u0009") {
-    const index = clamp(
-      state.jumpIndex + (key === "\u000f" ? -1 : 1),
-      0,
-      state.jumpHistory.length - 1,
-    );
-    const cursor = state.jumpHistory[index];
-    return {
-      state:
-        cursor === undefined
-          ? clearCommand(state)
-          : { ...clearCommand(state), cursor, jumpIndex: index },
-      handled: true,
-    };
-  }
-  if (key === "\r" || key === "\n") {
-    const target = motion(state, "+", count(state));
-    return { state: { ...clearCommand(state), cursor: target ?? state.cursor }, handled: true };
-  }
   if (key === "/" || key === "?")
     return { state: { ...state, pending: key, searchInput: "" }, handled: true };
   if (key === "n" || key === "N") {
@@ -875,47 +852,12 @@ export function handleComposerVim(state: ComposerVimState, key: string): Compose
   if (key === ";" || key === ",") {
     const previous = state.lastFind;
     if (!previous) return { state: clearCommand(state), handled: true };
-    const opposite: Record<"f" | "F" | "t" | "T", "f" | "F" | "t" | "T"> = {
-      f: "F",
-      F: "f",
-      t: "T",
-      T: "t",
-    };
-    const cursor = find(
-      state,
-      key === ";" ? previous.key : opposite[previous.key],
-      previous.character,
-      count(state),
-    );
+    const cursor = motion(state, key, count(state));
     return { state: { ...clearCommand(state), cursor: cursor ?? state.cursor }, handled: true };
   }
-  const controlMotion: Record<string, string> = {
-    "\u0010": "k",
-    "\u000e": "j",
-    "\u007f": "h",
-    "\b": "h",
-    " ": "l",
-    "\u0015": "k",
-    "\u0004": "j",
-    "\u0002": "k",
-    "\u0006": "j",
-    "\u001b[A": "k",
-    "\u001b[B": "j",
-    "\u001b[C": "l",
-    "\u001b[D": "h",
-  };
-  const mapped = controlMotion[key] ?? key;
-  const viewportAmount =
-    key === "\u0015" || key === "\u0004"
-      ? Math.max(1, Math.floor((state.viewportHeight ?? 1) / 2))
-      : key === "\u0002" || key === "\u0006"
-        ? Math.max(1, (state.viewportHeight ?? 1) - 1)
-        : 1;
-  const target = motion(
-    state,
-    mapped,
-    state.count ? count(state) * viewportAmount : key === "G" ? 0 : viewportAmount,
-  );
+  if (key === "%" && state.count) return { state: clearCommand(state), handled: true };
+  const mapped = canonicalMotionKey(key);
+  const target = motion(state, mapped, state.count ? count(state) : key === "G" ? 0 : 1);
   if (target !== undefined)
     return {
       state: {
@@ -928,4 +870,35 @@ export function handleComposerVim(state: ComposerVimState, key: string): Compose
       handled: true,
     };
   return { state: clearCommand(state), handled: false };
+}
+
+/** Apply data read from the current system clipboard as one undoable edit. */
+export function applyComposerPaste(
+  state: ComposerVimState,
+  text: string,
+  kind: "character" | "line",
+  request: { before: boolean; count: number },
+): ComposerVimState {
+  if (!text) return clearCommand(state);
+  let where = request.before
+    ? state.cursor
+    : Math.min(lineEnd(state.text, state.cursor), characterStep(state.text, state.cursor, 1));
+  let value = text.repeat(request.count);
+  if (kind === "line") {
+    const complete = text.endsWith("\n") ? text : `${text}\n`;
+    value = complete.repeat(request.count);
+    where = request.before
+      ? lineStart(state.text, state.cursor)
+      : Math.min(state.text.length, lineEnd(state.text, state.cursor) + 1);
+    if (!request.before && state.text && !state.text.endsWith("\n") && where === state.text.length)
+      value = `\n${value.replace(/\n$/, "")}`;
+  }
+  const next = replace(state, where, where, value);
+  return {
+    ...clearCommand(next),
+    cursor: normalCursor(
+      next.text,
+      kind === "line" ? where + (value.startsWith("\n") ? 1 : 0) : where + value.length - 1,
+    ),
+  };
 }

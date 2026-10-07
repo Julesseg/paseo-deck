@@ -31,6 +31,7 @@ import {
 import { activeLaunchWorkspaceId, launchDraft } from "../state/launch.js";
 import { activeNotification } from "../state/store.js";
 import { defaultTerminalAppearance, type TerminalAppearance } from "./capabilities.js";
+import { type ClipboardAdapter, SharedClipboard, systemClipboard } from "./clipboard.js";
 import {
   type CommandContext,
   commandById,
@@ -40,6 +41,7 @@ import {
   resolvedCommands,
 } from "./commands.js";
 import {
+  applyComposerPaste,
   type ComposerVimState,
   composerVisualSelection,
   createComposerVim,
@@ -61,6 +63,7 @@ import {
 } from "./layout.js";
 import { type RenderClock, RenderScheduler } from "./render-scheduler.js";
 import { TerminalLifecycle } from "./terminal.js";
+import { characterOffsets } from "./text-buffer.js";
 import {
   clipTerminalLine,
   sanitizeTerminalText,
@@ -134,6 +137,8 @@ export interface DeckTuiOptions {
   renderClock?: RenderClock;
   frameMilliseconds?: number;
   copyText?: (text: string) => Promise<void> | void;
+  readText?: () => Promise<string> | string;
+  clipboard?: ClipboardAdapter;
   openLink?: (url: string) => Promise<void> | void;
   appearance?: TerminalAppearance;
   treeWidth?: number;
@@ -790,6 +795,11 @@ class TimelineView implements Component {
       this.buffer = searchTimelineBuffer(this.buffer, this.searchQuery, direction);
     this.keepCursorAtEnd = false;
     this.syncSelectedIndex();
+  }
+  clipboardKind(): "character" | "line" {
+    return this.buffer.mode === "visual" && this.buffer.selectionMode === "line"
+      ? "line"
+      : "character";
   }
   yankText(): string {
     return selectedTimelineText(this.buffer);
@@ -1487,13 +1497,14 @@ class ComposerView implements Component, Focusable {
   private draftWorkspaceId: string | undefined;
   private state: AppState;
   private vim: ComposerVimState;
+  private inputRevision = 0;
   private visibleEditorLines = 3;
   constructor(
     tui: TUI,
     state: AppState,
     private readonly emit: (intent: UiIntent) => void,
     private readonly theme: DeckTheme,
-    private readonly copy: (text: string) => Promise<void> | void,
+    private readonly clipboard: SharedClipboard,
   ) {
     this.state = state;
     this.selectedAgentId = state.selectedAgentId;
@@ -1654,15 +1665,12 @@ class ComposerView implements Component, Focusable {
       ),
     );
   }
-  cancelPendingInput(): void {
-    this.vim = { ...this.vim, pending: "", count: "", operatorCount: 1, searchInput: undefined };
-  }
-
   get hasPendingCommand(): boolean {
     return Boolean(this.vim.pending || this.vim.count);
   }
 
   handleInput(data: string): void {
+    this.inputRevision++;
     const launchId = activeLaunchWorkspaceId(this.state);
     if (launchId && launchDraft(this.state, launchId).submitting) return;
     if (data.startsWith("\u001b[200~")) {
@@ -1701,16 +1709,16 @@ class ComposerView implements Component, Focusable {
   }
 
   private handleVimInput(data: string): void {
+    if (this.vim.pending === "g" && data === "?") {
+      this.cancelPendingInput();
+      this.emit({ type: "open-help" });
+      return;
+    }
     const current = setComposerViewport(
       syncComposerVim(this.vim, this.editor.getText(), this.editor.getCursor()),
       0,
       this.visibleEditorLines,
     );
-    if (current.pending === "g" && data === "?") {
-      this.cancelPendingInput();
-      this.emit({ type: "open-help" });
-      return;
-    }
     if (data === "\r" && current.mode === "normal" && !current.pending && !current.count) {
       this.editor.onSubmit?.(current.text);
       return;
@@ -1765,9 +1773,56 @@ class ComposerView implements Component, Focusable {
     this.vim = result.state;
     if (this.editor.getText() !== result.state.text) this.editor.setText(result.state.text);
     this.placeCursor(offsetToPosition(result.state.text, result.state.cursor));
-    if (result.yank) void this.copy(result.yank);
+    if (result.copy)
+      void this.clipboard.write(result.copy.text, result.copy.kind).catch(() => {
+        this.emit({ type: "notify", message: "Clipboard write failed.", kind: "error" });
+      });
+    if (result.paste) {
+      const paste = result.paste;
+      const capturedState = this.vim;
+      const capturedRevision = this.inputRevision;
+      const capturedResource = this.clipboardResource();
+      void this.clipboard
+        .read()
+        .then((value) => {
+          if (
+            this.inputRevision !== capturedRevision ||
+            this.clipboardResource() !== capturedResource ||
+            this.vim.text !== capturedState.text ||
+            this.vim.cursor !== capturedState.cursor ||
+            this.vim.mode !== capturedState.mode ||
+            this.vim.anchor !== capturedState.anchor
+          )
+            return;
+          this.applyVimResult({
+            state: applyComposerPaste(capturedState, value.text, value.kind, paste),
+            handled: true,
+          });
+        })
+        .catch(() =>
+          this.emit({ type: "notify", message: "Clipboard read failed.", kind: "error" }),
+        );
+    }
     if (previousMode !== result.state.mode)
       this.emit({ type: "set-composer-mode", mode: result.state.mode });
+  }
+
+  private clipboardResource(): string {
+    return this.state.newWorkspace
+      ? "new-workspace"
+      : `${this.state.selectedWorkspaceId ?? ""}:${this.state.activeTerminalId ?? ""}:${this.selectedAgentId ?? this.draftWorkspaceId ?? activeLaunchWorkspaceId(this.state) ?? ""}`;
+  }
+
+  cancelPendingInput(): void {
+    this.inputRevision++;
+    this.vim = {
+      ...this.vim,
+      pending: "",
+      count: "",
+      operatorCount: 1,
+      operatorCountExplicit: false,
+      searchInput: undefined,
+    };
   }
 
   private placeCursor(target: { line: number; col: number }): void {
@@ -1777,7 +1832,9 @@ class ComposerView implements Component, Focusable {
     const arrow = vertical < 0 ? "\u001b[A" : "\u001b[B";
     for (let index = 0; index < Math.abs(vertical); index++) this.editor.handleInput(arrow);
     this.editor.handleInput("\u0001");
-    for (let index = 0; index < target.col; index++) this.editor.handleInput("\u001b[C");
+    const prefix = (this.editor.getText().split("\n")[target.line] ?? "").slice(0, target.col);
+    for (let index = 0; index < characterOffsets(prefix).length - 1; index++)
+      this.editor.handleInput("\u001b[C");
   }
 }
 
@@ -2538,7 +2595,12 @@ export class DeckTui {
       this.reconnectClock,
       options.frameMilliseconds,
     );
-    this.copyText = options.copyText ?? ((text) => this.writeOsc52(text));
+    this.clipboard = new SharedClipboard(
+      options.clipboard ?? {
+        read: options.readText ?? systemClipboard.read,
+        write: options.copyText ?? systemClipboard.write,
+      },
+    );
     this.openLink = options.openLink ?? openWebLink;
     this.controller = new DeckController(
       () => this.state,
@@ -2555,7 +2617,7 @@ export class DeckTui {
       initialState,
       (intent) => this.handleControllerIntent(intent),
       this.theme,
-      this.copyText,
+      this.clipboard,
     );
     this.status = new StatusView(initialState, this.theme, () => this.reconnectClock.now());
     this.minimumSize = new MinimumSizeView(this.theme);
@@ -2692,7 +2754,7 @@ export class DeckTui {
     });
   }
 
-  private readonly copyText: (text: string) => Promise<void> | void;
+  private readonly clipboard: SharedClipboard;
   private readonly openLink: (url: string) => Promise<void> | void;
 
   private setShellLayout(): void {
@@ -3085,13 +3147,14 @@ export class DeckTui {
     }
     if (intent.type === "timeline-yank") {
       const value = this.timeline.yankText();
-      if (value) void this.copyTimelineTarget(value);
+      if (value) void this.copyTimelineTarget(value, this.timeline.clipboardKind());
       else this.emit({ type: "notify", message: "No timeline text selected." });
       return;
     }
     if (intent.type === "timeline-yank-object") {
       const value = this.timeline.yankObject(intent.object);
-      if (value || intent.object === "line") void this.copyTimelineTarget(value);
+      if (value || intent.object === "line")
+        void this.copyTimelineTarget(value, intent.object === "line" ? "line" : "character");
       else this.emit({ type: "notify", message: "No timeline text at cursor." });
       return;
     }
@@ -3308,6 +3371,13 @@ export class DeckTui {
             ? [
                 "Normal Enter sends; Insert Enter/Alt-Enter adds a newline.",
                 "Pending-command and Visual Enter never send.",
+                "Normal: h/l j/k w/W b/B e/E ge/gE; 0 ^/_ $; g0/g^/g$/gj/gk/g_.",
+                "gg/G numbered lines; () sentences; {} paragraphs; [[/]]/[]/][ sections; bare % matches.",
+                "f/F/t/T + character; ;/, repeat. Counts multiply with d/c/y motions.",
+                "i/a/I/A/o/O Insert; x/X s/S D/C; d/c/y + motion; dd/cc/yy/Y lines.",
+                "i/a objects: w/W s/p q nearest quote; b nearest bracket; explicit delimiters.",
+                "r replaces; J joins; ~ toggles case; u/Ctrl-R undo/redo. No counted objects.",
+                "p/P reads system clipboard; Deck-owned line copies paste below/above.",
               ]
             : []),
           ...contextualHelp(this.state, context).map((command) => commandHelpLine(command)),
@@ -3363,10 +3433,13 @@ export class DeckTui {
     this.renderScheduler.requestImmediate();
   }
 
-  private async copyTimelineTarget(value: string | undefined): Promise<void> {
+  private async copyTimelineTarget(
+    value: string | undefined,
+    kind: "character" | "line" = "character",
+  ): Promise<void> {
     if (value === undefined) return;
     try {
-      await this.copyText(clipboardPlainText(value));
+      await this.clipboard.write(clipboardPlainText(value), kind);
       this.searchFeedback = "Copied.";
       this.emit({ type: "notify", message: this.searchFeedback });
     } catch {
@@ -3469,10 +3542,6 @@ export class DeckTui {
     const match = this.searchMatches[this.searchIndex];
     if (match) this.timeline.selectEvent(match.event.item.id);
     this.searchFeedback = `${this.searchMatches.length} matches · result ${this.searchIndex + 1} · updated`;
-  }
-
-  private writeOsc52(text: string): void {
-    this.terminal.write(`\u001b]52;c;${Buffer.from(text).toString("base64")}\u0007`);
   }
 
   private scrollToEndIndicator(): string {
@@ -3639,6 +3708,13 @@ export class DeckTui {
             ? [
                 "Normal Enter sends; Insert Enter/Alt-Enter adds a newline.",
                 "Pending-command and Visual Enter never send.",
+                "Normal: h/l j/k w/W b/B e/E ge/gE; 0 ^/_ $; g0/g^/g$/gj/gk/g_.",
+                "gg/G numbered lines; () sentences; {} paragraphs; [[/]]/[]/][ sections; bare % matches.",
+                "f/F/t/T + character; ;/, repeat. Counts multiply with d/c/y motions.",
+                "i/a/I/A/o/O Insert; x/X s/S D/C; d/c/y + motion; dd/cc/yy/Y lines.",
+                "i/a objects: w/W s/p q nearest quote; b nearest bracket; explicit delimiters.",
+                "r replaces; J joins; ~ toggles case; u/Ctrl-R undo/redo. No counted objects.",
+                "p/P reads system clipboard; Deck-owned line copies paste below/above.",
               ]
             : []),
           ...contextualHelp(this.state).map((command) => commandHelpLine(command)),

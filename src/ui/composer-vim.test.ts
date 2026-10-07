@@ -65,7 +65,7 @@ describe("composer Vim buffer", () => {
     const yank = handleComposerVim(handleComposerVim(initial, "y").state, "y");
     expect(yank.yank).toBe("first\n");
     expect(yank.state.text).toBe(initial.text);
-    expect(handleComposerVim(yank.state, "p").state.text).toBe("first\nfirst\nsecond");
+    expect(handleComposerVim(yank.state, "p").paste).toEqual({ before: false, count: 1 });
   });
 
   it("selects characters or lines and edits a selection", () => {
@@ -81,7 +81,6 @@ describe("composer Vim buffer", () => {
     const block = keys("abcd\nefgh", 1, ["\u0016", "l", "j"]);
     const yank = handleComposerVim(block, "y");
     expect(yank.yank).toBe("bc\nfg");
-    expect(yank.state.registerKind).toBe("block");
     expect(handleComposerVim(block, "d").state.text).toBe("ad\neh");
   });
 
@@ -126,24 +125,9 @@ describe("composer Vim buffer", () => {
     expect(keys("Ab", 0, ["~"]).text).toBe("ab");
   });
 
-  it("moves to first, middle, and last visible lines", () => {
-    const text = "zero\none\ntwo\nthree\nfour";
-    const view = setComposerViewport(createComposerVim(text), 1, 3);
-    expect(handleComposerVim(view, "H").state.cursor).toBe(5);
-    expect(handleComposerVim(view, "M").state.cursor).toBe(9);
-    expect(handleComposerVim(view, "L").state.cursor).toBe(13);
-  });
-
-  it("stores marks and traverses the jump list", () => {
-    const text = "one\n  two\nthree";
-    const marked = keys(text, 7, ["m", "a"]);
-    const moved = handleComposerVim(marked, "G").state;
-    const exact = keys(text, 7, ["m", "a", "G", "`", "a"]);
-    expect(moved.cursor).toBe(14);
-    expect(exact.cursor).toBe(7);
-    expect(keys(text, 7, ["m", "a", "G", "'", "a"]).cursor).toBe(6);
-    const back = handleComposerVim(exact, "\u000f").state;
-    expect(back.cursor).toBe(14);
-    expect(handleComposerVim(back, "\u0009").state.cursor).toBe(7);
+  it("leaves excluded viewport, marks and jump aliases inert", () => {
+    const view = setComposerViewport(createComposerVim("zero\none\ntwo"), 1, 2);
+    for (const key of ["H", "M", "L", "m", "'", "`", "\u000f", "\u0009"])
+      expect(handleComposerVim(view, key).state.cursor).toBe(0);
   });
 });
