@@ -846,6 +846,18 @@ class TimelineView implements Component {
     const event = this.events[this.eventIndexAtBodyLine(line)];
     if (event) this.toggle(event.item.id);
   }
+  captureInputState(): () => void {
+    this.captureBufferAnchor();
+    const buffer = this.buffer;
+    const anchor = this.bufferAnchor;
+    const following = this.keepCursorAtEnd;
+    return () => {
+      this.buffer = replaceTimelineBuffer(buffer, this.buffer.lines);
+      this.bufferAnchor = anchor;
+      this.keepCursorAtEnd = following;
+      this.syncSelectedIndex();
+    };
+  }
   restoreSelectionCursor(): void {
     this.buffer = {
       ...this.buffer,
@@ -1474,7 +1486,13 @@ class BorderlessEditor extends Editor {
 
 class ComposerView implements Component, Focusable {
   focused = false;
-  private readonly editor: BorderlessEditor;
+  private editor: BorderlessEditor;
+  private readonly makeEditor: (text: string) => BorderlessEditor;
+  private resourceKey: string;
+  private readonly resources = new Map<
+    string,
+    { editor: BorderlessEditor; vim: ComposerVimState }
+  >();
   private selectedAgentId: string | undefined;
   private draftWorkspaceId: string | undefined;
   private state: AppState;
@@ -1491,15 +1509,22 @@ class ComposerView implements Component, Focusable {
     this.state = state;
     this.selectedAgentId = state.selectedAgentId;
     this.draftWorkspaceId = activeSessionDraftWorkspaceId(state);
-    this.editor = new BorderlessEditor(
-      tui,
-      {
-        borderColor: (value) => this.theme.style(this.focused ? "focus" : "muted", value),
-        selectList: selectTheme(this.theme),
-      },
-      { paddingX: 1 },
-    );
-    this.editor.setText(selectedComposerDraft(state));
+    this.resourceKey = this.keyFor(state);
+    this.makeEditor = (text) => {
+      const editor = new BorderlessEditor(
+        tui,
+        {
+          borderColor: (value) => this.theme.style(this.focused ? "focus" : "muted", value),
+          selectList: selectTheme(this.theme),
+        },
+        { paddingX: 1 },
+      );
+      editor.setText(text);
+      editor.onChange = (text) => emit({ type: "set-composer-text", text });
+      editor.onSubmit = (prompt) => this.submit(prompt);
+      return editor;
+    };
+    this.editor = this.makeEditor(selectedComposerDraft(state));
     this.vim = {
       ...createComposerVim(
         this.editor.getText(),
@@ -1508,26 +1533,50 @@ class ComposerView implements Component, Focusable {
       mode: state.composerMode ?? "insert",
     };
     if (state.composerMode === "visual") this.vim = { ...this.vim, anchor: this.vim.cursor };
-    this.editor.onChange = (text) => emit({ type: "set-composer-text", text });
-    this.editor.onSubmit = (prompt) => {
-      const launchId = activeLaunchWorkspaceId(this.state);
-      if (launchId) emit({ type: "submit-launch", workspaceId: launchId, prompt });
-      else if (this.draftWorkspaceId && prompt.trim())
-        emit({ type: "submit-session-draft", workspaceId: this.draftWorkspaceId, prompt });
-      else if (this.selectedAgentId && prompt.trim())
-        emit({ type: "submit-composer", agentId: this.selectedAgentId, prompt });
-    };
+  }
+  private keyFor(state: AppState): string {
+    if (state.newWorkspace) return "new-workspace";
+    const draft = activeSessionDraftWorkspaceId(state);
+    if (draft) return `draft:${draft}`;
+    const launch = activeLaunchWorkspaceId(state);
+    if (launch) return `launch:${launch}`;
+    return `session:${state.selectedAgentId ?? "none"}`;
+  }
+  private submit(prompt: string): void {
+    const launchId = activeLaunchWorkspaceId(this.state);
+    if (launchId) this.emit({ type: "submit-launch", workspaceId: launchId, prompt });
+    else if (this.draftWorkspaceId && prompt.trim())
+      this.emit({ type: "submit-session-draft", workspaceId: this.draftWorkspaceId, prompt });
+    else if (this.selectedAgentId && prompt.trim())
+      this.emit({ type: "submit-composer", agentId: this.selectedAgentId, prompt });
   }
   update(state: AppState): void {
-    if (Boolean(state.newWorkspace) !== Boolean(this.state.newWorkspace))
-      this.vim = createComposerVim(selectedComposerDraft(state));
+    const key = this.keyFor(state);
+    const changed = key !== this.resourceKey;
+    if (changed) {
+      this.cancelPendingInput();
+      this.resources.set(this.resourceKey, { editor: this.editor, vim: this.vim });
+      this.resourceKey = key;
+      const saved = this.resources.get(key);
+      this.editor = saved?.editor ?? this.makeEditor(selectedComposerDraft(state));
+      this.vim = saved?.vim ?? {
+        ...createComposerVim(selectedComposerDraft(state)),
+        mode: state.composerMode === undefined ? "insert" : "normal",
+      };
+    }
     this.state = state;
     this.selectedAgentId = state.selectedAgentId;
     this.draftWorkspaceId = activeSessionDraftWorkspaceId(state);
     const draft = selectedComposerDraft(state);
-    if (this.editor.getText() !== draft) this.editor.setText(draft);
+    if (this.editor.getText() !== draft) {
+      this.editor.setText(draft);
+      this.vim = { ...createComposerVim(draft), mode: this.vim.mode };
+    }
     this.vim = syncComposerVim(this.vim, this.editor.getText(), this.editor.getCursor());
-    if ((state.composerMode ?? "insert") !== this.vim.mode)
+    if (changed) {
+      if (state.composerMode !== this.vim.mode)
+        this.emit({ type: "set-composer-mode", mode: this.vim.mode });
+    } else if ((state.composerMode ?? "insert") !== this.vim.mode)
       this.vim = {
         ...this.vim,
         mode: state.composerMode ?? "insert",
@@ -1596,14 +1645,14 @@ class ComposerView implements Component, Focusable {
       ),
       ...(this.state.newWorkspace
         ? [
-            ` ${this.theme.clipOwnedLabel(`[\\j] Project · ${this.state.directory.projects.find((project) => project.id === this.state.newWorkspace?.projectId)?.name ?? "Choose project"}`, Math.max(1, innerWidth - 1))}`,
-            ` ${this.theme.clipOwnedLabel(this.state.newWorkspace.placementLoading ? "Loading workspace placement…" : this.state.newWorkspace.placementError ? "Workspace placement unavailable · Retry [\\s]" : `${this.state.newWorkspace.placementOptions?.supportsWorktree ? "[\\w] " : ""}${this.state.newWorkspace.placement === "worktree" ? "Worktree" : "Local"} · ${this.state.directory.projects.find((project) => project.id === this.state.newWorkspace?.projectId)?.path ?? "Original checkout unavailable"}`, Math.max(1, innerWidth - 1))}`,
+            ` ${this.theme.clipOwnedLabel(`Project · ${this.state.directory.projects.find((project) => project.id === this.state.newWorkspace?.projectId)?.name ?? "Choose project"}`, Math.max(1, innerWidth - 1))}`,
+            ` ${this.theme.clipOwnedLabel(this.state.newWorkspace.placementLoading ? "Loading workspace placement…" : this.state.newWorkspace.placementError ? "Workspace placement unavailable · Retry through palette" : `${this.state.newWorkspace.placementOptions?.supportsWorktree ? "" : ""}${this.state.newWorkspace.placement === "worktree" ? "Worktree" : "Local"} · ${this.state.directory.projects.find((project) => project.id === this.state.newWorkspace?.projectId)?.path ?? "Original checkout unavailable"}`, Math.max(1, innerWidth - 1))}`,
             ...(this.state.newWorkspace.placement === "worktree"
               ? [
-                  ` ${this.theme.clipOwnedLabel(`[\\b] Base ref · ${this.state.newWorkspace.placementOptions?.refs.find((ref) => ref.ref === this.state.newWorkspace?.baseRef)?.label ?? "Choose base"}`, Math.max(1, innerWidth - 1))}`,
+                  ` ${this.theme.clipOwnedLabel(`Base ref · ${this.state.newWorkspace.placementOptions?.refs.find((ref) => ref.ref === this.state.newWorkspace?.baseRef)?.label ?? "Choose base"}`, Math.max(1, innerWidth - 1))}`,
                 ]
               : []),
-            ` ${this.theme.clipOwnedLabel(`[\\n] Title · ${this.state.newWorkspace.title || "Optional"}`, Math.max(1, innerWidth - 1))}`,
+            ` ${this.theme.clipOwnedLabel(`Title · ${this.state.newWorkspace.title || "Optional"}`, Math.max(1, innerWidth - 1))}`,
           ]
         : []),
       ...body,
@@ -1772,6 +1821,7 @@ class ComposerView implements Component, Focusable {
       count: "",
       operatorCount: 1,
       operatorCountExplicit: false,
+      searchInput: undefined,
     };
   }
 
@@ -1793,12 +1843,12 @@ export function composerControlRow(state: AppState, theme: DeckTheme, width: num
   const launchId = activeLaunchWorkspaceId(state);
   const launch = launchId ? launchDraft(state, launchId) : undefined;
   const kindControl = launch
-    ? `${theme.style("muted", "[\\c]")} ${launch.kind === "session" ? "Session" : "Terminal"}  `
+    ? `${theme.style("muted", "Resource")} ${launch.kind === "session" ? "Session" : "Terminal"}  `
     : "";
   if (launch?.kind === "terminal") {
     const profile = launch.profiles?.find((item) => item.id === launch.profileId);
     return theme.clipRendered(
-      `${kindControl}${theme.style("muted", "[\\p]")} ${sanitizeTerminalText(profile?.name ?? "Default shell")}`,
+      `${kindControl}${theme.style("muted", "Profile")} ${sanitizeTerminalText(profile?.name ?? "Default shell")}`,
       width,
     );
   }
@@ -1806,10 +1856,10 @@ export function composerControlRow(state: AppState, theme: DeckTheme, width: num
   if (draftWorkspaceId || launch) {
     const draft = launch ?? (draftWorkspaceId ? state.sessionDrafts[draftWorkspaceId] : undefined);
     const controls = [
-      ["\\p", draft?.providerId ?? "provider"],
-      ["\\m", draft?.modelId ?? "model"],
-      ["\\z", draft?.thinkingLevel ?? "thinking"],
-      ["\\o", draft?.modeId ?? "mode"],
+      ["Provider", draft?.providerId ?? "provider"],
+      ["Model", draft?.modelId ?? "model"],
+      ["Thinking", draft?.thinkingLevel ?? "thinking"],
+      ["Mode", draft?.modeId ?? "mode"],
     ] as const;
     return theme.clipRendered(
       kindControl +
@@ -1827,9 +1877,9 @@ export function composerControlRow(state: AppState, theme: DeckTheme, width: num
   const thinking = agent?.thinkingLevel ?? "-";
   const mode = agent?.modeId ?? "-";
   const controls = [
-    [commandById(state, "model")?.shortcuts[0] ?? "m", model],
-    [commandById(state, "thinking")?.shortcuts[0] ?? "z", thinking],
-    [commandById(state, "operational-mode")?.shortcuts[0] ?? "o", mode],
+    [commandById(state, "model")?.shortcuts[0] ?? "Model", model],
+    [commandById(state, "thinking")?.shortcuts[0] ?? "Think", thinking],
+    [commandById(state, "operational-mode")?.shortcuts[0] ?? "Mode", mode],
   ] as const;
   const left = controls
     .map(([key, current]) => `${theme.style("muted", `[${key}]`)} ${theme.style("focus", current)}`)
@@ -2351,7 +2401,7 @@ class SearchableChoiceDialog implements Component, Focusable {
       return;
     }
     const matches = this.matches();
-    if (matchesKey(data, "up")) this.selected = Math.max(0, this.selected - 1);
+    if (matchesKey(data, "up") || data === "\u000b") this.selected = Math.max(0, this.selected - 1);
     else if (matchesKey(data, "down"))
       this.selected = Math.min(Math.max(0, matches.length - 1), this.selected + 1);
     else if (matchesKey(data, "enter")) {
@@ -2427,7 +2477,7 @@ class CommandPaletteDialog implements Component, Focusable {
       return;
     }
     const matches = this.matches();
-    if (matchesKey(data, "up")) this.selected = Math.max(0, this.selected - 1);
+    if (matchesKey(data, "up") || data === "\u000b") this.selected = Math.max(0, this.selected - 1);
     else if (matchesKey(data, "down"))
       this.selected = Math.min(Math.max(0, matches.length - 1), this.selected + 1);
     else if (matchesKey(data, "enter")) {
@@ -2475,6 +2525,17 @@ export class DeckTui {
   private treeWidth: number;
   private appOverlay: OverlayHandle | undefined;
   private appModalKey = "";
+  private suspendedQuit:
+    | {
+        key: string;
+        app: OverlayHandle | undefined;
+        local: OverlayHandle | undefined;
+        localKey: string;
+        stack: { handle: OverlayHandle; key: string }[];
+        snapshot: DeckTui["localSnapshot"];
+      }
+    | undefined;
+
   private localOverlay: OverlayHandle | undefined;
   private localOverlayKey = "";
   private readonly localOverlayStack: { handle: OverlayHandle; key: string }[] = [];
@@ -2485,6 +2546,8 @@ export class DeckTui {
   private searchFeedback = "Type to search source text.";
   private localSnapshot:
     | {
+        restoreInput: () => void;
+        agentId: string | undefined;
         itemId?: string;
         scrollTop: number;
         following: boolean;
@@ -2549,7 +2612,13 @@ export class DeckTui {
     this.timeline.update(initialState.timeline.items);
     this.timeline.updateSelection(initialState);
     this.contentPane = new ContentPane(this.timeline, this.theme, initialState);
-    this.composer = new ComposerView(this.tui, initialState, emit, this.theme, this.clipboard);
+    this.composer = new ComposerView(
+      this.tui,
+      initialState,
+      (intent) => this.handleControllerIntent(intent),
+      this.theme,
+      this.clipboard,
+    );
     this.status = new StatusView(initialState, this.theme, () => this.reconnectClock.now());
     this.minimumSize = new MinimumSizeView(this.theme);
     this.treeTranscript = new SidebarScrollView(this.tree, { follow: "none", scrollbar: "auto" });
@@ -2563,6 +2632,66 @@ export class DeckTui {
     );
     this.setShellLayout();
     this.tui.addInputListener((data) => {
+      const terminalOwns =
+        Boolean(this.state.activeTerminalId) &&
+        this.state.focus === "timeline" &&
+        this.state.modal.type === "none" &&
+        !this.localOverlayKey;
+      if (!terminalOwns) {
+        if (data === "\u0013" || data === "\u000b") {
+          const picker =
+            this.localOverlayKey === "__command-palette" ||
+            [
+              "new-tab",
+              "draft-setting",
+              "launch-profile",
+              "new-workspace-project",
+              "new-workspace-placement",
+              "new-workspace-base",
+              "mode",
+              "thinking",
+            ].includes(this.state.modal.type);
+          if (data === "\u000b" && picker) return undefined;
+          const destination = data === "\u0013" ? "tree" : "timeline";
+          const available =
+            destination === "tree" ||
+            Boolean(
+              this.state.selectedAgentId &&
+                !activeSessionDraftWorkspaceId(this.state) &&
+                !activeLaunchWorkspaceId(this.state),
+            );
+          if (
+            available &&
+            (this.state.focus !== destination ||
+              this.localOverlayKey ||
+              this.state.modal.type !== "none")
+          ) {
+            this.prepareInputTransition();
+            this.emit({ type: "set-focus", focus: destination });
+          }
+          return { consume: true };
+        }
+        if (data === "\u0010") {
+          if (this.localOverlayKey !== "__command-palette") {
+            this.prepareInputTransition();
+            this.openCommandPalette();
+          }
+          return { consume: true };
+        }
+        if (data === "\u0015" || data === "\u0004") {
+          this.handleControllerIntent({
+            type: "scroll-timeline",
+            direction: data === "\u0015" ? -1 : 1,
+          });
+          if (this.localSnapshot)
+            this.localSnapshot = {
+              ...this.localSnapshot,
+              scrollTop: this.transcript.scrollTop,
+              following: this.transcript.isFollowingEnd,
+            };
+          return { consume: true };
+        }
+      }
       if (
         !this.localOverlayKey &&
         this.state.modal.type === "none" &&
@@ -2584,7 +2713,7 @@ export class DeckTui {
       // Help and palette are intentionally global nested overlays. They are
       // available above an editor/dialog without handing ordinary keys through.
       if (data === "\u0003") return this.controller.handleKey(data) ? { consume: true } : undefined;
-      if (this.localOverlayKey === "__help" && data === "?") return undefined;
+
       const global = commandForKey(this.state, data);
       if (
         global?.id === "command-palette" ||
@@ -2831,6 +2960,10 @@ export class DeckTui {
     const previousAgentId = this.state.selectedAgentId;
     const recoveryChanged =
       state.timeline.recoveryRevision !== this.state.timeline.recoveryRevision;
+    if (focusChanged || state.selectedAgentId !== previousAgentId) {
+      this.controller.cancelPendingInput();
+      this.composer.cancelPendingInput();
+    }
     this.state = state;
     this.tabs.update(state);
     this.contentPane.update(state);
@@ -2864,7 +2997,14 @@ export class DeckTui {
     if (previousAgentId !== state.selectedAgentId || recoveryChanged)
       this.restoreTimelineNavigation(state);
     if (focusChanged || treeSelectionChanged) {
-      if (state.focus === "timeline" && !restoredPaused) this.revealTimelineCursor();
+      if (
+        state.focus === "timeline" &&
+        !restoredPaused &&
+        (previousAgentId !== state.selectedAgentId ||
+          recoveryChanged ||
+          state.timelineNavigation[state.selectedAgentId ?? ""]?.following !== false)
+      )
+        this.revealTimelineCursor();
       else if (state.focus === "tree") this.revealTreeSelection();
       // Nested main-column layouts measure scroll views on the next frame.
       // Repeat the reveal after that measurement so selected rows remain visible.
@@ -3058,7 +3198,11 @@ export class DeckTui {
       this.timeline.startVisual("character");
     if (intent.type === "scroll-timeline") {
       const amount = Math.max(1, Math.floor(this.transcript.viewportHeight / 2));
-      if (this.state.focus === "timeline") {
+      if (
+        this.state.focus === "timeline" &&
+        !this.localOverlayKey &&
+        this.state.modal.type === "none"
+      ) {
         this.timeline.pageText(intent.direction, amount + 1);
         this.transcript.scrollBy(intent.direction * amount);
         this.revealTimelineCursor();
@@ -3116,10 +3260,13 @@ export class DeckTui {
       return;
     }
     if (intent.type === "open-command-palette") {
+      if (this.localOverlayKey !== "__command-palette") this.prepareInputTransition();
       this.openCommandPalette();
       return;
     }
     if (intent.type === "open-help") {
+      this.controller.cancelPendingInput();
+      this.composer.cancelPendingInput();
       this.openHelp();
       return;
     }
@@ -3184,6 +3331,15 @@ export class DeckTui {
     );
   }
 
+  private prepareInputTransition(): void {
+    while (this.localOverlayKey) this.restoreLocalOverlay();
+    this.controller.cancelPendingInput();
+    this.composer.cancelPendingInput();
+    if (this.state.modal.type !== "none") this.emit({ type: "close-modal" });
+    if (this.state.modal.type !== "none") this.emit({ type: "close-modal" });
+    this.disposeLocalOverlay();
+  }
+
   private openCommandPalette(): void {
     if (this.localOverlayKey === "__command-palette") return;
     this.captureLocalSnapshot();
@@ -3227,7 +3383,7 @@ export class DeckTui {
           ...contextualHelp(this.state, context).map((command) => commandHelpLine(command)),
         ],
         (data) => {
-          if (matchesKey(data, "escape") || data === "?") this.restoreLocalOverlay();
+          if (matchesKey(data, "escape")) this.restoreLocalOverlay();
           return true;
         },
         this.theme,
@@ -3312,9 +3468,9 @@ export class DeckTui {
     this.disposeLocalOverlay();
     this.appOverlay?.setHidden(false);
     this.appOverlay?.focus();
-    if (snapshot) {
+    if (snapshot && snapshot.agentId === this.state.selectedAgentId) {
       if (snapshot.itemId) this.timeline.selectEvent(snapshot.itemId);
-      this.timeline.restoreSelectionCursor();
+      snapshot.restoreInput();
       if (snapshot.following) this.transcript.scrollToEnd();
       else this.transcript.scrollTo(snapshot.scrollTop, { disableFollow: true });
       this.setTimelineFollowing(snapshot.following, snapshot.anchor);
@@ -3362,6 +3518,8 @@ export class DeckTui {
     const itemId = this.timeline.selectedItem()?.id;
     const anchor = this.timeline.cursorAtLine(this.transcript.scrollTop);
     this.localSnapshot = {
+      restoreInput: this.timeline.captureInputState(),
+      agentId: this.state.selectedAgentId,
       scrollTop: this.transcript.scrollTop,
       following: this.transcript.isFollowingEnd,
       ...(itemId === undefined ? {} : { itemId }),
@@ -3479,6 +3637,47 @@ export class DeckTui {
   private syncModal(): void {
     const key = JSON.stringify(this.state.modal);
     if (key === this.appModalKey) return;
+    this.controller.cancelPendingInput();
+    this.composer.cancelPendingInput();
+    if (
+      this.state.modal.type === "confirm" &&
+      this.state.modal.action === "quit" &&
+      !this.suspendedQuit
+    ) {
+      this.suspendedQuit = {
+        key: this.appModalKey,
+        app: this.appOverlay,
+        local: this.localOverlay,
+        localKey: this.localOverlayKey,
+        stack: [...this.localOverlayStack],
+        snapshot: this.localSnapshot,
+      };
+      this.appOverlay?.setHidden(true);
+      this.localOverlay?.setHidden(true);
+      this.appOverlay = undefined;
+      this.localOverlay = undefined;
+      this.localOverlayKey = "";
+      this.localOverlayStack.length = 0;
+      this.localSnapshot = undefined;
+    } else if (this.suspendedQuit) {
+      const saved = this.suspendedQuit;
+      this.suspendedQuit = undefined;
+      this.appOverlay?.hide();
+      if (key === saved.key) {
+        this.appOverlay = saved.app;
+        this.localOverlay = saved.local;
+        this.localOverlayKey = saved.localKey;
+        this.localOverlayStack.push(...saved.stack);
+        this.localSnapshot = saved.snapshot;
+        this.appModalKey = key;
+        (this.localOverlay ?? this.appOverlay)?.setHidden(false);
+        (this.localOverlay ?? this.appOverlay)?.focus();
+        return;
+      }
+      saved.app?.hide();
+      saved.local?.hide();
+      for (const overlay of saved.stack) overlay.handle.hide();
+    }
     this.disposeLocalOverlay();
     this.appOverlay?.unfocus({
       target:
@@ -3737,62 +3936,16 @@ export class DeckTui {
         close,
         this.theme,
       );
-    else if (
-      modal.type === "confirm" &&
-      (modal.action === "discard-draft" || modal.action === "quit")
-    ) {
-      const title =
-        modal.action === "quit"
-          ? "Quit with unsent session drafts?"
-          : "Discard this session draft?";
-      component = new SearchableChoiceDialog(
-        title,
-        [
-          { value: "no", label: "No", description: "Keep working", disabled: false },
-          {
-            value: "yes",
-            label: "Yes",
-            description:
-              modal.action === "quit" ? "Quit and discard unsent drafts" : "Discard this draft",
-            disabled: false,
-          },
-        ],
-        (choice) => (choice === "yes" ? this.controller.confirm(modal) : close()),
-        close,
-        "no",
-        this.choicePickerMaxVisible(true),
-        this.theme,
-      );
-    } else if (modal.type === "confirm" && modal.action === "kill-terminal") {
-      const choices = [
-        { value: "no", label: "No", description: "Keep terminal running", disabled: false },
-        {
-          value: "yes",
-          label: "Yes",
-          description: "Terminate terminal and its process",
-          disabled: false,
-        },
-      ];
-      const title = "Terminate terminal?";
-      component = new SearchableChoiceDialog(
-        title,
-        choices,
-        (choice) => (choice === "yes" ? this.controller.confirm(modal) : close()),
-        close,
-        "no",
-        this.choicePickerMaxVisible(true),
-        this.theme,
-      );
-      overlayOptions = {
-        width: centeredChoicePickerWidth(this.terminal.columns, title, choices),
-        maxHeight: Math.max(1, this.terminal.rows - 2),
-        margin: 1,
-        visible: (columns, rows) => shellLayout(columns, rows, this.treeWidth).supported,
-      };
-    } else if (modal.type === "confirm")
+    else if (modal.type === "confirm")
       component = new Dialog(
         [
-          `${modal.action === "archive" ? "Archive" : modal.action === "stop" ? "Stop" : "Detach"} this session?`,
+          modal.action === "quit"
+            ? "Quit and discard unsent work?"
+            : `${modal.action} ${modal.label ?? modal.agentId ?? modal.terminalId ?? modal.workspaceId ?? "draft"}?`,
+          modal.unavailableReason ??
+            (modal.busy
+              ? "Working… Escape dismisses; request continues."
+              : "Enter confirms · Escape cancels"),
           ...(modal.draftWarning
             ? ["This session has an unsent draft; it will be preserved."]
             : []),

@@ -14,7 +14,12 @@ import type {
   TerminalRecord,
 } from "../contracts/terminal.js";
 import { PaseoGatewayError, paseoFailure, redactTransportDetail } from "../paseo/errors.js";
-import { activeSessionDraftWorkspaceId, composerAvailability } from "../state/composer.js";
+import {
+  activeSessionDraftWorkspaceId,
+  composerAvailability,
+  draftHasUnsentWork,
+  hasUnsentWork,
+} from "../state/composer.js";
 import { activeLaunchWorkspaceId, launchDraft, NEW_WORKSPACE_DRAFT_ID } from "../state/launch.js";
 import {
   type AppAction,
@@ -44,6 +49,11 @@ type RetryOperation =
 
 export class ApplicationController {
   #state: AppState;
+  private confirmationSequence = 0;
+  private quitting = false;
+  private readonly inFlightConfirmations = new Set<number>();
+  private readonly inFlightTargets = new Set<string>();
+  private quitOrigin: AppState["modal"] | undefined;
   readonly #listeners = new Set<(state: AppState) => void>();
   #directoryObservation: Observation | undefined;
   #timelineObservation: Observation | undefined;
@@ -358,6 +368,43 @@ export class ApplicationController {
         return;
       }
       case "kill-terminal-confirmed": {
+        const captured = this.#state.modal;
+        const targetKey = `kill-terminal:${intent.terminalId}`;
+        const token =
+          captured.type === "confirm" && captured.terminalId === intent.terminalId
+            ? captured.id
+            : undefined;
+        if (token !== undefined && captured.type === "confirm") {
+          if (this.inFlightTargets.has(targetKey)) {
+            this.apply({
+              type: "open-modal",
+              modal: {
+                ...captured,
+                unavailableReason: "Request already in progress for this captured terminal.",
+              },
+            });
+            return;
+          }
+          if (this.inFlightConfirmations.has(token) || captured.unavailableReason) return;
+          if (
+            !Object.values(this.#state.workspaceTerminals ?? {}).some((items) =>
+              items.some((terminal) => terminal.id === intent.terminalId),
+            ) ||
+            this.#state.connection !== "connected"
+          ) {
+            this.apply({
+              type: "open-modal",
+              modal: {
+                ...captured,
+                unavailableReason: "Captured terminal is no longer available.",
+              },
+            });
+            return;
+          }
+          this.inFlightConfirmations.add(token);
+          this.inFlightTargets.add(targetKey);
+          this.apply({ type: "open-modal", modal: { ...captured, busy: true } });
+        }
         try {
           await this.gateway.killTerminal(intent.terminalId);
           await this.#terminalObservations.get(intent.terminalId)?.release();
@@ -366,14 +413,28 @@ export class ApplicationController {
             ([, items]) => items.some((item) => item.id === intent.terminalId),
           )?.[0];
           if (workspaceId) await this.discoverTerminals(workspaceId);
-          this.apply({ type: "close-modal" });
+          if (
+            token === undefined
+              ? this.#state.modal === captured
+              : this.#state.modal.type === "confirm" && this.#state.modal.id === token
+          )
+            this.apply({ type: "close-modal" });
         } catch (error) {
+          if (
+            token !== undefined &&
+            this.#state.modal.type === "confirm" &&
+            this.#state.modal.id === token
+          )
+            this.apply({ type: "open-modal", modal: { ...this.#state.modal, busy: false } });
           this.apply({
             type: "notify",
             message: "Could not terminate terminal.",
             detail: errorMessage(error),
             kind: "error",
           });
+        } finally {
+          if (token !== undefined) this.inFlightConfirmations.delete(token);
+          this.inFlightTargets.delete(targetKey);
         }
         return;
       }
@@ -381,7 +442,7 @@ export class ApplicationController {
         this.apply({ type: "set-terminal-mode", mode: intent.mode });
         return;
       case "terminal-input":
-        if (this.#state.activeTerminalId && this.#state.terminalMode === "insert")
+        if (this.#state.activeTerminalId)
           this.gateway.sendTerminalInput(this.#state.activeTerminalId, intent.data);
         return;
       case "select-next":
@@ -611,7 +672,7 @@ export class ApplicationController {
       case "discard-session-draft": {
         const draft = this.#state.sessionDrafts[intent.workspaceId];
         if (!draft) return;
-        if (draft.dirty)
+        if (draftHasUnsentWork(draft))
           this.apply({
             type: "open-modal",
             modal: { type: "confirm", action: "discard-draft", workspaceId: intent.workspaceId },
@@ -920,16 +981,31 @@ export class ApplicationController {
         await this.refresh();
         return;
       case "quit":
-        if (Object.values(this.#state.sessionDrafts).some((draft) => draft.dirty)) {
+        if (this.#state.modal.type === "confirm" && this.#state.modal.action === "quit") return;
+        if (hasUnsentWork(this.#state)) {
+          this.quitOrigin = this.#state.modal;
           this.apply({ type: "open-modal", modal: { type: "confirm", action: "quit" } });
           return;
         }
         await this.options.onQuit?.();
         return;
       case "quit-confirmed":
+        if (this.quitting) return;
+        this.quitting = true;
         await this.options.onQuit?.();
         return;
       case "close-modal":
+        if (
+          this.#state.modal.type === "confirm" &&
+          this.#state.modal.action === "quit" &&
+          this.quitOrigin
+        ) {
+          const modal = this.quitOrigin;
+          this.quitOrigin = undefined;
+          if (modal.type === "none") this.apply({ type: "close-modal" });
+          else this.apply({ type: "open-modal", modal });
+          return;
+        }
         this.apply({ type: "close-modal" });
         return;
       case "toggle-timeline-item":
@@ -1019,6 +1095,21 @@ export class ApplicationController {
   }
 
   private apply(action: AppAction): void {
+    if (
+      action.type === "open-modal" &&
+      action.modal.type === "confirm" &&
+      action.modal.id === undefined
+    ) {
+      const modal = action.modal;
+      const label = modal.agentId
+        ? (this.#state.directory.agents.find((agent) => agent.id === modal.agentId)?.title ??
+          modal.agentId)
+        : (modal.terminalId ?? modal.workspaceId);
+      action = {
+        ...action,
+        modal: { ...modal, id: ++this.confirmationSequence, ...(label ? { label } : {}) },
+      };
+    }
     const previousModal = this.#state.modal;
     this.#state = reduceApp(this.#state, action);
     this.pruneRetries();
@@ -1627,23 +1718,72 @@ export class ApplicationController {
   }
 
   private async runCommand(command: AgentCommand): Promise<void> {
+    const origin = this.#state.modal;
+    const confirmation =
+      origin.type === "confirm" && "agentId" in command && origin.agentId === command.agentId
+        ? origin
+        : undefined;
+    const token = confirmation?.id;
+    const targetKey = confirmation ? `${command.type}:${confirmation.agentId}` : undefined;
+    if (token !== undefined && confirmation) {
+      if (targetKey && this.inFlightTargets.has(targetKey)) {
+        this.apply({
+          type: "open-modal",
+          modal: {
+            ...confirmation,
+            unavailableReason: "Request already in progress for this captured session.",
+          },
+        });
+        return;
+      }
+      if (this.inFlightConfirmations.has(token) || confirmation?.unavailableReason) return;
+      if (
+        this.#state.connection !== "connected" ||
+        !this.#state.directory.agents.some(
+          (agent) => agent.id === confirmation.agentId && !agent.archived,
+        )
+      ) {
+        this.apply({
+          type: "open-modal",
+          modal: { ...confirmation, unavailableReason: "Captured session is no longer available." },
+        });
+        return;
+      }
+      this.inFlightConfirmations.add(token);
+      if (targetKey) this.inFlightTargets.add(targetKey);
+      this.apply({ type: "open-modal", modal: { ...confirmation, busy: true } });
+    }
     try {
       const result = await this.gateway.execute(command);
       if (command.type === "detach-agent")
         this.apply({ type: "composer-detached", agentId: command.agentId });
-      this.apply({ type: "close-modal" });
+      if (
+        token === undefined
+          ? this.#state.modal === origin
+          : this.#state.modal.type === "confirm" && this.#state.modal.id === token
+      )
+        this.apply({ type: "close-modal" });
       this.apply({
         type: "notify",
         message:
           result.type === "agent-created" ? `Created agent ${shortId(result.agentId)}.` : "Done.",
       });
     } catch (error) {
+      if (
+        token !== undefined &&
+        this.#state.modal.type === "confirm" &&
+        this.#state.modal.id === token
+      )
+        this.apply({ type: "open-modal", modal: { ...this.#state.modal, busy: false } });
       this.reportError(
         "The Paseo command failed.",
         error,
         this.registerRetry({ type: "command", command }),
         "command",
       );
+    } finally {
+      if (token !== undefined) this.inFlightConfirmations.delete(token);
+      if (targetKey) this.inFlightTargets.delete(targetKey);
     }
   }
 

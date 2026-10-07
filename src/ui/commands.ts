@@ -249,7 +249,7 @@ export const deckCommands: readonly DeckCommand[] = [
     id: "composer-history-previous",
     label: "Previous prompt draft",
     group: "Application",
-    shortcuts: ["Ctrl-P"],
+    shortcuts: [],
     contexts: ["composer"],
     palette: false,
     intent: () => ({ type: "navigate-composer-history", direction: -1 }),
@@ -258,7 +258,7 @@ export const deckCommands: readonly DeckCommand[] = [
     id: "composer-history-next",
     label: "Next prompt draft",
     group: "Application",
-    shortcuts: ["Ctrl-N"],
+    shortcuts: [],
     contexts: ["composer"],
     palette: false,
     intent: () => ({ type: "navigate-composer-history", direction: 1 }),
@@ -275,8 +275,7 @@ export const deckCommands: readonly DeckCommand[] = [
     id: "sidebar-navigation",
     label: "Navigate sidebar",
     group: "Sessions",
-    shortcuts: ["n"],
-    contexts: ["composer", "timeline"],
+    shortcuts: ["Ctrl-S"],
     palette: false,
     intent: () => ({ type: "set-focus", focus: "tree" }),
   },
@@ -284,8 +283,7 @@ export const deckCommands: readonly DeckCommand[] = [
     id: "timeline-navigation",
     label: "Navigate timeline",
     group: "Timeline",
-    shortcuts: ["t"],
-    contexts: ["composer"],
+    shortcuts: ["Ctrl-K"],
     palette: false,
     intent: () => ({ type: "set-focus", focus: "timeline" }),
   },
@@ -312,7 +310,7 @@ export const deckCommands: readonly DeckCommand[] = [
     id: "quit",
     label: "Quit Paseo Deck",
     group: "Application",
-    shortcuts: ["q", "Ctrl-C"],
+    shortcuts: ["Ctrl-C"],
     palette: false,
     intent: () => ({ type: "quit" }),
   },
@@ -589,7 +587,7 @@ export const deckCommands: readonly DeckCommand[] = [
     id: "command-palette",
     label: "Command palette",
     group: "Application",
-    shortcuts: ["Ctrl-K", "Cmd-P"],
+    shortcuts: ["Ctrl-P"],
     intent: () => ({ type: "open-command-palette" }),
   },
   {
@@ -603,7 +601,7 @@ export const deckCommands: readonly DeckCommand[] = [
     id: "help",
     label: "Show contextual help",
     group: "Application",
-    shortcuts: ["?"],
+    shortcuts: ["g?"],
     intent: () => ({ type: "open-help" }),
   },
   {
@@ -807,7 +805,7 @@ export const deckCommands: readonly DeckCommand[] = [
     id: "timeline-search-backward",
     label: "Search timeline backward",
     group: "Timeline",
-    shortcuts: ["?"],
+    shortcuts: ["g?"],
     contexts: ["timeline"],
     disabledReason: (state) => (state.timeline.items.length ? undefined : "Timeline is empty"),
     intent: () => ({ type: "open-timeline-search", direction: -1 }),
@@ -845,36 +843,36 @@ export const deckCommands: readonly DeckCommand[] = [
 // and timeline use one mnemonic backslash prefix, including disabled actions
 // so help and the palette show the same binding as input dispatch.
 const bufferShortcuts: Readonly<Record<string, readonly string[]>> = {
-  "new-tab": ["\\T"],
-  "discard-draft": ["\\D"],
-  "terminal-kill": ["\\K"],
-  "tab-next": ["\\]"],
-  "tab-previous": ["\\["],
-  quit: ["\\q", "Ctrl-C"],
-  "sidebar-navigation": ["\\n"],
-  "timeline-navigation": ["\\t"],
-  "focus-composer": ["\\i"],
-  "composer-history-previous": ["\\h"],
-  "composer-history-next": ["\\H"],
+  "timeline-search": ["/"],
+  quit: ["Ctrl-C"],
+  "sidebar-navigation": ["Ctrl-S"],
+  "timeline-navigation": ["Ctrl-K"],
+  help: ["g?"],
+  "new-tab": [],
+  "discard-draft": [],
+  "terminal-kill": [],
+  "tab-next": [],
+  "tab-previous": [],
+  "focus-composer": [],
+  "composer-history-previous": [],
+  "composer-history-next": [],
+  refresh: [],
+  notifications: [],
+  retry: [],
+  "error-details": [],
+  filter: [],
+  permissions: [],
+  "toggle-archived": [],
+  "toggle-attention": [],
+  "stop-agent": [],
+  "archive-agent": [],
+  "detach-agent": [],
+  "rename-agent": [],
+  model: [],
+  "operational-mode": [],
+  thinking: [],
   "scroll-timeline-up": [],
   "scroll-timeline-down": [],
-  help: ["\\?"],
-  refresh: ["\\r"],
-  notifications: ["\\N"],
-  retry: ["\\R"],
-  "error-details": ["\\E"],
-  filter: ["\\f"],
-  permissions: ["\\P"],
-  "toggle-archived": ["\\v"],
-  "toggle-attention": ["\\!"],
-  "stop-agent": ["\\x"],
-  "archive-agent": ["\\A"],
-  "detach-agent": ["\\d"],
-  "rename-agent": ["\\e"],
-  model: ["\\m"],
-  "operational-mode": ["\\o"],
-  thinking: ["\\z"],
-  "timeline-search": ["/"],
   "previous-turn": ["[t"],
   "next-turn": ["]t"],
   "previous-error": ["[e"],
@@ -927,6 +925,7 @@ export function commandContext(state: AppState): CommandContext {
 
 export function shortcutForInput(data: string): string | undefined {
   if (data === "\u001b") return "Esc";
+  if (data === "\u0013") return "Ctrl-S";
   if (data === "\u000b") return "Ctrl-K";
   if (data === "\u0006") return "Ctrl-F";
   if (data === "\u001b[A") return "Up";
@@ -939,7 +938,6 @@ export function shortcutForInput(data: string): string | undefined {
   if (data === "\u000e") return "Ctrl-N";
   if (data === "\u0015") return "Ctrl-U";
   if (data === "\u0004") return "Ctrl-D";
-  // Most terminal emulators encode Cmd-P as ESC+p. Do not consume ordinary p.
-  if (data === "\u001bp") return "Cmd-P";
+
   return data.length === 1 ? data : undefined;
 }

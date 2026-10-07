@@ -1,7 +1,7 @@
 import type { AppState, FocusArea, ModalState } from "../contracts/app-state.js";
 import type { AgentCommand } from "../contracts/commands.js";
 import { activeSessionDraftWorkspaceId } from "../state/composer.js";
-import { activeLaunchWorkspaceId, launchDraft } from "../state/launch.js";
+import { activeLaunchWorkspaceId } from "../state/launch.js";
 import { commandById, commandForKey, newTabUnavailableReason } from "./commands.js";
 
 const timelineTextMotionKeys = [
@@ -165,12 +165,18 @@ export class DeckController {
   #tabCountPrefix = "";
   #timelinePrefix = "";
   #timelineCount = "";
-  #bufferLeader = false;
   #timelineSearchDirection: -1 | 1 = 1;
   constructor(
     private readonly getState: () => AppState,
     private readonly emit: (intent: UiIntent) => void,
   ) {}
+
+  cancelPendingInput(): void {
+    this.#tabPrefix = "";
+    this.#tabCountPrefix = "";
+    this.#timelinePrefix = "";
+    this.#timelineCount = "";
+  }
 
   handleKey(data: string): boolean {
     const state = this.getState();
@@ -178,43 +184,46 @@ export class DeckController {
       this.#timelinePrefix = "";
       this.#timelineCount = "";
     }
+    if (
+      state.activeTerminalId &&
+      state.focus === "timeline" &&
+      state.modal.type === "none" &&
+      ["\u0003", "\u000b", "\u0010", "\u0015", "\u0004"].includes(data)
+    )
+      return this.send({ type: "terminal-input", data });
     // This must precede terminal passthrough as well as every editor, modal,
     // and focus branch. In raw mode Ctrl-C is Deck's unconditional exit key.
     if (data === "\u0003") return this.send({ type: "quit" });
-    const bufferMode =
-      state.modal.type === "none" &&
-      ((state.focus === "composer" && state.composerMode !== "insert") ||
-        (state.focus === "timeline" && !state.activeTerminalId));
-    if (!bufferMode) this.#bufferLeader = false;
-    if (bufferMode && this.#bufferLeader) {
-      this.#bufferLeader = false;
-      if (data === "\u001b") return true;
-      if (state.newWorkspace && state.focus === "composer") {
-        if (data === "j") return this.send({ type: "open-new-workspace-project" });
-        if (data === "w") return this.send({ type: "open-new-workspace-placement" });
-        if (data === "b") return this.send({ type: "open-new-workspace-base" });
-        if (data === "n") return this.send({ type: "open-new-workspace-title" });
+    if (data === "\u0010") return this.send({ type: "open-command-palette" });
+    if (data === "\u0013") {
+      if (state.focus !== "tree") {
+        this.cancelPendingInput();
+        return this.send({ type: "set-focus", focus: "tree" });
       }
-      const key = `\\${data}`;
-      const launchId = activeLaunchWorkspaceId(state);
-      if (state.focus === "composer" && launchId) {
-        if (data === "c") return this.send({ type: "toggle-launch-kind" });
-        if (launchDraft(state, launchId).kind === "terminal") {
-          if (data === "p") return this.send({ type: "open-launch-profile" });
-          if (["m", "z", "o"].includes(data)) return true;
-        }
-      }
-      if (state.focus === "composer" && (activeSessionDraftWorkspaceId(state) || launchId)) {
-        const setting = ({ p: "provider", m: "model", z: "thinking", o: "mode" } as const)[
-          data as "p" | "m" | "z" | "o"
-        ];
-        if (setting) return this.send({ type: "open-draft-setting", setting });
-      }
-      return this.sendResolved(commandForKey(state, key), state) || true;
-    }
-    if (bufferMode && data === "\\") {
-      this.#bufferLeader = true;
       return true;
+    }
+    if (data === "\u000b" && state.modal.type === "none") {
+      if (
+        state.selectedAgentId &&
+        !activeSessionDraftWorkspaceId(state) &&
+        !activeLaunchWorkspaceId(state) &&
+        state.focus !== "timeline"
+      ) {
+        this.cancelPendingInput();
+        return this.send({ type: "set-focus", focus: "timeline" });
+      }
+      return true;
+    }
+    if ((data === "\u0015" || data === "\u0004") && !state.activeTerminalId)
+      return this.send({ type: "scroll-timeline", direction: data === "\u0015" ? -1 : 1 });
+    if (
+      state.focus === "tree" &&
+      state.modal.type === "none" &&
+      this.#tabPrefix === "g" &&
+      data === "?"
+    ) {
+      this.cancelPendingInput();
+      return this.send({ type: "open-help" });
     }
     const tabNormalMode =
       state.modal.type === "none" &&
@@ -222,7 +231,7 @@ export class DeckController {
         (state.focus === "timeline" && state.activeTerminalId && state.terminalMode !== "insert"));
     if (
       data === "T" &&
-      !bufferMode &&
+      state.focus !== "composer" &&
       !this.#tabPrefix &&
       !newTabUnavailableReason(state) &&
       state.selectedWorkspaceId
@@ -442,6 +451,10 @@ export class DeckController {
       }
       if (this.#timelinePrefix === "g") {
         this.#timelinePrefix = "";
+        if (data === "?") {
+          this.cancelPendingInput();
+          return this.send({ type: "open-help" });
+        }
         if (data === "*" || data === "#") {
           this.#timelineSearchDirection = data === "*" ? 1 : -1;
           return this.send({
@@ -678,6 +691,7 @@ export class DeckController {
   }
 
   confirm(modal: Extract<ModalState, { type: "confirm" }>): void {
+    if (modal.busy || modal.unavailableReason) return;
     if (modal.action === "quit") {
       this.emit({ type: "quit-confirmed" });
       return;

@@ -752,7 +752,7 @@ describe("ApplicationController", () => {
 
     await app.handleIntent({ type: "open-confirmation", action: "archive", agentId: "agent-1" });
 
-    expect(app.state.modal).toEqual({
+    expect(app.state.modal).toMatchObject({
       type: "confirm",
       action: "archive",
       agentId: "agent-1",
@@ -2076,4 +2076,47 @@ describe("Workspace placement async ownership", () => {
     expect(gateway.createdWorkspaces).toHaveLength(0);
     expect(app.state.newWorkspace?.launch.prompt).toBe("");
   });
+});
+
+describe("captured confirmations", () => {
+  it("restores the underlying dialog when dirty quit is canceled", async () => {
+    const app = new ApplicationController(new FakePaseoGateway(snapshot));
+    await app.start();
+    app.setComposerText("unsent");
+    await app.handleIntent({ type: "open-rename", agentId: "agent-1" });
+    const original = app.state.modal;
+    await app.handleIntent({ type: "quit" });
+    expect(app.state.modal).toMatchObject({ type: "confirm", action: "quit" });
+    await app.handleIntent({ type: "quit" });
+    await app.handleIntent({ type: "close-modal" });
+    expect(app.state.modal).toEqual(original);
+  });
+});
+
+it("guards captured confirmation duplication and late completion", async () => {
+  const gateway = new FakePaseoGateway(snapshot);
+  let finish!: () => void;
+  const original = gateway.execute.bind(gateway);
+  gateway.execute = async (command) => {
+    const result = await original(command);
+    await new Promise<void>((resolve) => {
+      finish = resolve;
+    });
+    return result;
+  };
+  const app = new ApplicationController(gateway);
+  await app.start();
+  await app.handleIntent({ type: "open-confirmation", action: "stop", agentId: "agent-1" });
+  const request = app.handleIntent({
+    type: "command",
+    command: { type: "stop-agent", agentId: "agent-1" },
+  });
+  void app.handleIntent({ type: "command", command: { type: "stop-agent", agentId: "agent-1" } });
+  expect(gateway.commands).toEqual([{ type: "stop-agent", agentId: "agent-1" }]);
+  await app.handleIntent({ type: "close-modal" });
+  await app.handleIntent({ type: "open-rename", agentId: "agent-2" });
+  await Promise.resolve();
+  finish();
+  await request;
+  expect(app.state.modal).toMatchObject({ type: "rename", agentId: "agent-2" });
 });

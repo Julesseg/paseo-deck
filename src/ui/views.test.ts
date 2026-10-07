@@ -524,10 +524,10 @@ describe("composer controls", () => {
     const screen = terminal.viewport().join("\n");
     await deck.stop();
     expect(screen).toContain("✎ New session");
-    expect(screen).toContain("[\\p] ready");
-    expect(screen).toContain("[\\m] one");
-    expect(screen).toContain("[\\z] low");
-    expect(screen).toContain("[\\o] plan");
+    expect(screen).toContain("[Provider] ready");
+    expect(screen).toContain("[Model] one");
+    expect(screen).toContain("[Thinking] low");
+    expect(screen).toContain("[Mode] plan");
     expect(screen).not.toContain("Provider:");
     expect(screen).not.toContain("Press i to edit");
     expect(screen).toContain("First message");
@@ -773,12 +773,12 @@ describe("composer controls", () => {
         composerMode: "normal",
       },
       new DeckTheme({ color: "none", unicode: false, theme: "plain", symbols: "ascii" }),
-      18,
+      24,
     );
-    expect(row).toContain("[\\m]");
-    expect(row).toContain("[\\z]");
-    expect(row).toContain("[\\o]");
-    expect(terminalDisplayWidth(row)).toBeLessThanOrEqual(18);
+    expect(row).toContain("[Model]");
+    expect(row).toContain("[Think]");
+    expect(row).toContain("[Mode]");
+    expect(terminalDisplayWidth(row)).toBeLessThanOrEqual(24);
   });
 
   it("keeps Paseo-specific control cues while the status edge omits ordinary Vim instructions", async () => {
@@ -797,9 +797,9 @@ describe("composer controls", () => {
     const rendered = terminal.viewport().join("\n");
     await deck.stop();
 
-    expect(rendered).toContain("[\\m]");
-    expect(rendered).toContain("[\\z]");
-    expect(rendered).toContain("[\\o]");
+    expect(rendered).toContain("[Model]");
+    expect(rendered).toContain("[Think]");
+    expect(rendered).toContain("[Mode]");
     expect(rendered).not.toContain("Composer NORMAL:");
     expect(rendered).not.toContain("Sidebar:");
     expect(rendered).not.toContain("Timeline NORMAL:");
@@ -1885,15 +1885,9 @@ describe("DeckTui viewport and focus", () => {
     });
     await terminal.waitForRender();
     expect(terminal.viewport().join("\n")).toContain("2 matches · result 1 · updated");
-    terminal.sendInput("\u000e");
-    await terminal.waitForRender();
-    expect(terminal.viewport().join("\n")).toContain("2 matches · result 2");
     terminal.sendInput("\u0010");
     await terminal.waitForRender();
-    expect(terminal.viewport().join("\n")).toContain("2 matches · result 1");
-    terminal.sendInput("\r");
-    await terminal.waitForRender();
-    expect(terminal.viewport().join("\n")).toContain("2 matches · result 2");
+    expect(terminal.viewport().join("\n")).toContain("Command palette");
     terminal.sendInput("\u001b");
     await terminal.waitForRender();
     await terminal.waitForRender();
@@ -3289,7 +3283,7 @@ describe("DeckTui viewport and focus", () => {
     await deck.stop();
     expect(terminal.viewport().join("\n")).toContain("unsent draft; it will be preserved");
   });
-  it("confirms terminal termination through a centered fuzzy choice picker", async () => {
+  it("confirms the captured terminal with Enter and ignores printable choices", async () => {
     const terminal = new RecordingTerminal(100, 28);
     const intents: unknown[] = [];
     const current: AppState = {
@@ -3300,25 +3294,15 @@ describe("DeckTui viewport and focus", () => {
     deck.update(current);
     deck.start();
     await terminal.waitForRender();
-    const lines = terminal.viewport();
-    const top = lines.findIndex((line) => line.includes("Terminate terminal?"));
-    const left = lines[top]?.indexOf("┌") ?? -1;
-    expect(top).toBeGreaterThan(4);
-    expect(left).toBeGreaterThan(10);
-    expect(lines.join("\n")).toContain("> No - Keep terminal running");
-    expect(lines.join("\n")).toContain("Yes - Terminate terminal and its process");
-    expect(lines.join("\n")).not.toContain("␛_pi:c");
-
-    terminal.sendInput("y");
-    terminal.sendInput("s");
-    await terminal.waitForRender();
-    expect(terminal.viewport().join("\n")).toContain("> Yes - Terminate terminal and its process");
+    expect(terminal.viewport().join("\n")).toContain("kill-terminal terminal-1?");
+    expect(terminal.viewport().join("\n")).toContain("Enter confirms");
+    for (const input of ["y", "n", "\u001b[B", "\u001b[A"]) terminal.sendInput(input);
+    expect(intents).toEqual([]);
     terminal.sendInput("\r");
-    await terminal.waitForRender();
     await deck.stop();
-    expect(intents).toContainEqual({ type: "kill-terminal-confirmed", terminalId: "terminal-1" });
+    expect(intents).toEqual([{ type: "kill-terminal-confirmed", terminalId: "terminal-1" }]);
   });
-  it("uses arrow keys to choose the safe terminal confirmation option", async () => {
+  it("cancels terminal confirmation only with Escape", async () => {
     const terminal = new RecordingTerminal(100, 28);
     const intents: unknown[] = [];
     const current: AppState = {
@@ -3328,19 +3312,12 @@ describe("DeckTui viewport and focus", () => {
     const deck = new DeckTui(terminal, current, (intent) => intents.push(intent));
     deck.update(current);
     deck.start();
-    terminal.sendInput("\u001b[B");
-    await terminal.waitForRender();
-    expect(terminal.viewport().join("\n")).toContain("> Yes - Terminate terminal and its process");
-    terminal.sendInput("\u001b[A");
-    await terminal.waitForRender();
-    expect(terminal.viewport().join("\n")).toContain("> No - Keep terminal running");
-    terminal.sendInput("\r");
+    terminal.sendInput("n");
+    expect(intents).toEqual([]);
+    terminal.sendInput("\u001b");
     await terminal.waitForRender();
     await deck.stop();
-    expect(intents).toContainEqual({ type: "close-modal" });
-    expect(intents).not.toContainEqual(
-      expect.objectContaining({ type: "kill-terminal-confirmed" }),
-    );
+    expect(intents).toEqual([{ type: "close-modal" }]);
   });
   it("shows mode and token context in the status line when space allows", async () => {
     const terminal = new RecordingTerminal(120, 18);
@@ -3654,7 +3631,7 @@ describe("DeckTui viewport and focus", () => {
     };
     const deck = new DeckTui(terminal, composerState, (intent) => intents.push(intent));
     deck.start();
-    terminal.sendInput("\u000b");
+    terminal.sendInput("\u0010");
     await terminal.waitForRender();
     expect(terminal.viewport().join("\n")).toContain("Command palette");
     terminal.sendInput("\u001b");
@@ -3698,7 +3675,7 @@ describe("DeckTui viewport and focus", () => {
       expected: { type: "create-choice", choice: "preserve prompt" },
     },
   ])(
-    "restores unsaved $name text after palette and help close",
+    "dismisses unapplied $name input when palette replaces the dialog",
     async ({ modal, text, expected }) => {
       const terminal = new RecordingTerminal();
       const intents: unknown[] = [];
@@ -3707,21 +3684,13 @@ describe("DeckTui viewport and focus", () => {
       deck.update({ ...state(), modal });
       await terminal.waitForRender();
       terminal.sendInput(text);
-      terminal.sendInput("\u000b");
+      terminal.sendInput("\u0010");
       await terminal.waitForRender();
       expect(terminal.viewport().join("\n")).toContain("Command palette");
-      terminal.sendInput("?");
-      await terminal.waitForRender();
-      expect(terminal.viewport().join("\n")).toContain("Paseo Deck keys");
-      terminal.sendInput("?");
-      await terminal.waitForRender();
-      expect(terminal.viewport().join("\n")).toContain("Command palette");
+      expect(intents).toContainEqual({ type: "close-modal" });
       terminal.sendInput("\u001b");
-      await terminal.waitForRender();
-      terminal.sendInput("\r");
       await deck.stop();
-
-      expect(intents).toContainEqual(expected);
+      expect(intents).not.toContainEqual(expected);
     },
   );
 
@@ -3731,12 +3700,12 @@ describe("DeckTui viewport and focus", () => {
     const base = state();
     const deck = new DeckTui(terminal, base, (intent) => intents.push(intent));
     deck.start();
-    terminal.sendInput("\u000b");
+    terminal.sendInput("\u0010");
     terminal.sendInput("stop");
     await terminal.waitForRender();
     expect(terminal.viewport().join("\n")).toContain("Select an active session first");
     terminal.sendInput("\r");
-    terminal.sendInput("\u000b");
+    terminal.sendInput("\u0010");
     terminal.sendInput("\u001b");
     await terminal.waitForRender();
     await terminal.waitForRender();
@@ -3750,7 +3719,7 @@ describe("DeckTui viewport and focus", () => {
     const base = state();
     const deck = new DeckTui(terminal, base, () => undefined);
     deck.start();
-    terminal.sendInput("\u000b");
+    terminal.sendInput("\u0010");
     terminal.sendInput("stop");
     await terminal.waitForRender();
     expect(terminal.viewport().join("\n")).toContain("Select an active session first");
@@ -3807,7 +3776,7 @@ describe("DeckTui viewport and focus", () => {
     });
 
     deck.start();
-    terminal.sendInput("\u000b");
+    terminal.sendInput("\u0010");
     terminal.sendInput("toggle theme");
     terminal.sendInput("\r");
     await terminal.waitForRender();
@@ -3860,7 +3829,7 @@ describe("DeckTui viewport and focus", () => {
 
     deck.start();
     for (let index = 0; index < 2; index += 1) {
-      terminal.sendInput("\u000b");
+      terminal.sendInput("\u0010");
       terminal.sendInput("toggle theme");
       terminal.sendInput("\r");
       await terminal.waitForRender();
@@ -3935,14 +3904,13 @@ describe("Launch composer", () => {
     try {
       await terminal.waitForRender();
       expect(terminal.viewport().join("\n")).toContain("Launch Session");
-      expect(terminal.viewport().join("\n")).toContain("[\\m]");
-      terminal.sendInput("\\");
-      terminal.sendInput("c");
+      expect(terminal.viewport().join("\n")).toContain("[Model]");
+      await app.handleIntent({ type: "toggle-launch-kind" });
       await terminal.waitForRender();
       const screen = terminal.viewport().join("\n");
       expect(screen).toContain("Launch Terminal");
       expect(screen).toContain("First command");
-      expect(screen).toContain("[\\p]");
+      expect(screen).toContain("Profile");
       for (const absent of [
         "[\\m]",
         "[\\z]",
@@ -3954,8 +3922,7 @@ describe("Launch composer", () => {
         "Worktree",
       ])
         expect(screen).not.toContain(absent);
-      terminal.sendInput("\\");
-      terminal.sendInput("p");
+      await app.handleIntent({ type: "open-launch-profile" });
       await terminal.waitForRender();
       expect(terminal.viewport().join("\n")).toContain("Tools");
       terminal.sendInput("\u001b");
@@ -3964,8 +3931,7 @@ describe("Launch composer", () => {
       terminal.sendInput("pwd");
       terminal.sendInput("\u001b");
       await terminal.waitForRender();
-      terminal.sendInput("\\");
-      terminal.sendInput("s");
+      terminal.sendInput("\r");
       await terminal.waitForRender();
       expect(gateway.terminalInput).toEqual([{ terminalId: "fake-terminal-1", data: "pwd\r" }]);
       expect(terminal.viewport().join("\n")).not.toContain("Launch Terminal");
@@ -4004,25 +3970,22 @@ describe("New workspace composer", () => {
       expect(screen).toContain("New workspace");
       expect(screen).toContain("Local");
       expect(screen).toContain("/original");
-      expect(screen).toContain("[\\j]");
-      expect(screen).toContain("[\\n]");
+      expect(screen).toContain("Project");
+      expect(screen).toContain("Title");
       expect(screen).not.toContain("Hostname");
-      terminal.sendInput("\\");
-      terminal.sendInput("n");
+      await app.handleIntent({ type: "open-new-workspace-title" });
       await terminal.waitForRender();
       expect(terminal.viewport().join("\n")).toContain("Workspace title");
       terminal.sendInput("Feature");
       terminal.sendInput("\r");
       await terminal.waitForRender();
       expect(app.state.newWorkspace?.title).toBe("Feature");
-      terminal.sendInput("\\");
-      terminal.sendInput("j");
+      await app.handleIntent({ type: "open-new-workspace-project" });
       await terminal.waitForRender();
       expect(terminal.viewport().join("\n")).toContain("Choose project");
       terminal.sendInput("\r");
       await terminal.waitForRender();
-      terminal.sendInput("\\");
-      terminal.sendInput("c");
+      await app.handleIntent({ type: "toggle-launch-kind" });
       terminal.sendInput("i");
       terminal.sendInput("pwd");
       terminal.sendInput("T");
@@ -4035,7 +3998,7 @@ describe("New workspace composer", () => {
       screen = terminal.viewport().join("\n");
       expect(screen).toContain("New workspace");
       expect(screen).toContain("Terminal");
-      expect(screen).not.toContain("[\\m]");
+      expect(screen).not.toContain("[Model]");
       terminal.sendInput("\u001b");
       await terminal.waitForRender();
       expect(app.state.newWorkspace).toBeUndefined();
@@ -4129,8 +4092,7 @@ describe("Worktree workspace controls", () => {
       expect(screen).toContain("Worktree");
       expect(screen).toContain("Base ref · main");
       expect(screen).not.toContain("Branch name");
-      terminal.sendInput("\\");
-      terminal.sendInput("b");
+      await app.handleIntent({ type: "open-new-workspace-base" });
       await terminal.waitForRender();
       screen = terminal.viewport().join("\n");
       expect(screen).toContain("main (local)");
@@ -4139,14 +4101,12 @@ describe("Worktree workspace controls", () => {
       terminal.sendInput("\r");
       await terminal.waitForRender();
       expect(app.state.newWorkspace?.baseRef).toBe("refs/heads/main");
-      terminal.sendInput("\\");
-      terminal.sendInput("c");
+      await app.handleIntent({ type: "toggle-launch-kind" });
       await terminal.waitForRender();
       screen = terminal.viewport().join("\n");
       expect(screen).toContain("Terminal");
       expect(screen).toContain("Base ref · main (local)");
-      terminal.sendInput("\\");
-      terminal.sendInput("w");
+      await app.handleIntent({ type: "open-new-workspace-placement" });
       await terminal.waitForRender();
       expect(terminal.viewport().join("\n")).toContain("Workspace placement");
       terminal.sendInput("\u001b[A");

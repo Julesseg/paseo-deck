@@ -54,6 +54,7 @@ describe("runCli", () => {
       { type: "send-prompt", agentId: "agent", prompt: "hello\nworld\n" },
     ]);
     terminal.sendInput("\u0003");
+    terminal.sendInput("\r");
     await expect(running).resolves.toBe(0);
   });
 
@@ -79,6 +80,7 @@ describe("runCli", () => {
       expect(gateway.commands).toEqual([]);
       expect(terminal.viewport().join("\n")).toContain("safe text");
       terminal.sendInput("\u0003");
+      terminal.sendInput("\r");
       await expect(running).resolves.toBe(0);
     },
   );
@@ -101,8 +103,7 @@ describe("runCli", () => {
     expect(terminal.viewport().join("\n")).toContain("g?");
     terminal.sendInput("\u001b");
     await terminal.waitForRender();
-    terminal.sendInput("\\");
-    terminal.sendInput("t");
+    terminal.sendInput("\u000b");
     await terminal.waitForRender();
     const before = terminal.viewport().join("\n");
     terminal.sendInput("\u001b[200~i\nBAD\r\\s\u001b[201~");
@@ -110,6 +111,7 @@ describe("runCli", () => {
     expect(terminal.viewport().join("\n")).toBe(before);
     expect(gateway.commands).toEqual([]);
     terminal.sendInput("\u0003");
+    terminal.sendInput("\r");
     await expect(running).resolves.toBe(0);
   });
 
@@ -138,6 +140,7 @@ describe("runCli", () => {
     expect(gateway.commands).toEqual([]);
     expect(terminal.viewport().join("\n")).toContain("find this");
     terminal.sendInput("\u0003");
+    terminal.sendInput("\r");
     await expect(running).resolves.toBe(0);
   });
 
@@ -168,6 +171,7 @@ describe("runCli", () => {
         { type: "send-prompt", agentId: "agent", prompt: "first\nsecond" },
       ]);
       terminal.sendInput("\u0003");
+      terminal.sendInput("\r");
       await expect(running).resolves.toBe(0);
     },
   );
@@ -188,8 +192,8 @@ describe("runCli", () => {
     expect(terminal.viewport().join("\n")).toContain("INSERT Prompt");
     terminal.sendInput("\u001b");
     await terminal.waitForRender();
-    terminal.sendInput("\\");
-    terminal.sendInput("q");
+    terminal.sendInput("\u0003");
+    terminal.sendInput("\r");
     await expect(running).resolves.toBe(0);
   });
 
@@ -218,8 +222,9 @@ describe("runCli", () => {
     await tick();
     terminal.sendInput("\u001b");
     await terminal.waitForRender();
-    terminal.sendInput("\\");
-    terminal.sendInput("T");
+    terminal.sendInput("\u0010");
+    terminal.sendInput("New Tab");
+    terminal.sendInput("\r");
     await terminal.waitForRender();
     expect(terminal.viewport().join("\n")).toContain("New Tab");
     terminal.sendInput("\r");
@@ -229,8 +234,7 @@ describe("runCli", () => {
     for (const key of "Build this") terminal.sendInput(key);
     terminal.sendInput("\u001b");
     await terminal.waitForRender();
-    terminal.sendInput("\\");
-    terminal.sendInput("s");
+    terminal.sendInput("\r");
     await terminal.waitForRender();
     expect(gateway.commands).toContainEqual({
       type: "create-agent",
@@ -239,8 +243,8 @@ describe("runCli", () => {
       modelId: "model",
       prompt: "Build this",
     });
-    terminal.sendInput("\\");
-    terminal.sendInput("q");
+    terminal.sendInput("\u0003");
+    terminal.sendInput("\r");
     await expect(running).resolves.toBe(0);
   });
 
@@ -256,8 +260,9 @@ describe("runCli", () => {
     await tick();
     terminal.sendInput("\u001b");
     await terminal.waitForRender();
-    terminal.sendInput("\\");
-    terminal.sendInput("T");
+    terminal.sendInput("\u0010");
+    terminal.sendInput("New Tab");
+    terminal.sendInput("\r");
     await terminal.waitForRender();
     terminal.sendInput("\r");
     await terminal.waitForRender();
@@ -266,32 +271,29 @@ describe("runCli", () => {
     await terminal.waitForRender();
     terminal.sendInput("\u001b");
     await terminal.waitForRender();
-    terminal.sendInput("\\");
-    terminal.sendInput("T");
+    terminal.sendInput("\u0010");
+    terminal.sendInput("New Tab");
+    terminal.sendInput("\r");
     await terminal.waitForRender();
     terminal.sendInput("\u001b[B");
     terminal.sendInput("\r");
     await terminal.waitForRender();
     expect(gateway.createdTerminals).toEqual([{ workspaceId: "workspace", options: undefined }]);
-    expect(terminal.viewport().join("\n")).toContain("NORMAL");
     terminal.sendInput("i");
     terminal.sendInput("x");
     await terminal.waitForRender();
     expect(gateway.terminalInput).toEqual([{ terminalId: "fake-terminal-1", data: "x" }]);
-    expect(terminal.viewport().join("\n")).toContain("INSERT");
-    terminal.sendInput("\u001b");
+    terminal.sendInput("\u0013");
+    terminal.sendInput("\u0010");
+    terminal.sendInput("Terminate active terminal");
+    terminal.sendInput("\r");
     await terminal.waitForRender();
-    terminal.sendInput("g");
-    terminal.sendInput("k");
-    await terminal.waitForRender();
-    expect(terminal.viewport().join("\n")).toContain("Terminate terminal?");
-    terminal.sendInput("\u001b[B");
+    expect(terminal.viewport().join("\n")).toContain("kill-terminal fake-terminal-1?");
     terminal.sendInput("\r");
     await terminal.waitForRender();
     expect(gateway.terminals).toHaveLength(0);
     expect(terminal.viewport().join("\n")).toContain("Keep this text");
-    terminal.sendInput("\\");
-    terminal.sendInput("q");
+    terminal.sendInput("\u0003");
     await terminal.waitForRender();
     terminal.sendInput("\u001b[B");
     terminal.sendInput("\r");
@@ -310,23 +312,22 @@ describe("runCli", () => {
     await tick();
     terminal.sendInput("\u001b");
     await terminal.waitForRender();
-    terminal.sendInput("\\");
-    terminal.sendInput("T");
+    terminal.sendInput("\u0010");
+    terminal.sendInput("New Tab");
+    terminal.sendInput("\r");
     terminal.sendInput("\r");
     await terminal.waitForRender();
     terminal.sendInput("i");
     terminal.sendInput("x");
     terminal.sendInput("\u001b");
     await terminal.waitForRender();
-    terminal.sendInput("\\");
-    terminal.sendInput("q");
+    terminal.sendInput("\u0003");
     await terminal.waitForRender();
-    expect(terminal.viewport().join("\n")).toContain("Quit with unsent session drafts?");
-    terminal.sendInput("\r");
+    expect(terminal.viewport().join("\n")).toContain("Quit and discard unsent work?");
+    terminal.sendInput("\u001b");
     await terminal.waitForRender();
-    expect(terminal.viewport().join("\n")).not.toContain("Quit with unsent session drafts?");
-    terminal.sendInput("\\");
-    terminal.sendInput("q");
+    expect(terminal.viewport().join("\n")).not.toContain("Quit and discard unsent work?");
+    terminal.sendInput("\u0003");
     terminal.sendInput("\u001b[B");
     terminal.sendInput("\r");
     await expect(running).resolves.toBe(0);
@@ -353,7 +354,7 @@ describe("runCli", () => {
     expect(capture.read().stderr).toContain("--help");
   });
 
-  it("restores the alternate screen after q", async () => {
+  it("restores the alternate screen after Ctrl-C", async () => {
     const capture = output();
     const terminal = new RecordingTerminal();
     const gateway = new FakePaseoGateway(emptyDirectory());
@@ -365,8 +366,7 @@ describe("runCli", () => {
     });
     await tick();
 
-    terminal.sendInput("\\");
-    terminal.sendInput("q");
+    terminal.sendInput("\u0003");
 
     await expect(running).resolves.toBe(0);
     expect(terminal.writes.join("")).toContain("\u001b[?1049l");
@@ -386,8 +386,7 @@ describe("runCli", () => {
     });
     await tick();
     await terminal.waitForRender();
-    terminal.sendInput("\\");
-    terminal.sendInput("q");
+    terminal.sendInput("\u0003");
 
     await expect(running).resolves.toBe(0);
     expect(terminal.writes.join("")).not.toContain("\u001b[38;");
@@ -429,8 +428,7 @@ describe("runCli", () => {
     await tick();
     gateway.emitDirectory({ type: "connection-changed", state: "reconnecting", attempt: 2 });
 
-    terminal.sendInput("\\");
-    terminal.sendInput("q");
+    terminal.sendInput("\u0003");
 
     await expect(running).resolves.toBe(0);
     expect(terminal.writes.join("")).toContain("\u001b[?1049l");
@@ -456,8 +454,8 @@ describe("runCli", () => {
     expect(capture.read().stderr).toContain("Could not load saved preferences; using defaults.");
     expect(capture.read().stderr).not.toContain("PRIVATE_");
     expect(capture.read().stderr).not.toContain("/private/preferences.json");
-    terminal.sendInput("\\");
-    terminal.sendInput("q");
+    terminal.sendInput("\u0003");
+    terminal.sendInput("\r");
     await expect(running).resolves.toBe(0);
   });
 
@@ -494,8 +492,8 @@ describe("runCli", () => {
     await tick();
     expect(order.indexOf("read-preferences")).toBeLessThan(order.indexOf("render"));
     expect(order.indexOf("read-preferences")).toBeLessThan(order.indexOf("connect"));
-    terminal.sendInput("\\");
-    terminal.sendInput("q");
+    terminal.sendInput("\u0003");
+    terminal.sendInput("\r");
     await expect(running).resolves.toBe(0);
   });
 
@@ -525,8 +523,7 @@ describe("runCli", () => {
     await lowTerminal.waitForRender();
     expect(lowTerminal.writes.join("")).not.toContain("\u001b[38;");
     expect(lowTerminal.writes.join("")).not.toContain("·");
-    lowTerminal.sendInput("\\");
-    lowTerminal.sendInput("q");
+    lowTerminal.sendInput("\u0003");
     await expect(low).resolves.toBe(0);
     expect(JSON.parse(bytes).global).toEqual({ theme: "ember", symbolSet: "ascii" });
 
@@ -541,8 +538,7 @@ describe("runCli", () => {
     });
     await tick();
     await richTerminal.waitForRender();
-    richTerminal.sendInput("\\");
-    richTerminal.sendInput("q");
+    richTerminal.sendInput("\u0003");
     await expect(rich).resolves.toBe(0);
 
     expect(richTerminal.writes.join("")).toContain("\u001b[38;5;");
@@ -569,8 +565,8 @@ describe("runCli", () => {
       await tick();
       await terminal.waitForRender();
       expect(terminal.writes.join("")).toContain(marker.replace("\\u001b", "\u001b"));
-      terminal.sendInput("\\");
-      terminal.sendInput("q");
+      terminal.sendInput("\u0003");
+      terminal.sendInput("\r");
       await expect(running).resolves.toBe(0);
     },
   );
@@ -607,25 +603,22 @@ describe("runCli", () => {
 
     const firstA = await launch({ type: "host", value: "a:1" });
     await mutateTreePreferences(firstA.terminal, true);
-    firstA.terminal.sendInput("\u000b");
+    firstA.terminal.sendInput("\u0010");
     firstA.terminal.sendInput("toggle theme");
     firstA.terminal.sendInput("\r");
     await firstA.terminal.waitForRender();
-    firstA.terminal.sendInput("\\");
-    firstA.terminal.sendInput("q");
+    firstA.terminal.sendInput("\u0003");
     await expect(firstA.running).resolves.toBe(0);
 
     const firstB = await launch({ type: "host", value: "b:1" });
     await mutateTreePreferences(firstB.terminal, false);
-    firstB.terminal.sendInput("\\");
-    firstB.terminal.sendInput("q");
+    firstB.terminal.sendInput("\u0003");
     await expect(firstB.running).resolves.toBe(0);
 
     const restoredA = await launch({ type: "host", value: "a:1" });
     expect(events.indexOf("read-preferences")).toBeGreaterThanOrEqual(0);
     expect(restoredA.terminal.viewport().join("\n")).toContain("Persisted project");
-    restoredA.terminal.sendInput("\\");
-    restoredA.terminal.sendInput("q");
+    restoredA.terminal.sendInput("\u0003");
     await expect(restoredA.running).resolves.toBe(0);
 
     const parsed = JSON.parse(bytes ?? "{}") as {
@@ -714,8 +707,7 @@ function treeDirectory(): DirectorySnapshot {
 async function mutateTreePreferences(terminal: RecordingTerminal, widen: boolean): Promise<void> {
   terminal.sendInput("\u001b");
   await terminal.waitForRender();
-  terminal.sendInput("\\");
-  terminal.sendInput("n");
+  terminal.sendInput("\u0013");
   if (widen) {
     terminal.sendInput("o");
     terminal.sendInput("v");
