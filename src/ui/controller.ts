@@ -31,6 +31,12 @@ const timelineTextMotionKeys = [
 type TimelineTextMotionKey = (typeof timelineTextMotionKeys)[number];
 
 export type UiIntent =
+  | { type: "open-new-workspace" }
+  | { type: "open-new-workspace-project" }
+  | { type: "open-new-workspace-title" }
+  | { type: "new-workspace-project-choice"; projectId: string }
+  | { type: "set-new-workspace-title"; title: string }
+  | { type: "cancel-new-workspace" }
   | { type: "toggle-launch-kind" }
   | { type: "open-launch-profile" }
   | { type: "launch-profile-choice"; profileId: string }
@@ -179,6 +185,10 @@ export class DeckController {
     if (bufferMode && this.#bufferLeader) {
       this.#bufferLeader = false;
       if (data === "\u001b") return true;
+      if (state.newWorkspace && state.focus === "composer") {
+        if (data === "j") return this.send({ type: "open-new-workspace-project" });
+        if (data === "n") return this.send({ type: "open-new-workspace-title" });
+      }
       const key = `\\${data}`;
       const launchId = activeLaunchWorkspaceId(state);
       if (state.focus === "composer" && launchId) {
@@ -300,7 +310,9 @@ export class DeckController {
     if (
       state.modal.type === "new-tab" ||
       state.modal.type === "draft-setting" ||
-      state.modal.type === "launch-profile"
+      state.modal.type === "launch-profile" ||
+      state.modal.type === "new-workspace-project" ||
+      state.modal.type === "new-workspace-title"
     ) {
       if (data === "\u001b") return this.send({ type: "close-modal" });
       return false;
@@ -325,6 +337,7 @@ export class DeckController {
         if (state.composerMode === undefined)
           return this.send({ type: "set-focus", focus: "tree" });
         if (mode !== "normal") return this.send({ type: "set-composer-mode", mode: "normal" });
+        if (state.newWorkspace) return this.send({ type: "cancel-new-workspace" });
         return true;
       }
       if (global?.id === "command-palette") return this.send(global.intent(state));

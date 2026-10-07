@@ -121,3 +121,5 @@ The implementation uses only public Paseo packages and keeps SDK, CLI fallback, 
 ## License
 
 MIT. See [LICENSE](LICENSE).
+
+Create a workspace with sidebar `c`: choose a project with `\j`, optionally name it with `\n`, and use `\c` to choose Session or Terminal. Local placement uses the project's original checkout. Submit the first message or command with `\s`; failed initial launches keep the new workspace and inputs ready for retry.

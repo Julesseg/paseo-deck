@@ -3932,3 +3932,118 @@ describe("Launch composer", () => {
     }
   });
 });
+
+describe("New workspace composer", () => {
+  it("opens only from sidebar c with project/title controls, normal/insert cancellation, and T blocked", async () => {
+    const { ApplicationController } = await import("../app/controller.js");
+    const { FakePaseoGateway } = await import("../paseo/fake-gateway.js");
+    const directory = state().directory;
+    const gateway = new FakePaseoGateway({
+      ...directory,
+      projects: [{ id: "project", name: "Deck", path: "/original" }],
+      workspaces: directory.workspaces.map((workspace) => ({ ...workspace, projectId: "project" })),
+    });
+    const app = new ApplicationController(gateway);
+    await app.start();
+    const terminal = new RecordingTerminal(100, 28);
+    const deck = new DeckTui(terminal, app.state, (intent) => void app.handleIntent(intent));
+    const unsubscribe = app.subscribe((next) => deck.update(next));
+    deck.start();
+    try {
+      terminal.sendInput("c");
+      expect(app.state.newWorkspace).toBeUndefined();
+      await app.handleIntent({ type: "set-focus", focus: "tree" });
+      terminal.sendInput("c");
+      await terminal.waitForRender();
+      let screen = terminal.viewport().join("\n");
+      expect(screen).toContain("New workspace");
+      expect(screen).toContain("Local");
+      expect(screen).toContain("/original");
+      expect(screen).toContain("[\\j]");
+      expect(screen).toContain("[\\n]");
+      expect(screen).not.toContain("Hostname");
+      terminal.sendInput("\\");
+      terminal.sendInput("n");
+      await terminal.waitForRender();
+      expect(terminal.viewport().join("\n")).toContain("Workspace title");
+      terminal.sendInput("Feature");
+      terminal.sendInput("\r");
+      await terminal.waitForRender();
+      expect(app.state.newWorkspace?.title).toBe("Feature");
+      terminal.sendInput("\\");
+      terminal.sendInput("j");
+      await terminal.waitForRender();
+      expect(terminal.viewport().join("\n")).toContain("Choose project");
+      terminal.sendInput("\r");
+      await terminal.waitForRender();
+      terminal.sendInput("\\");
+      terminal.sendInput("c");
+      terminal.sendInput("i");
+      terminal.sendInput("pwd");
+      terminal.sendInput("T");
+      expect(app.state.modal.type).toBe("none");
+      terminal.sendInput("\u001b");
+      expect(app.state.newWorkspace).toBeDefined();
+      expect(app.state.composerMode).toBe("normal");
+      await terminal.waitForRender();
+      screen = terminal.viewport().join("\n");
+      expect(screen).toContain("New workspace");
+      expect(screen).toContain("Terminal");
+      expect(screen).not.toContain("[\\m]");
+      terminal.sendInput("\u001b");
+      expect(app.state.newWorkspace).toBeUndefined();
+      expect(app.state.focus).toBe("tree");
+    } finally {
+      unsubscribe();
+      await deck.stop();
+      await app.releaseObservations();
+    }
+  });
+});
+
+describe("New workspace over an active terminal", () => {
+  it("shows the composer and its own status then restores the terminal on cancel", async () => {
+    const { ApplicationController } = await import("../app/controller.js");
+    const { FakePaseoGateway } = await import("../paseo/fake-gateway.js");
+    const gateway = new FakePaseoGateway({
+      ...state().directory,
+      projects: [{ id: "project", name: "Deck", path: "/original" }],
+      workspaces: [
+        {
+          id: "w",
+          projectId: "project",
+          title: "Current",
+          directory: "/worktree",
+          archived: false,
+        },
+      ],
+    });
+    gateway.terminals = [{ id: "terminal", workspaceId: "w", cwd: "/worktree", name: "old-shell" }];
+    const app = new ApplicationController(gateway);
+    await app.start();
+    await app.handleIntent({ type: "open-terminal", terminalId: "terminal" });
+    const terminal = new RecordingTerminal(100, 28);
+    const deck = new DeckTui(terminal, app.state, (intent) => void app.handleIntent(intent));
+    const unsubscribe = app.subscribe((next) => deck.update(next));
+    deck.start();
+    try {
+      await app.handleIntent({ type: "set-focus", focus: "tree" });
+      terminal.sendInput("c");
+      await terminal.waitForRender();
+      expect(terminal.viewport().join("\n")).toContain("New workspace");
+      expect(terminal.viewport().join("\n")).not.toContain("terminal old-shell");
+      terminal.sendInput("i");
+      terminal.sendInput("Build it");
+      terminal.sendInput("\u001b");
+      expect(app.state.newWorkspace?.launch.prompt).toBe("Build it");
+      terminal.sendInput("\u001b");
+      await terminal.waitForRender();
+      expect(terminal.viewport().join("\n")).toContain("old-shell");
+      expect(app.state.activeTerminalId).toBe("terminal");
+    } finally {
+      unsubscribe();
+      await deck.stop();
+      await app.releaseObservations();
+    }
+  });
+});

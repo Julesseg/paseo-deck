@@ -36,9 +36,17 @@ export interface LaunchDraft extends SessionDraft {
   createdTerminal?: TerminalRecord;
 }
 
+export interface NewWorkspaceDraft {
+  projectId?: string | undefined;
+  title: string;
+  launch: LaunchDraft;
+}
+
 export type ModalState =
   | { type: "none" }
   | { type: "help" }
+  | { type: "new-workspace-project" }
+  | { type: "new-workspace-title" }
   | { type: "launch-profile"; workspaceId: string }
   | { type: "notifications"; index: number }
   | { type: "filter"; query: string }
@@ -163,6 +171,7 @@ export interface AppState {
   /** Last active resource per workspace during this run. */
   activeTabIds: Readonly<Record<string, TabId>>;
   sessionDrafts: Readonly<Record<string, SessionDraft>>;
+  newWorkspace?: NewWorkspaceDraft | undefined;
   launchDrafts?: Readonly<Record<string, LaunchDraft>>;
   expandedIds: ReadonlySet<string>;
   filter: string;

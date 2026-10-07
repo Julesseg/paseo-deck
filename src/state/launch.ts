@@ -1,6 +1,10 @@
 import type { AppState, LaunchDraft } from "../contracts/app-state.js";
 
+export const NEW_WORKSPACE_DRAFT_ID = "new-workspace-draft";
+
 export function launchDraft(state: AppState, workspaceId: string): LaunchDraft {
+  if (workspaceId === NEW_WORKSPACE_DRAFT_ID && state.newWorkspace)
+    return state.newWorkspace.launch;
   const existing = state.launchDrafts?.[workspaceId];
   if (existing) return existing;
   const defaults = state.creationDefaults[workspaceId];
@@ -24,6 +28,7 @@ export function launchDraft(state: AppState, workspaceId: string): LaunchDraft {
 }
 
 export function activeLaunchWorkspaceId(state: AppState): string | undefined {
+  if (state.newWorkspace) return NEW_WORKSPACE_DRAFT_ID;
   const id = state.selectedWorkspaceId;
   if (
     !id ||

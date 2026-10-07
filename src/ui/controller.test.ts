@@ -407,7 +407,7 @@ describe("DeckController keyboard seam", () => {
     expect(intents).toEqual([{ type: "close-modal" }]);
   });
 
-  it("starts provider/model creation only for a selected workspace", () => {
+  it("opens the New workspace composer from sidebar c", () => {
     const intents: unknown[] = [];
     const controller = new DeckController(
       () => makeState(),
@@ -416,11 +416,7 @@ describe("DeckController keyboard seam", () => {
 
     controller.handleKey("c");
 
-    expect(intents).toContainEqual({
-      type: "open-create-agent",
-      workspaceId: "w",
-      step: "provider",
-    });
+    expect(intents).toContainEqual({ type: "open-new-workspace" });
   });
 
   it("exposes tree triage controls outside editable fields", () => {
