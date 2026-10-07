@@ -1474,7 +1474,7 @@ export function composerControlRow(state: AppState, theme: DeckTheme, width: num
   if (launch?.kind === "terminal") {
     const profile = launch.profiles?.find((item) => item.id === launch.profileId);
     return theme.clipRendered(
-      `${kindControl}${theme.style("muted", "[\\p]")} ${profile?.name ?? "Default shell"}`,
+      `${kindControl}${theme.style("muted", "[\\p]")} ${sanitizeTerminalText(profile?.name ?? "Default shell")}`,
       width,
     );
   }
