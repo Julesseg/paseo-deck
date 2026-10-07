@@ -1,5 +1,4 @@
 import { spawn } from "node:child_process";
-
 import {
   type Component,
   CURSOR_MARKER,
@@ -22,7 +21,6 @@ import {
   TuiAltScreen,
   VStack,
 } from "@earendil-works/pi-tui";
-
 import type { AppState, ModalState } from "../contracts/app-state.js";
 import type { TimelineEvent, TimelineItem } from "../contracts/domain.js";
 import {
@@ -30,6 +28,7 @@ import {
   composerAvailability,
   selectedComposerDraft,
 } from "../state/composer.js";
+import { activeLaunchWorkspaceId, launchDraft } from "../state/launch.js";
 import { activeNotification } from "../state/store.js";
 import { defaultTerminalAppearance, type TerminalAppearance } from "./capabilities.js";
 import {
@@ -433,6 +432,15 @@ class ContentPane implements Component {
     this.timeline.invalidate();
   }
   render(width: number): string[] {
+    const launchId = activeLaunchWorkspaceId(this.state);
+    if (launchId) {
+      const draft = launchDraft(this.state, launchId);
+      return draft.error
+        ? wrapTerminalProse(draft.error, width).map((line) =>
+            this.theme.clipRendered(this.theme.styleRendered("failure", line), width),
+          )
+        : [];
+    }
     const workspaceId = activeSessionDraftWorkspaceId(this.state);
     if (workspaceId) {
       const draft = this.state.sessionDrafts[workspaceId];
@@ -1251,7 +1259,9 @@ class ComposerView implements Component, Focusable {
     if (state.composerMode === "visual") this.vim = { ...this.vim, anchor: this.vim.cursor };
     this.editor.onChange = (text) => emit({ type: "set-composer-text", text });
     this.editor.onSubmit = (prompt) => {
-      if (this.draftWorkspaceId && prompt.trim())
+      const launchId = activeLaunchWorkspaceId(this.state);
+      if (launchId) emit({ type: "submit-launch", workspaceId: launchId, prompt });
+      else if (this.draftWorkspaceId && prompt.trim())
         emit({ type: "submit-session-draft", workspaceId: this.draftWorkspaceId, prompt });
       else if (this.selectedAgentId && prompt.trim())
         emit({ type: "submit-composer", agentId: this.selectedAgentId, prompt });
@@ -1284,14 +1294,22 @@ class ComposerView implements Component, Focusable {
     const availability = this.selectedAgentId
       ? composerAvailability(this.state, this.selectedAgentId)
       : { canSend: false as const, reason: "missing" as const };
-    const destination = this.draftWorkspaceId
-      ? this.theme.label("First message → New session")
-      : agent
-        ? `Prompt ${this.theme.label("→")} ${sanitizeTerminalText(agent.title)}`
-        : this.theme.label("Prompt → no agent selected");
-    const draft = this.draftWorkspaceId
-      ? this.state.sessionDrafts[this.draftWorkspaceId]
-      : undefined;
+    const launchId = activeLaunchWorkspaceId(this.state);
+    const launch = launchId ? launchDraft(this.state, launchId) : undefined;
+    const destination = launch
+      ? this.theme.label(
+          launch.kind === "session"
+            ? "Launch Session · First message"
+            : "Launch Terminal · First command",
+        )
+      : this.draftWorkspaceId
+        ? this.theme.label("First message → New session")
+        : agent
+          ? `Prompt ${this.theme.label("→")} ${sanitizeTerminalText(agent.title)}`
+          : this.theme.label("Prompt → no agent selected");
+    const draft =
+      launch ??
+      (this.draftWorkspaceId ? this.state.sessionDrafts[this.draftWorkspaceId] : undefined);
     const status = draft
       ? draft.submitting
         ? ` ${this.theme.glyph("bullet")} creating${this.theme.glyph("running")}`
@@ -1332,6 +1350,8 @@ class ComposerView implements Component, Focusable {
     );
   }
   handleInput(data: string): void {
+    const launchId = activeLaunchWorkspaceId(this.state);
+    if (launchId && launchDraft(this.state, launchId).submitting) return;
     if (this.state.composerMode === "visual" || this.state.composerMode === "normal") {
       this.handleVimInput(data);
       return;
@@ -1430,9 +1450,21 @@ class ComposerView implements Component, Focusable {
 
 /** The existing session's controls use the command inventory for their cues and availability. */
 export function composerControlRow(state: AppState, theme: DeckTheme, width: number): string {
+  const launchId = activeLaunchWorkspaceId(state);
+  const launch = launchId ? launchDraft(state, launchId) : undefined;
+  const kindControl = launch
+    ? `${theme.style("muted", "[\\c]")} ${launch.kind === "session" ? "Session" : "Terminal"}  `
+    : "";
+  if (launch?.kind === "terminal") {
+    const profile = launch.profiles?.find((item) => item.id === launch.profileId);
+    return theme.clipRendered(
+      `${kindControl}${theme.style("muted", "[\\p]")} ${profile?.name ?? "Default shell"}`,
+      width,
+    );
+  }
   const draftWorkspaceId = activeSessionDraftWorkspaceId(state);
-  if (draftWorkspaceId) {
-    const draft = state.sessionDrafts[draftWorkspaceId];
+  if (draftWorkspaceId || launch) {
+    const draft = launch ?? (draftWorkspaceId ? state.sessionDrafts[draftWorkspaceId] : undefined);
     const controls = [
       ["\\p", draft?.providerId ?? "provider"],
       ["\\m", draft?.modelId ?? "model"],
@@ -1440,9 +1472,12 @@ export function composerControlRow(state: AppState, theme: DeckTheme, width: num
       ["\\o", draft?.modeId ?? "mode"],
     ] as const;
     return theme.clipRendered(
-      controls
-        .map(([key, value]) => `${theme.style("muted", `[${key}]`)} ${theme.style("focus", value)}`)
-        .join("  "),
+      kindControl +
+        controls
+          .map(
+            ([key, value]) => `${theme.style("muted", `[${key}]`)} ${theme.style("focus", value)}`,
+          )
+          .join("  "),
       width,
     );
   }
@@ -1490,6 +1525,14 @@ class SessionActivityView implements Component {
   invalidate(): void {}
   render(width: number): string[] {
     const state = this.state();
+    const launchId = activeLaunchWorkspaceId(state);
+    if (launchId)
+      return [
+        this.theme.style(
+          "muted",
+          launchDraft(state, launchId).submitting ? "Launching…" : "Workspace activity · idle",
+        ),
+      ];
     const draftId = activeSessionDraftWorkspaceId(state);
     if (draftId) {
       const draft = state.sessionDrafts[draftId];
@@ -2215,7 +2258,13 @@ export class DeckTui {
       [
         {
           component: new VStack([
-            { component: centeredTabs, basis: 1, minSize: 1 },
+            {
+              component: centeredTabs,
+              basis: 1,
+              minSize: 1,
+              visible: () =>
+                !activeLaunchWorkspaceId(this.state) && workspaceTabs(this.state).length > 0,
+            },
             {
               component: new HStack(
                 [
@@ -3111,8 +3160,43 @@ export class DeckTui {
         margin: 1,
         visible: (columns, rows) => shellLayout(columns, rows, this.treeWidth).supported,
       };
+    } else if (modal.type === "launch-profile") {
+      const draft = launchDraft(this.state, modal.workspaceId);
+      const choices = [
+        {
+          value: "",
+          label: "Default shell",
+          disabled: false,
+          description: "Use the daemon default terminal",
+        },
+        ...(draft.profiles ?? []).map((profile) => ({
+          value: profile.id,
+          label: profile.name,
+          disabled: false,
+          description: profile.command,
+        })),
+      ];
+      const title = "Choose terminal profile";
+      component = new SearchableChoiceDialog(
+        title,
+        choices,
+        (profileId) => this.emit({ type: "launch-profile-choice", profileId }),
+        close,
+        draft.profileId ?? "",
+        this.choicePickerMaxVisible(true),
+        this.theme,
+      );
+      overlayOptions = {
+        width: centeredChoicePickerWidth(this.terminal.columns, title, choices),
+        maxHeight: Math.max(1, this.terminal.rows - 2),
+        margin: 1,
+        visible: (columns, rows) => shellLayout(columns, rows, this.treeWidth).supported,
+      };
     } else if (modal.type === "draft-setting") {
-      const draft = this.state.sessionDrafts[modal.workspaceId];
+      const draft =
+        activeLaunchWorkspaceId(this.state) === modal.workspaceId
+          ? launchDraft(this.state, modal.workspaceId)
+          : this.state.sessionDrafts[modal.workspaceId];
       const choices = creationChoices(this.state, {
         type: "create-agent",
         workspaceId: modal.workspaceId,

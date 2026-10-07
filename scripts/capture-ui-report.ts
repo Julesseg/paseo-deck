@@ -32,6 +32,28 @@ const draftState: AppState = {
   sessionDrafts: { "workspace-main": draftFixture },
   timeline: { recoveryRevision: 0, items: [], loading: false },
 };
+const launchState: AppState = {
+  ...draftBaseState,
+  directory: {
+    ...baseState.directory,
+    agents: baseState.directory.agents.filter((agent) => agent.workspaceId !== "workspace-main"),
+  },
+  focus: "composer",
+  composerMode: "normal",
+  tabOrder: { ...baseState.tabOrder, "workspace-main": [] },
+  activeTabIds: {},
+  sessionDrafts: {},
+  workspaceTerminals: {},
+  timeline: { recoveryRevision: 0, items: [], loading: false },
+  launchDrafts: {
+    "workspace-main": {
+      ...draftFixture,
+      kind: "session",
+      command: "",
+      profiles: [{ id: "tools", name: "Tools", command: "zsh" }],
+    },
+  },
+};
 const emptyState = withoutSelection(baseState);
 const overflowTemplate = baseState.directory.agents[0];
 if (!overflowTemplate) throw new Error("UI report needs a session fixture");
@@ -105,6 +127,58 @@ const shots: Array<{
         type: "new-tab",
         workspaceId: "workspace-main",
         profiles: [{ id: "codex", name: "Codex", command: "codex" }],
+      },
+    },
+  },
+  { name: "launch-session", columns: 100, rows: 28, state: launchState },
+  { name: "launch-session-narrow", columns: 52, rows: 18, state: launchState },
+  {
+    name: "launch-terminal",
+    columns: 100,
+    rows: 28,
+    state: {
+      ...launchState,
+      launchDrafts: {
+        "workspace-main": {
+          ...draftFixture,
+          kind: "terminal",
+          command: "npm run dev",
+          profileId: "tools",
+          profiles: [{ id: "tools", name: "Tools", command: "zsh" }],
+        },
+      },
+    },
+  },
+  {
+    name: "launch-submitting",
+    columns: 100,
+    rows: 28,
+    state: {
+      ...launchState,
+      launchDrafts: {
+        "workspace-main": {
+          ...draftFixture,
+          kind: "session",
+          command: "",
+          prompt: "Build the workspace launch flow",
+          submitting: true,
+        },
+      },
+    },
+  },
+  {
+    name: "launch-error",
+    columns: 100,
+    rows: 28,
+    state: {
+      ...launchState,
+      launchDrafts: {
+        "workspace-main": {
+          ...draftFixture,
+          kind: "terminal",
+          command: "npm run dev",
+          error: "Could not launch terminal: connection interrupted. Press \\s to retry.",
+        },
       },
     },
   },

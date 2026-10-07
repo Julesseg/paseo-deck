@@ -27,9 +27,19 @@ export interface SessionDraft {
   submitting?: boolean | undefined;
 }
 
+export interface LaunchDraft extends SessionDraft {
+  kind: "session" | "terminal";
+  command: string;
+  profileId?: string | undefined;
+  profiles?: readonly TerminalProfile[];
+  createdAgentId?: string;
+  createdTerminal?: TerminalRecord;
+}
+
 export type ModalState =
   | { type: "none" }
   | { type: "help" }
+  | { type: "launch-profile"; workspaceId: string }
   | { type: "notifications"; index: number }
   | { type: "filter"; query: string }
   | { type: "create-terminal"; workspaceId: string; name: string; error?: string }
@@ -153,6 +163,7 @@ export interface AppState {
   /** Last active resource per workspace during this run. */
   activeTabIds: Readonly<Record<string, TabId>>;
   sessionDrafts: Readonly<Record<string, SessionDraft>>;
+  launchDrafts?: Readonly<Record<string, LaunchDraft>>;
   expandedIds: ReadonlySet<string>;
   filter: string;
   treeOrder: TreeOrder;
