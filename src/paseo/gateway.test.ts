@@ -1531,3 +1531,28 @@ it("renames a Terminal through the owned SDK, rejects false success, and never r
   expect(settings.connect).toHaveBeenCalledOnce();
   expect(settings.close).toHaveBeenCalledOnce();
 });
+
+it("creates an existing Workspace Session without an initial prompt, then sends to its returned identity", async () => {
+  const fixture = testClient();
+  const gateway = new ProductionPaseoGateway({
+    host: "127.0.0.1:6767",
+    createClient: () => fixture.client as never,
+  });
+  await gateway.connect();
+  const result = await gateway.execute({
+    type: "create-agent",
+    workspaceId: "workspace-1",
+    providerId: "codex",
+    modelId: "gpt",
+    prompt: "",
+  });
+  expect(result).toEqual({ type: "agent-created", agentId: "new-agent" });
+  expect(fixture.create).toHaveBeenCalledWith({
+    title: undefined,
+    config: { provider: "codex/gpt" },
+  });
+  await gateway.execute({ type: "send-prompt", agentId: "new-agent", prompt: "initial message" });
+  expect(fixture.client.agents.ref).toHaveBeenLastCalledWith("new-agent");
+  expect(fixture.agent.send).toHaveBeenCalledWith("initial message");
+  await gateway.close();
+});

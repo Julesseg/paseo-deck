@@ -44,9 +44,9 @@ export interface ApplicationControllerOptions {
 type RetryOperation =
   | { type: "command"; command: AgentCommand }
   | { type: "terminal-kill"; terminalId: string }
-  | { type: "terminal-reconnect"; terminalId: string }
   | { type: "send"; agentId: string; prompt: string }
   | { type: "focus"; agentId: string }
+  | { type: "terminal-focus"; terminalId: string }
   | { type: "refresh" }
   | { type: "recovery-directory" }
   | { type: "recovery-timeline"; agentId: string };
@@ -198,10 +198,17 @@ export class ApplicationController {
   ): Promise<boolean> {
     try {
       const terminal = await creation;
+      if (this.#state.modal.type === "new-tab" && this.#state.modal.workspaceId === workspaceId)
+        this.apply({
+          type: "open-modal",
+          modal: { ...this.#state.modal, createdTerminalId: terminal.id },
+        });
       const existing = this.#state.workspaceTerminals?.[workspaceId] ?? [];
       this.apply({ type: "set-terminals", workspaceId, terminals: [...existing, terminal] });
       await this.handleIntent({ type: "open-terminal", terminalId: terminal.id });
-      return this.#state.activeTerminalId === terminal.id;
+      return (
+        this.#state.activeTerminalId === terminal.id && this.#terminalObservations.has(terminal.id)
+      );
     } catch (error) {
       this.apply({
         type: "notify",
@@ -338,7 +345,7 @@ export class ApplicationController {
           this.reportError(
             "Could not open terminal.",
             error,
-            this.registerRetry({ type: "terminal-reconnect", terminalId: terminal.id }),
+            this.registerRetry({ type: "terminal-focus", terminalId: terminal.id }),
             "command",
           );
         }
@@ -528,10 +535,13 @@ export class ApplicationController {
           });
         }
         return;
+      case "open-workspace-session-draft":
+        if (!this.#state.newWorkspace && this.activeWorkspace(intent.workspaceId))
+          this.openWorkspaceSessionDraft(intent.workspaceId);
+        return;
       case "open-new-tab":
         if (
           !this.#state.newWorkspace &&
-          intent.workspaceId === this.#state.selectedWorkspaceId &&
           this.activeWorkspace(intent.workspaceId) &&
           this.#state.modal.type === "none"
         ) {
@@ -558,38 +568,39 @@ export class ApplicationController {
         return;
       case "new-tab-choice": {
         const modal = this.#state.modal;
-        if (modal.type !== "new-tab") return;
-        if (intent.choice.kind === "terminal") {
-          if (await this.createWorkspaceTerminal(modal.workspaceId))
+        if (modal.type !== "new-tab" || this.inFlightTargets.has(`new-tab:${modal.workspaceId}`))
+          return;
+        if (modal.createdTerminalId) {
+          await this.handleIntent({ type: "open-terminal", terminalId: modal.createdTerminalId });
+          if (this.#terminalObservations.has(modal.createdTerminalId))
             this.apply({ type: "close-modal" });
+          return;
+        }
+        if (intent.choice.kind === "terminal") {
+          this.inFlightTargets.add(`new-tab:${modal.workspaceId}`);
+          try {
+            if (await this.createWorkspaceTerminal(modal.workspaceId))
+              this.apply({ type: "close-modal" });
+          } finally {
+            this.inFlightTargets.delete(`new-tab:${modal.workspaceId}`);
+          }
           return;
         }
         if (intent.choice.kind === "profile") {
           const profileId = intent.choice.profileId;
           const profile = modal.profiles?.find((item) => item.id === profileId);
           if (!profile) return;
-          if (await this.createWorkspaceProfileTerminal(modal.workspaceId, profile))
-            this.apply({ type: "close-modal" });
+          this.inFlightTargets.add(`new-tab:${modal.workspaceId}`);
+          try {
+            if (await this.createWorkspaceProfileTerminal(modal.workspaceId, profile))
+              this.apply({ type: "close-modal" });
+          } finally {
+            this.inFlightTargets.delete(`new-tab:${modal.workspaceId}`);
+          }
           return;
         }
         if (intent.choice.kind !== "session") return;
-        const provider = this.#state.directory.providers.find((item) => item.ready);
-        const model = provider ? defaultSelectableModel(provider) : undefined;
-        if (!this.#state.sessionDrafts[modal.workspaceId])
-          this.apply({ type: "open-session-draft", workspaceId: modal.workspaceId });
-        const draft = this.#state.sessionDrafts[modal.workspaceId];
-        if (draft && !draft.providerId && provider && model)
-          this.apply({
-            type: "set-session-draft",
-            workspaceId: modal.workspaceId,
-            changes: {
-              providerId: provider.id,
-              modelId: model.id,
-              ...(provider.defaultModeId ? { modeId: provider.defaultModeId } : {}),
-              ...(model.defaultThinkingLevel ? { thinkingLevel: model.defaultThinkingLevel } : {}),
-            },
-          });
-        this.focusSessionDraft(modal.workspaceId);
+        this.openWorkspaceSessionDraft(modal.workspaceId);
         this.apply({ type: "close-modal" });
         return;
       }
@@ -624,6 +635,7 @@ export class ApplicationController {
         const launchId = activeLaunchWorkspaceId(this.#state);
         const id = launchId ?? this.#state.selectedWorkspaceId;
         const launch = launchId ? launchDraft(this.#state, launchId) : undefined;
+        if (id && this.#state.sessionDrafts[id]?.createdAgentId) return;
         if (launch && (launch.kind !== "session" || launch.createdAgentId)) return;
         if (
           id &&
@@ -644,7 +656,7 @@ export class ApplicationController {
         const draft = isLaunch
           ? launchDraft(this.#state, modal.workspaceId)
           : this.#state.sessionDrafts[modal.workspaceId];
-        if (!draft || draft.submitting) return;
+        if (!draft || draft.submitting || draft.createdAgentId) return;
         const selected =
           modal.setting === "provider"
             ? draft.providerId
@@ -711,8 +723,13 @@ export class ApplicationController {
         return;
       }
       case "discard-session-draft": {
-        const draft = this.#state.sessionDrafts[intent.workspaceId];
-        if (!draft) return;
+        const sessionId = activeSessionDraftWorkspaceId(this.#state);
+        const launchId = activeLaunchWorkspaceId(this.#state);
+        if (intent.workspaceId !== sessionId && intent.workspaceId !== launchId) return;
+        const draft = sessionId
+          ? this.#state.sessionDrafts[sessionId]
+          : launchDraft(this.#state, intent.workspaceId);
+        if (!draft || draft.submitting) return;
         if (draftHasUnsentWork(draft))
           this.apply({
             type: "open-modal",
@@ -721,7 +738,7 @@ export class ApplicationController {
         else {
           const wasActive =
             this.#state.activeTabIds[intent.workspaceId] === `draft:${intent.workspaceId}`;
-          this.apply({ type: "discard-session-draft", workspaceId: intent.workspaceId });
+          this.discardDraft(intent.workspaceId);
           if (wasActive) await this.showActiveResource();
         }
         return;
@@ -729,7 +746,7 @@ export class ApplicationController {
       case "discard-session-draft-confirmed": {
         const wasActive =
           this.#state.activeTabIds[intent.workspaceId] === `draft:${intent.workspaceId}`;
-        this.apply({ type: "discard-session-draft", workspaceId: intent.workspaceId });
+        this.discardDraft(intent.workspaceId);
         this.apply({ type: "close-modal" });
         if (wasActive) await this.showActiveResource();
         return;
@@ -1363,12 +1380,48 @@ export class ApplicationController {
               type: "set-launch-draft",
               workspaceId: id,
               changes: {
-                error: `Could not load terminal profiles: ${errorDetail(error)}. Choose Terminal and press \\p to retry.`,
+                error: `Could not load terminal profiles: ${errorDetail(error)}. Open New Tab to retry profile discovery.`,
               },
             });
         }
       }
     }
+  }
+
+  private discardDraft(workspaceId: string): void {
+    if (workspaceId === NEW_WORKSPACE_DRAFT_ID) {
+      this.apply({ type: "set-new-workspace", draft: undefined });
+    } else if (this.#state.sessionDrafts[workspaceId]) {
+      this.apply({ type: "discard-session-draft", workspaceId });
+    } else {
+      this.apply({ type: "complete-launch", workspaceId });
+    }
+  }
+
+  private openWorkspaceSessionDraft(workspaceId: string): void {
+    const launch = this.#state.launchDrafts?.[workspaceId];
+    if (launch && (launch.submitting || launch.createdAgentId || launch.createdTerminal)) {
+      this.apply({ type: "activate-workspace", workspaceId });
+      this.apply({ type: "set-focus", focus: "composer" });
+      return;
+    }
+    const provider = this.#state.directory.providers.find((item) => item.ready);
+    const model = provider ? defaultSelectableModel(provider) : undefined;
+    if (!this.#state.sessionDrafts[workspaceId])
+      this.apply({ type: "open-session-draft", workspaceId: workspaceId });
+    const draft = this.#state.sessionDrafts[workspaceId];
+    if (draft && !draft.providerId && provider && model)
+      this.apply({
+        type: "set-session-draft",
+        workspaceId: workspaceId,
+        changes: {
+          providerId: provider.id,
+          modelId: model.id,
+          ...(provider.defaultModeId ? { modeId: provider.defaultModeId } : {}),
+          ...(model.defaultThinkingLevel ? { thinkingLevel: model.defaultThinkingLevel } : {}),
+        },
+      });
+    this.focusSessionDraft(workspaceId);
   }
 
   private focusSessionDraft(workspaceId: string): void {
@@ -1585,7 +1638,7 @@ export class ApplicationController {
         workspaceId: NEW_WORKSPACE_DRAFT_ID,
         changes: {
           submitting: false,
-          error: `Could not create workspace: ${errorDetail(error)}. Press \\s to retry.`,
+          error: `Could not create workspace: ${errorDetail(error)}. Press Enter to retry.`,
         },
       });
     }
@@ -1642,7 +1695,7 @@ export class ApplicationController {
       } catch (error) {
         update({
           submitting: false,
-          error: `Could not launch terminal: ${errorDetail(error)}. Press \\s to retry.`,
+          error: `Could not launch terminal: ${errorDetail(error)}. Press Enter to retry.`,
         });
       }
       return;
@@ -1679,8 +1732,6 @@ export class ApplicationController {
         agentId = result.agentId;
         update({ createdAgentId: agentId });
       }
-      await this.gateway.execute({ type: "send-prompt", agentId, prompt });
-      const keepFocus = activeLaunchWorkspaceId(this.#state) === workspaceId;
       if (!this.#state.directory.agents.some((agent) => agent.id === agentId))
         this.apply({
           type: "directory",
@@ -1701,6 +1752,8 @@ export class ApplicationController {
             },
           },
         });
+      await this.gateway.execute({ type: "send-prompt", agentId, prompt });
+      const keepFocus = activeLaunchWorkspaceId(this.#state) === workspaceId;
       this.apply({ type: "complete-launch", workspaceId });
       this.apply({
         type: "set-creation-default",
@@ -1714,9 +1767,10 @@ export class ApplicationController {
       });
       if (keepFocus) await this.selectAgent(agentId, true);
     } catch (error) {
+      const createdAgentId = this.#state.launchDrafts?.[workspaceId]?.createdAgentId;
       update({
         submitting: false,
-        error: `Could not launch session: ${errorDetail(error)}. Press \\s to retry.`,
+        error: `${createdAgentId ? `Session ${shortId(createdAgentId)} was created; could not send its first message` : "Could not create session"}: ${errorDetail(error)}. Press Enter to retry.`,
       });
     }
   }
@@ -1748,25 +1802,33 @@ export class ApplicationController {
       changes: { submitting: true, error: "", prompt, dirty: true },
     });
     try {
-      const result = await this.gateway.execute({
-        type: "create-agent",
-        workspaceId,
-        providerId: provider.id,
-        modelId: model.id,
-        prompt,
-        ...(draft.modeId ? { modeId: draft.modeId } : {}),
-        ...(draft.thinkingLevel ? { thinkingLevel: draft.thinkingLevel } : {}),
-      });
-      if (result.type !== "agent-created")
-        throw new Error("Paseo did not return the created session.");
-      const keepFocus = activeSessionDraftWorkspaceId(this.#state) === workspaceId;
-      if (!this.#state.directory.agents.some((agent) => agent.id === result.agentId))
+      let agentId = draft.createdAgentId;
+      if (!agentId) {
+        const result = await this.gateway.execute({
+          type: "create-agent",
+          workspaceId,
+          providerId: provider.id,
+          modelId: model.id,
+          prompt: "",
+          ...(draft.modeId ? { modeId: draft.modeId } : {}),
+          ...(draft.thinkingLevel ? { thinkingLevel: draft.thinkingLevel } : {}),
+        });
+        if (result.type !== "agent-created")
+          throw new Error("Paseo did not return the created session.");
+        agentId = result.agentId;
+        this.apply({
+          type: "set-session-draft",
+          workspaceId,
+          changes: { createdAgentId: agentId },
+        });
+      }
+      if (!this.#state.directory.agents.some((agent) => agent.id === agentId))
         this.apply({
           type: "directory",
           update: {
             type: "agent-upserted",
             agent: {
-              id: result.agentId,
+              id: agentId,
               workspaceId,
               title: "New session",
               status: "starting",
@@ -1782,7 +1844,9 @@ export class ApplicationController {
             },
           },
         });
-      this.apply({ type: "complete-session-draft", workspaceId, agentId: result.agentId });
+      await this.gateway.execute({ type: "send-prompt", agentId, prompt });
+      const keepFocus = activeSessionDraftWorkspaceId(this.#state) === workspaceId;
+      this.apply({ type: "complete-session-draft", workspaceId, agentId: agentId });
       this.apply({
         type: "set-creation-default",
         workspaceId,
@@ -1793,15 +1857,16 @@ export class ApplicationController {
           ...(draft.thinkingLevel ? { thinkingLevel: draft.thinkingLevel } : {}),
         },
       });
-      if (keepFocus) await this.selectAgent(result.agentId, true);
-      this.apply({ type: "notify", message: `Created session ${shortId(result.agentId)}.` });
+      if (keepFocus) await this.selectAgent(agentId, true);
+      this.apply({ type: "notify", message: `Created session ${shortId(agentId)}.` });
     } catch (error) {
+      const createdAgentId = this.#state.sessionDrafts[workspaceId]?.createdAgentId;
       this.apply({
         type: "set-session-draft",
         workspaceId,
         changes: {
           submitting: false,
-          error: `Could not create session: ${errorDetail(error)}. Press Enter to retry.`,
+          error: `${createdAgentId ? `Session ${shortId(createdAgentId)} was created; could not send its first message` : "Could not create session"}: ${errorDetail(error)}. Press Enter to retry.`,
         },
       });
     }
@@ -2391,17 +2456,17 @@ export class ApplicationController {
             terminalId: entry.operation.terminalId,
           });
           return;
-        case "terminal-reconnect":
-          await this.handleIntent({
-            type: "open-terminal",
-            terminalId: entry.operation.terminalId,
-          });
-          return;
         case "command":
           await this.runCommand(entry.operation.command);
           return;
         case "send":
           await this.submitPrompt(entry.operation.agentId, entry.operation.prompt);
+          return;
+        case "terminal-focus":
+          await this.handleIntent({
+            type: "open-terminal",
+            terminalId: entry.operation.terminalId,
+          });
           return;
         case "focus":
           await this.selectAgent(entry.operation.agentId);
