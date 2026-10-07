@@ -404,3 +404,22 @@ it("character copies retain meaningful indentation in non-Markdown output", asyn
     await f.close();
   }
 });
+it("pending find and yank commands own mnemonic letters before application prefixes", async () => {
+  const f = await fixture("alpha middle tail");
+  try {
+    await f.keys("\u000b", "g", "g", "j", "^", "f", "m", "v", "y");
+    expect(f.clipboard()).toBe("m");
+    expect(f.app.state.modal.type).toBe("none");
+    await f.keys("^", "y", "t", "m");
+    expect(f.clipboard()).toBe("alpha ");
+    expect(f.app.state.modal.type).toBe("none");
+    await f.keys("^", "y", "g", "t");
+    expect(f.clipboard()).toBe("alpha ");
+    expect(f.app.state.selectedAgentId).toBe("a");
+    await f.keys("2", "m", "p");
+    expect(f.app.state.modal.type).toBe("none");
+    expect(f.clipboard()).toBe("alpha ");
+  } finally {
+    await f.close();
+  }
+});
