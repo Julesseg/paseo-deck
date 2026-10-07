@@ -935,8 +935,11 @@ class TimelineView implements Component {
           this.eventIndexAtBodyLine(start + index)
         ];
         const mapping = event?.positions[start + index - (event?.start ?? 0)];
+        const item = this.events[this.eventIndexAtBodyLine(start + index)]?.item;
+        const primary = item?.type === "user-message" || item?.type === "assistant-message";
+        const padding = !primary && line.startsWith("    ") ? 4 : 2;
         return (
-          mapping?.region === "body" && line.startsWith("  ") ? line.slice(2) : line
+          mapping?.region === "body" && line.startsWith("  ") ? line.slice(padding) : line
         ).trimEnd();
       })
       .join("\n");

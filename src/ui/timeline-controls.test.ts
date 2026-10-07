@@ -383,3 +383,24 @@ it("inclusive row-end yanks copy the final character while empty backward ranges
     await f.close();
   }
 });
+it("character copies retain meaningful indentation in non-Markdown output", async () => {
+  const f = await fixture();
+  try {
+    f.gateway.emitTimeline("a", {
+      type: "event",
+      agentId: "a",
+      event: {
+        epoch: "e",
+        sequence: 1,
+        item: { id: "r", type: "reasoning", text: "  indented\nnext" },
+      },
+    });
+    await f.terminal.waitForRender();
+    await f.keys("\u000b", "g", "g", "2", "j", "y", "y");
+    expect(f.clipboard()).toBe("  indented");
+    await f.keys("0", "v", "G", "y");
+    expect(f.clipboard()).toContain("  indented");
+  } finally {
+    await f.close();
+  }
+});
