@@ -7,13 +7,16 @@ import {
 import { characterStep, findTextCharacter, isCharacter } from "./text-buffer.js";
 
 export type ComposerVimMode = "normal" | "insert" | "visual";
-export type ComposerVisualKind = "character" | "line" | "block";
+export type ComposerVisualKind = "character" | "line";
 export interface ComposerVimState {
   readonly text: string;
   readonly cursor: number;
   readonly mode: ComposerVimMode;
   readonly visualKind: ComposerVisualKind;
   readonly anchor?: number | undefined;
+  readonly previousSelection?:
+    | { anchor: number; cursor: number; kind: ComposerVisualKind }
+    | undefined;
   readonly pending: string;
   readonly count: string;
   readonly operatorCount: number;
@@ -74,7 +77,7 @@ export function syncComposerVim(
   text: string,
   position: { line: number; col: number },
 ): ComposerVimState {
-  return { ...state, text, cursor: positionToOffset(text, position) };
+  return { ...remapSelection(state, text), text, cursor: positionToOffset(text, position) };
 }
 
 export function positionToOffset(text: string, position: { line: number; col: number }): number {
@@ -118,10 +121,61 @@ function jumpTo(state: ComposerVimState, cursor: number): ComposerVimState {
   return { ...clearCommand(state), cursor };
 }
 
+function remapSelection(state: ComposerVimState, text: string): ComposerVimState {
+  if (text === state.text) return state;
+  let start = 0;
+  while (start < state.text.length && start < text.length && state.text[start] === text[start])
+    start++;
+  let end = state.text.length;
+  let nextEnd = text.length;
+  while (end > start && nextEnd > start && state.text[end - 1] === text[nextEnd - 1]) {
+    end--;
+    nextEnd--;
+  }
+  const oldLines = state.text.split("\n");
+  const newLines = text.split("\n");
+  const map = (offset: number): number | undefined => {
+    if (oldLines.length === newLines.length) {
+      const position = offsetToPosition(state.text, offset);
+      const oldLine = oldLines[position.line] ?? "";
+      const newLine = newLines[position.line] ?? "";
+      let first = 0;
+      while (first < oldLine.length && first < newLine.length && oldLine[first] === newLine[first])
+        first++;
+      let last = oldLine.length;
+      let nextLast = newLine.length;
+      while (last > first && nextLast > first && oldLine[last - 1] === newLine[nextLast - 1]) {
+        last--;
+        nextLast--;
+      }
+      const column =
+        position.col < first
+          ? position.col
+          : position.col >= last
+            ? position.col + nextLast - last
+            : undefined;
+      return column === undefined
+        ? undefined
+        : positionToOffset(text, { line: position.line, col: column });
+    }
+    return offset < start ? offset : offset >= end ? offset + nextEnd - end : undefined;
+  };
+  const previous = state.previousSelection;
+  const anchor = previous && map(previous.anchor);
+  const cursor = previous && map(previous.cursor);
+  return {
+    ...state,
+    previousSelection:
+      previous && anchor !== undefined && cursor !== undefined
+        ? { ...previous, anchor, cursor }
+        : undefined,
+  };
+}
+
 function changed(state: ComposerVimState, text: string, cursor: number): ComposerVimState {
   if (text === state.text) return { ...state, cursor: normalCursor(text, cursor) };
   return {
-    ...state,
+    ...remapSelection(state, text),
     text,
     cursor: normalCursor(text, cursor),
     undo: [...state.undo, { text: state.text, cursor: state.cursor }],
@@ -420,42 +474,71 @@ function visualRange(state: ComposerVimState): {
   }
   return {
     start: Math.min(anchor, state.cursor),
-    end: Math.min(state.text.length, Math.max(anchor, state.cursor) + 1),
+    end: Math.min(state.text.length, characterStep(state.text, Math.max(anchor, state.cursor), 1)),
     kind: "character",
   };
 }
 
-function applyVisualOperator(state: ComposerVimState, operator: string): ComposerVimResult {
-  if (state.visualKind !== "block") return applyOperator(state, operator, visualRange(state));
-  const anchor = offsetToPosition(state.text, state.anchor ?? state.cursor);
-  const cursor = offsetToPosition(state.text, state.cursor);
-  const firstLine = Math.min(anchor.line, cursor.line);
-  const lastLine = Math.max(anchor.line, cursor.line);
-  const firstColumn = Math.min(anchor.col, cursor.col);
-  const lastColumn = Math.max(anchor.col, cursor.col) + 1;
-  const lines = state.text.split("\n");
-  const selected = lines
-    .slice(firstLine, lastLine + 1)
-    .map((line) => line.slice(firstColumn, lastColumn));
-  const yank = selected.join("\n");
-  let next: ComposerVimState = {
-    ...clearCommand(state),
-    mode: "normal",
-    anchor: undefined,
-    cursor: positionToOffset(state.text, { line: firstLine, col: firstColumn }),
-  };
-  if (operator === "y") return { state: next, handled: true, yank };
-  for (let line = firstLine; line <= lastLine; line++) {
-    const value = lines[line] ?? "";
-    lines[line] = value.slice(0, firstColumn) + value.slice(lastColumn);
-  }
-  next = changed(
-    next,
-    lines.join("\n"),
-    positionToOffset(lines.join("\n"), { line: firstLine, col: firstColumn }),
+function visualTransform(
+  state: ComposerVimState,
+  transform: (value: string) => string,
+): ComposerVimResult {
+  const range = visualRange(state);
+  const next = replace(
+    leaveVisual(state),
+    range.start,
+    range.end,
+    transform(state.text.slice(range.start, range.end)),
   );
-  if (operator === "c") next = enterInsert(state, next);
-  return { state: next, handled: true };
+  return {
+    state: { ...clearCommand(next), cursor: normalCursor(next.text, range.start) },
+    handled: true,
+  };
+}
+
+function visualJoin(state: ComposerVimState, raw: boolean): ComposerVimResult {
+  const range = visualRange({ ...state, visualKind: "line" });
+  let end = lineEnd(state.text, Math.max(state.cursor, state.anchor ?? state.cursor));
+  if (
+    lineStart(state.text, state.cursor) === lineStart(state.text, state.anchor ?? state.cursor) &&
+    end < state.text.length
+  )
+    end = lineEnd(state.text, end + 1);
+  const value = state.text
+    .slice(range.start, end)
+    .split("\n")
+    .reduce((left, right) => {
+      if (raw) return left + right;
+      const body = right.replace(/^[ \t]*/u, "");
+      const space = left && !/[ \t]$/u.test(left) && body && !body.startsWith(")") ? " " : "";
+      return left + space + body;
+    });
+  const next = replace(leaveVisual(state), range.start, end, value);
+  return {
+    state: { ...clearCommand(next), cursor: normalCursor(next.text, range.start) },
+    handled: true,
+  };
+}
+
+function saveSelection(state: ComposerVimState): ComposerVimState {
+  return state.mode !== "visual"
+    ? state
+    : {
+        ...state,
+        previousSelection: {
+          anchor: state.anchor ?? state.cursor,
+          cursor: state.cursor,
+          kind: state.visualKind,
+        },
+      };
+}
+
+function leaveVisual(state: ComposerVimState): ComposerVimState {
+  return { ...clearCommand(saveSelection(state)), mode: "normal", anchor: undefined };
+}
+
+function applyVisualOperator(state: ComposerVimState, operator: string): ComposerVimResult {
+  return applyOperator(saveSelection(state), operator, visualRange(state));
 }
 
 export function composerVisualSelection(
@@ -479,7 +562,7 @@ export function recallComposerPrompt(
   const text = index === -1 ? (saved?.text ?? "") : (history[index] ?? "");
   const cursor = index === -1 ? (saved?.cursor ?? 0) : direction === -1 ? 0 : text.length;
   return {
-    ...before,
+    ...remapSelection(before, text),
     text,
     cursor: before.mode === "insert" ? cursor : normalCursor(text, cursor),
     historyIndex: index,
@@ -496,10 +579,11 @@ export function applyComposerInsertText(
   atomic = false,
 ): ComposerVimState {
   const before = atomic ? finishComposerInsert(state) : state;
+  const inserted = before.text.slice(0, before.cursor) + text + before.text.slice(before.cursor);
   const next: ComposerVimState = {
-    ...before,
+    ...remapSelection(before, inserted),
     mode: "insert",
-    text: before.text.slice(0, before.cursor) + text + before.text.slice(before.cursor),
+    text: inserted,
     cursor: before.cursor + text.length,
     insertSnapshot: before.insertSnapshot ?? { text: before.text, cursor: before.cursor },
     historyIndex: undefined,
@@ -530,7 +614,7 @@ export function undoComposer(state: ComposerVimState, redo = false, amount = 1):
     if (!snapshot) break;
     const current = { text: next.text, cursor: next.cursor };
     next = {
-      ...next,
+      ...remapSelection(next, snapshot.text),
       ...snapshot,
       cursor:
         next.mode === "normal" ? normalCursor(snapshot.text, snapshot.cursor) : snapshot.cursor,
@@ -633,7 +717,7 @@ function handleComposerInsert(state: ComposerVimState, key: string): ComposerVim
   if (text === state.text) return { state, handled: true };
   return {
     state: {
-      ...state,
+      ...remapSelection(state, text),
       text,
       cursor: start + insertion.length,
       historyIndex: undefined,
@@ -645,6 +729,12 @@ function handleComposerInsert(state: ComposerVimState, key: string): ComposerVim
 }
 
 export function handleComposerVim(state: ComposerVimState, key: string): ComposerVimResult {
+  if (key === "\u001b" && state.mode === "visual") {
+    return {
+      state: state.pending || state.count ? clearCommand(state) : leaveVisual(state),
+      handled: true,
+    };
+  }
   if (key === "\u001b") {
     const finished = state.mode === "insert" ? finishComposerInsert(state) : state;
     return {
@@ -685,6 +775,14 @@ export function handleComposerVim(state: ComposerVimState, key: string): Compose
     return { state, handled: true };
   }
   if (key === "\r" || key === "\n") return { state: clearCommand(state), handled: true };
+  if (state.pending === "r" && state.mode === "visual") {
+    if (!isCharacter(key)) return { state: clearCommand(state), handled: true };
+    return visualTransform(state, (value) =>
+      [...new Intl.Segmenter(undefined, { granularity: "grapheme" }).segment(value)]
+        .map((segment) => (segment.segment === "\n" ? "\n" : key))
+        .join(""),
+    );
+  }
   if (state.pending === "r") {
     if (!isCharacter(key)) return { state: clearCommand(state), handled: true };
     const end = characterStep(state.text, state.cursor, count(state));
@@ -715,6 +813,21 @@ export function handleComposerVim(state: ComposerVimState, key: string): Compose
     };
   }
   if (state.pending === "g") {
+    if (key === "J" && state.mode === "visual") return visualJoin(state, true);
+    if (key === "v") {
+      const previous = state.previousSelection;
+      if (!previous) return { state: clearCommand(state), handled: true };
+      return {
+        state: {
+          ...clearCommand(saveSelection(state)),
+          mode: "visual",
+          anchor: previous.anchor,
+          cursor: previous.cursor,
+          visualKind: previous.kind,
+        },
+        handled: true,
+      };
+    }
     const target =
       key === "g"
         ? motion(state, "gg", state.count ? count(state) : 0)
@@ -733,14 +846,14 @@ export function handleComposerVim(state: ComposerVimState, key: string): Compose
     return { state: { ...clearCommand(state), cursor: target ?? state.cursor }, handled: true };
   }
   if (state.pending === "i" || state.pending === "a") {
-    const range = textObject(state, key, state.pending === "a");
+    const range = state.count ? undefined : textObject(state, key, state.pending === "a");
     if (!range) return { state: clearCommand(state), handled: true };
     if (state.mode === "visual")
       return {
         state: {
           ...clearCommand(state),
           anchor: range.start,
-          cursor: Math.max(range.start, range.end - 1),
+          cursor: Math.max(range.start, characterStep(state.text, range.end, -1)),
           visualKind: range.kind,
         },
         handled: true,
@@ -848,18 +961,73 @@ export function handleComposerVim(state: ComposerVimState, key: string): Compose
   }
 
   if (state.mode === "visual") {
-    if (key === "v" || key === "V" || key === "\u0016") {
-      const kind = key === "v" ? "character" : key === "V" ? "line" : "block";
+    if (/^[1-9]$/.test(key) || (key === "0" && state.count))
+      return { state: { ...state, count: state.count + key }, handled: true };
+    if (key === ">" || key === "<") {
+      const range = visualRange({ ...state, visualKind: "line" });
+      const value = state.text
+        .slice(range.start, range.end)
+        .split("\n")
+        .map((line) => {
+          if (!/\S/u.test(line)) return line;
+          const leading = line.match(/^[ \t]*/u)?.[0] ?? "";
+          const width = leading.replaceAll("\t", "    ").length;
+          return (
+            " ".repeat(Math.max(0, width + (key === ">" ? 2 : -2) * count(state))) +
+            line.slice(leading.length)
+          );
+        })
+        .join("\n");
       return {
-        state:
-          state.visualKind === kind
-            ? { ...state, mode: "normal", anchor: undefined }
-            : { ...state, visualKind: kind },
+        state: clearCommand(replace(leaveVisual(state), range.start, range.end, value)),
         handled: true,
       };
     }
-    if (["d", "c", "y", "x"].includes(key))
-      return applyVisualOperator(state, key === "x" ? "d" : key);
+    if (key === "v" || key === "V") {
+      const kind = key === "v" ? "character" : "line";
+      return {
+        state: state.visualKind === kind ? leaveVisual(state) : { ...state, visualKind: kind },
+        handled: true,
+      };
+    }
+    if (key === "o" || key === "O")
+      return {
+        state: {
+          ...clearCommand(state),
+          anchor: state.cursor,
+          cursor: state.anchor ?? state.cursor,
+        },
+        handled: true,
+      };
+    if (["D", "X", "C", "S", "R", "Y"].includes(key))
+      return applyOperator(
+        saveSelection(state),
+        key === "Y" ? "y" : ["D", "X"].includes(key) ? "d" : "c",
+        visualRange({ ...state, visualKind: "line" }),
+      );
+    if (["d", "c", "y", "x", "s"].includes(key))
+      return applyVisualOperator(state, key === "x" ? "d" : key === "s" ? "c" : key);
+    if (["u", "U", "~"].includes(key))
+      return visualTransform(state, (value) =>
+        key === "u"
+          ? value.toLowerCase()
+          : key === "U"
+            ? value.toUpperCase()
+            : [...value]
+                .map((char) =>
+                  char === char.toUpperCase() ? char.toLowerCase() : char.toUpperCase(),
+                )
+                .join(""),
+      );
+    if (key === "r") return { state: { ...state, pending: "r" }, handled: true };
+    if (key === "J") return visualJoin(state, false);
+    if (key === "p" || key === "P")
+      return {
+        state: clearCommand(state),
+        handled: true,
+        paste: { before: key === "P", count: count(state) },
+      };
+    if (key === "i" || key === "a") return { state: { ...state, pending: key }, handled: true };
   } else {
     if (/^[1-9]$/.test(key) || (key === "0" && state.count))
       return { state: { ...state, count: state.count + key }, handled: true };
@@ -874,13 +1042,13 @@ export function handleComposerVim(state: ComposerVimState, key: string): Compose
         },
         handled: true,
       };
-    if (key === "v" || key === "V" || key === "\u0016")
+    if (key === "v" || key === "V")
       return {
         state: {
           ...clearCommand(state),
           mode: "visual",
           anchor: state.cursor,
-          visualKind: key === "v" ? "character" : key === "V" ? "line" : "block",
+          visualKind: key === "v" ? "character" : "line",
         },
         handled: true,
       };
@@ -1032,7 +1200,7 @@ export function handleComposerVim(state: ComposerVimState, key: string): Compose
       },
       handled: true,
     };
-  return { state: clearCommand(state), handled: false };
+  return { state: clearCommand(state), handled: state.mode === "visual" };
 }
 
 /** Apply data read from the current system clipboard as one undoable edit. */
@@ -1043,6 +1211,14 @@ export function applyComposerPaste(
   request: { before: boolean; count: number },
 ): ComposerVimState {
   if (!text) return clearCommand(state);
+  if (state.mode === "visual") {
+    const range = visualRange(state);
+    const next = replace(leaveVisual(state), range.start, range.end, text.repeat(request.count));
+    return {
+      ...clearCommand(next),
+      cursor: normalCursor(next.text, range.start + text.length * request.count - 1),
+    };
+  }
   let where = request.before
     ? state.cursor
     : Math.min(lineEnd(state.text, state.cursor), characterStep(state.text, state.cursor, 1));
@@ -1064,4 +1240,17 @@ export function applyComposerPaste(
       kind === "line" ? where + (value.startsWith("\n") ? 1 : 0) : where + value.length - 1,
     ),
   };
+}
+
+/** Native paste preserves clipboard contents and enters Insert after the payload. */
+export function applyComposerNativePaste(state: ComposerVimState, text: string): ComposerVimState {
+  const range =
+    state.mode === "visual" ? visualRange(state) : { start: state.cursor, end: state.cursor };
+  const next = replace(
+    state.mode === "visual" ? leaveVisual(state) : clearCommand(state),
+    range.start,
+    range.end,
+    text,
+  );
+  return { ...enterInsert(state, next), cursor: range.start + text.length };
 }

@@ -15,12 +15,12 @@ import {
   SelectList,
   Spacer,
   sliceByColumn,
-  stripTerminalSequences,
   type Terminal,
   type TUI,
   TuiAltScreen,
   VStack,
 } from "@earendil-works/pi-tui";
+import { wordWrapLine } from "@earendil-works/pi-tui/dist/components/editor.js";
 import type { AppState, ModalState } from "../contracts/app-state.js";
 import type { TimelineEvent, TimelineItem } from "../contracts/domain.js";
 import {
@@ -42,6 +42,7 @@ import {
 } from "./commands.js";
 import {
   applyComposerInsertText,
+  applyComposerNativePaste,
   applyComposerPaste,
   type ComposerVimState,
   composerVisualSelection,
@@ -1638,7 +1639,7 @@ class ComposerView implements Component, Focusable {
     const controlRow = composerControlRow(this.state, this.theme, innerWidth);
     const controls =
       innerWidth < 55 ? this.theme.clipRendered(`Prompt ${controlRow}`, innerWidth) : controlRow;
-    const body = this.highlightVisualSelection(this.editor.render(innerWidth));
+    const body = this.highlightVisualSelection(this.editor.render(innerWidth), innerWidth);
     this.visibleEditorLines = Math.max(1, body.length);
     const lines = [
       this.theme.styleRendered(
@@ -1675,6 +1676,11 @@ class ComposerView implements Component, Focusable {
     this.inputRevision++;
     const launchId = activeLaunchWorkspaceId(this.state);
     if (launchId && launchDraft(this.state, launchId).submitting) return;
+    if (data.startsWith("\u001b[200~") && this.vim.mode === "visual") {
+      const text = data.slice(6).replace("\u001b[201~", "").replace(/\r\n?/gu, "\n");
+      this.applyVimResult({ state: applyComposerNativePaste(this.vim, text), handled: true });
+      return;
+    }
     if (data.startsWith("\u001b[200~")) {
       const payload = data.slice(6, data.endsWith("\u001b[201~") ? -6 : undefined);
       this.applyVimResult({
@@ -1765,45 +1771,39 @@ class ComposerView implements Component, Focusable {
     this.applyVimResult(handleComposerVim(current, data));
   }
 
-  private highlightVisualSelection(body: string[]): string[] {
+  private highlightVisualSelection(body: string[], width: number): string[] {
     const selection = composerVisualSelection(this.vim);
     if (!selection) return body;
-    const lines = this.editor.getText().split("\n");
-    const anchor = offsetToPosition(this.editor.getText(), this.vim.anchor ?? this.vim.cursor);
-    const cursor = offsetToPosition(this.editor.getText(), this.vim.cursor);
+    const rows: { text: string; offset: number }[] = [];
     let offset = 0;
-    let bodyRow = 0;
-    return body.map((rendered) => {
-      const source = lines[bodyRow];
-      if (source === "") {
-        offset++;
-        bodyRow++;
-        return rendered;
+    for (const line of this.vim.text.split("\n")) {
+      for (const chunk of wordWrapLine(line, Math.max(1, width - 2)))
+        rows.push({ text: chunk.text, offset: offset + chunk.startIndex });
+      offset += line.length + 1;
+    }
+    const cursorRow = Math.max(
+      0,
+      rows.findIndex(
+        (row, index) =>
+          this.vim.cursor >= row.offset && this.vim.cursor < (rows[index + 1]?.offset ?? Infinity),
+      ),
+    );
+    const top = Math.max(0, cursorRow - body.length + 1);
+    return rows.slice(top, top + body.length).map((row) => {
+      const offsets = characterOffsets(row.text);
+      let text = "";
+      for (let index = 0; index < offsets.length - 1; index++) {
+        const start = offsets[index] ?? 0;
+        const end = offsets[index + 1] ?? row.text.length;
+        let character = row.text.slice(start, end);
+        const at = row.offset + start;
+        if (at === this.vim.cursor) character = `\u001b[7m${character}\u001b[27m`;
+        if (at >= selection.start && at < selection.end)
+          character = this.theme.styleRenderedBackground("selection", character);
+        text += character;
       }
-      const plain = stripTerminalSequences(rendered);
-      if (!source || !plain.includes(source)) return rendered;
-      const block = selection.kind === "block";
-      const selectedLine =
-        bodyRow >= Math.min(anchor.line, cursor.line) &&
-        bodyRow <= Math.max(anchor.line, cursor.line);
-      const start = block
-        ? Math.min(anchor.col, cursor.col)
-        : Math.max(0, selection.start - offset);
-      const end = block
-        ? selectedLine
-          ? Math.min(source.length, Math.max(anchor.col, cursor.col) + 1)
-          : 0
-        : Math.min(source.length, selection.end - offset);
-      const at = plain.indexOf(source);
-      const next =
-        start < end
-          ? plain.slice(0, at + start) +
-            this.theme.styleRenderedBackground("selection", source.slice(start, end)) +
-            plain.slice(at + end)
-          : rendered;
-      offset += source.length + 1;
-      bodyRow++;
-      return next;
+      if (!row.text && row.offset === this.vim.cursor) text = "\u001b[7m \u001b[27m";
+      return ` ${text}${" ".repeat(Math.max(0, width - 1 - terminalDisplayWidth(row.text)))}`;
     });
   }
 
@@ -1833,9 +1833,18 @@ class ComposerView implements Component, Focusable {
             this.vim.anchor !== capturedState.anchor
           )
             return;
+          const selection = composerVisualSelection(capturedState);
           this.applyVimResult({
             state: applyComposerPaste(capturedState, value.text, value.kind, paste),
             handled: true,
+            ...(selection && !paste.before && value.text
+              ? {
+                  copy: {
+                    text: capturedState.text.slice(selection.start, selection.end),
+                    kind: selection.kind,
+                  },
+                }
+              : {}),
           });
         })
         .catch(() =>
@@ -3434,6 +3443,10 @@ export class DeckTui {
                 "Insert: Enter/Alt-Enter newline; Ctrl-Z/Ctrl-Shift-Z shares draft undo; Esc finishes group.",
                 "Insert: Ctrl-B/F character, Alt-B/F word, Home/End line; Ctrl-W/Alt-D delete word.",
                 "p/P reads system clipboard; Deck-owned line copies paste below/above.",
+                "Visual: v/V character/line; o/O swaps endpoints; gv restores/exchanges selection.",
+                "Visual d/x c/s; D/X C/S/R whole lines; y/Y copies; u/U/~ case; r replaces.",
+                "Visual J/gJ joins; counted >/< shifts by two spaces; p replaces and copies removed text; P preserves clipboard.",
+                "Native Visual paste replaces once and enters Insert; Escape cancels pending input before exiting.",
               ]
             : []),
           ...contextualHelp(this.state, context).map((command) => commandHelpLine(command)),
@@ -3775,6 +3788,10 @@ export class DeckTui {
                 "Insert: Enter/Alt-Enter newline; Ctrl-Z/Ctrl-Shift-Z shares draft undo; Esc finishes group.",
                 "Insert: Ctrl-B/F character, Alt-B/F word, Home/End line; Ctrl-W/Alt-D delete word.",
                 "p/P reads system clipboard; Deck-owned line copies paste below/above.",
+                "Visual: v/V character/line; o/O swaps endpoints; gv restores/exchanges selection.",
+                "Visual d/x c/s; D/X C/S/R whole lines; y/Y copies; u/U/~ case; r replaces.",
+                "Visual J/gJ joins; counted >/< shifts by two spaces; p replaces and copies removed text; P preserves clipboard.",
+                "Native Visual paste replaces once and enters Insert; Escape cancels pending input before exiting.",
               ]
             : []),
           ...contextualHelp(this.state).map((command) => commandHelpLine(command)),
