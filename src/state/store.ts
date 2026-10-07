@@ -903,13 +903,16 @@ export function reduceApp(state: AppState, action: AppAction): AppState {
         selectedWorkspaceId: action.workspaceId,
         sessionDrafts: state.sessionDrafts[action.workspaceId]
           ? state.sessionDrafts
-          : { ...state.sessionDrafts, [action.workspaceId]: { ...defaults, prompt: "" } },
+          : { ...state.sessionDrafts, [action.workspaceId]: launch ?? { ...defaults, prompt: "" } },
         activeTabIds: {
           ...state.activeTabIds,
           [action.workspaceId]: `draft:${action.workspaceId}`,
         },
         focus: "composer",
-        composerMode: "normal",
+        composerMode:
+          activeSessionDraftWorkspaceId(state) === action.workspaceId
+            ? (state.composerMode ?? "normal")
+            : "normal",
       });
     }
     case "set-session-draft": {
@@ -1058,7 +1061,7 @@ export function reduceApp(state: AppState, action: AppAction): AppState {
           workspaceId: launchId,
           changes: {
             [draft.kind === "session" ? "prompt" : "command"]: action.text,
-            dirty: true,
+            dirty: Boolean(action.text.length) || Boolean(draft.settingsDirty),
             error: undefined,
           },
         });

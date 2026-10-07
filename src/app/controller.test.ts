@@ -1246,8 +1246,8 @@ describe("New Tab session draft", () => {
       prompt: "Build the feature",
     });
     expect(gateway.commands.at(-1)).toMatchObject({
-      type: "create-agent",
-      workspaceId: "workspace-1",
+      type: "send-prompt",
+      agentId: "fake-agent-1",
       prompt: "Build the feature",
     });
     expect(app.state.sessionDrafts["workspace-1"]).toBeUndefined();
@@ -1339,9 +1339,12 @@ describe("New Tab session draft", () => {
     await app.handleIntent({ type: "switch-tab", direction: 1 });
     const active = app.state.activeTabIds["workspace-1"];
     await app.handleIntent({ type: "discard-session-draft", workspaceId: "workspace-1" });
-    expect(app.state.sessionDrafts["workspace-1"]).toBeUndefined();
+    expect(app.state.sessionDrafts["workspace-1"]).toBeDefined();
     expect(app.state.modal.type).toBe("none");
     expect(app.state.activeTabIds["workspace-1"]).toBe(active);
+    await openDraft(app);
+    await app.handleIntent({ type: "discard-session-draft", workspaceId: "workspace-1" });
+    expect(app.state.sessionDrafts["workspace-1"]).toBeUndefined();
     await openDraft(app);
     app.setComposerText("Unsaved");
     await app.handleIntent({ type: "discard-session-draft", workspaceId: "workspace-1" });

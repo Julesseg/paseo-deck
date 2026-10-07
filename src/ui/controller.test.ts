@@ -380,14 +380,14 @@ describe("DeckController keyboard seam", () => {
     expect(intents).toEqual([{ type: "close-modal" }]);
   });
 
-  it("opens the New workspace composer from sidebar c", () => {
+  it("opens the New workspace composer from sidebar n", () => {
     const intents: unknown[] = [];
     const controller = new DeckController(
       () => makeState(),
       (intent) => intents.push(intent),
     );
 
-    controller.handleKey("c");
+    controller.handleKey("n");
 
     expect(intents).toContainEqual({ type: "open-new-workspace" });
   });

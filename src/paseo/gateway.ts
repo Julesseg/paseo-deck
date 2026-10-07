@@ -511,7 +511,7 @@ export class ProductionPaseoGateway implements PaseoGateway {
         case "create-agent": {
           const agent = await client.workspaces.ref(command.workspaceId).agents.create({
             title: command.title,
-            prompt: command.prompt,
+            ...(command.prompt ? { prompt: command.prompt } : {}),
             config: {
               provider: `${command.providerId}/${command.modelId}`,
               ...(command.modeId === undefined ? {} : { modeId: command.modeId }),
