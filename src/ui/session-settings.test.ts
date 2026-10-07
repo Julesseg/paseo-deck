@@ -428,3 +428,41 @@ it("Timeline character targets and pending yank/count sequences own m before Ses
     await f.stop();
   }
 });
+
+it("a model without an explicit thinking default resets the previous level through null", async () => {
+  const f = await fixture("codex");
+  try {
+    const snapshot = await f.gateway.getDirectorySnapshot();
+    f.gateway.emitDirectory({
+      type: "snapshot",
+      snapshot: {
+        ...snapshot,
+        providers: snapshot.providers.map((provider) =>
+          provider.id === "codex"
+            ? {
+                ...provider,
+                models: [
+                  ...provider.models,
+                  { id: "plain", name: "Plain Model", selectable: true, thinkingLevels: [] },
+                ],
+              }
+            : provider,
+        ),
+        agents: snapshot.agents.map((agent) => ({ ...agent, thinkingLevel: "high" })),
+      },
+    });
+    await f.app.handleIntent({ type: "set-focus", focus: "composer" });
+    f.terminal.sendInput("m");
+    f.terminal.sendInput("m");
+    f.terminal.sendInput("Plain");
+    f.terminal.sendInput("\r");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(f.gateway.commands).toEqual([
+      { type: "set-agent-model", agentId: "a", modelId: "plain", thinkingLevel: null },
+    ]);
+    expect(f.app.state.directory.agents[0]?.thinkingLevel).toBeUndefined();
+    expect(f.app.state.directory.agents[0]?.modeId).toBe("plan");
+  } finally {
+    await f.stop();
+  }
+});

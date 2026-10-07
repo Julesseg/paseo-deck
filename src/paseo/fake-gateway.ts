@@ -107,11 +107,14 @@ export class FakePaseoGateway implements PaseoGateway {
     ) {
       this.snapshot = {
         ...this.snapshot,
-        agents: this.snapshot.agents.map((agent) =>
-          agent.id !== command.agentId
+        agents: this.snapshot.agents.map((agent) => {
+          const { thinkingLevel: _thinkingLevel, ...withoutThinking } = agent;
+          return agent.id !== command.agentId
             ? agent
             : {
-                ...agent,
+                ...(command.type === "set-agent-model" && command.thinkingLevel === null
+                  ? withoutThinking
+                  : agent),
                 ...(command.type === "set-agent-model"
                   ? {
                       modelId: command.modelId,
@@ -122,8 +125,8 @@ export class FakePaseoGateway implements PaseoGateway {
                   : command.type === "set-agent-mode"
                     ? { modeId: command.modeId }
                     : { thinkingLevel: command.thinkingLevel }),
-              },
-        ),
+              };
+        }),
       };
       this.emitDirectory({ type: "snapshot", snapshot: this.snapshot });
     }
