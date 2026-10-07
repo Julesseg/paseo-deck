@@ -468,7 +468,7 @@ describe("DeckController keyboard seam", () => {
     expect(intents).toEqual([{ type: "quit" }]);
   });
 
-  it("quits instead of forwarding Ctrl+C to an embedded terminal", () => {
+  it("forwards Ctrl+C to a running Terminal", () => {
     const intents: unknown[] = [];
     const controller = new DeckController(
       () => ({
@@ -482,7 +482,7 @@ describe("DeckController keyboard seam", () => {
     );
 
     expect(controller.handleKey("\u0003")).toBe(true);
-    expect(intents).toEqual([{ type: "quit" }]);
+    expect(intents).toEqual([{ type: "terminal-input", data: "\u0003" }]);
   });
 
   it("keeps ordinary insert text local while preserving Ctrl-C quit", () => {

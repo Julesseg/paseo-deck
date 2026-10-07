@@ -1706,6 +1706,11 @@ class ComposerView implements Component, Focusable {
       0,
       this.visibleEditorLines,
     );
+    if (current.pending === "g" && data === "?") {
+      this.cancelPendingInput();
+      this.emit({ type: "open-help" });
+      return;
+    }
     if (data === "\r" && current.mode === "normal" && !current.pending && !current.count) {
       this.editor.onSubmit?.(current.text);
       return;
@@ -2339,7 +2344,7 @@ class SearchableChoiceDialog implements Component, Focusable {
       return;
     }
     const matches = this.matches();
-    if (matchesKey(data, "up")) this.selected = Math.max(0, this.selected - 1);
+    if (matchesKey(data, "up") || data === "\u000b") this.selected = Math.max(0, this.selected - 1);
     else if (matchesKey(data, "down"))
       this.selected = Math.min(Math.max(0, matches.length - 1), this.selected + 1);
     else if (matchesKey(data, "enter")) {
@@ -2415,7 +2420,7 @@ class CommandPaletteDialog implements Component, Focusable {
       return;
     }
     const matches = this.matches();
-    if (matchesKey(data, "up")) this.selected = Math.max(0, this.selected - 1);
+    if (matchesKey(data, "up") || data === "\u000b") this.selected = Math.max(0, this.selected - 1);
     else if (matchesKey(data, "down"))
       this.selected = Math.min(Math.max(0, matches.length - 1), this.selected + 1);
     else if (matchesKey(data, "enter")) {
@@ -2545,7 +2550,13 @@ export class DeckTui {
     this.timeline.update(initialState.timeline.items);
     this.timeline.updateSelection(initialState);
     this.contentPane = new ContentPane(this.timeline, this.theme, initialState);
-    this.composer = new ComposerView(this.tui, initialState, emit, this.theme, this.copyText);
+    this.composer = new ComposerView(
+      this.tui,
+      initialState,
+      (intent) => this.handleControllerIntent(intent),
+      this.theme,
+      this.copyText,
+    );
     this.status = new StatusView(initialState, this.theme, () => this.reconnectClock.now());
     this.minimumSize = new MinimumSizeView(this.theme);
     this.treeTranscript = new SidebarScrollView(this.tree, { follow: "none", scrollbar: "auto" });

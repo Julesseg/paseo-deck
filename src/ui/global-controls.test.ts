@@ -238,6 +238,16 @@ it("restores Visual selection and undo across Sidebar focus", async () => {
     expect(app.state.composer.drafts.a).toBe("def");
     terminal.sendInput("u");
     expect(app.state.composer.drafts.a).toBe("abcdef");
+    terminal.sendInput("g");
+    terminal.sendInput("?");
+    await terminal.waitForRender();
+    expect(terminal.viewport().join("\n")).toContain("Paseo Deck keys");
+    terminal.sendInput("?");
+    await terminal.waitForRender();
+    expect(terminal.viewport().join("\n")).toContain("Paseo Deck keys");
+    terminal.sendInput("\u001b");
+    await terminal.waitForRender();
+    expect(app.state.composerMode).toBe("normal");
   } finally {
     stop();
     await tui.stop();
@@ -317,6 +327,12 @@ it("captured confirmation runs once and late completion leaves a newer dialog in
     await terminal.waitForRender();
     expect(gateway.commands).toEqual([{ type: "stop-agent", agentId: "a" }]);
     expect(terminal.viewport().join("\n")).toContain("request continues");
+    terminal.sendInput("\u001b");
+    await terminal.waitForRender();
+    await app.handleIntent({ type: "open-confirmation", action: "stop", agentId: "a" });
+    terminal.sendInput("\r");
+    await terminal.waitForRender();
+    expect(gateway.commands).toEqual([{ type: "stop-agent", agentId: "a" }]);
     terminal.sendInput("\u001b");
     await terminal.waitForRender();
     await app.handleIntent({ type: "open-rename", agentId: "a" });
@@ -403,5 +419,32 @@ it("running Terminal owns Ctrl-C, Ctrl-K and Ctrl-P while Ctrl-S leaves it", asy
     stop();
     await tui.stop();
     await app.releaseObservations();
+  }
+});
+
+it("searchable palette Ctrl-K moves to the previous result without changing its query", async () => {
+  const app = new ApplicationController(
+    new FakePaseoGateway({ projects: [], providers: [], workspaces: [], agents: [] }),
+  );
+  const terminal = new RecordingTerminal(100, 30);
+  const tui = new DeckTui(terminal, app.state, (intent) => {
+    void app.handleIntent(intent);
+  });
+  const stop = app.subscribe((state) => tui.update(state));
+  tui.start();
+  try {
+    terminal.sendInput("\u0010");
+    terminal.sendInput("tab");
+    terminal.sendInput("\u001b[B");
+    terminal.sendInput("\u001b[B");
+    await terminal.waitForRender();
+    expect(terminal.viewport().join("\n")).toContain("> Next tab");
+    terminal.sendInput("\u000b");
+    await terminal.waitForRender();
+    expect(terminal.viewport().join("\n")).toContain("> Discard session draft");
+    expect(terminal.viewport().join("\n")).toContain("> tab");
+  } finally {
+    stop();
+    await tui.stop();
   }
 });

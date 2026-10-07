@@ -52,6 +52,7 @@ export class ApplicationController {
   private confirmationSequence = 0;
   private quitting = false;
   private readonly inFlightConfirmations = new Set<number>();
+  private readonly inFlightTargets = new Set<string>();
   private quitOrigin: AppState["modal"] | undefined;
   readonly #listeners = new Set<(state: AppState) => void>();
   #directoryObservation: Observation | undefined;
@@ -368,11 +369,22 @@ export class ApplicationController {
       }
       case "kill-terminal-confirmed": {
         const captured = this.#state.modal;
+        const targetKey = `kill-terminal:${intent.terminalId}`;
         const token =
           captured.type === "confirm" && captured.terminalId === intent.terminalId
             ? captured.id
             : undefined;
         if (token !== undefined && captured.type === "confirm") {
+          if (this.inFlightTargets.has(targetKey)) {
+            this.apply({
+              type: "open-modal",
+              modal: {
+                ...captured,
+                unavailableReason: "Request already in progress for this captured terminal.",
+              },
+            });
+            return;
+          }
           if (this.inFlightConfirmations.has(token) || captured.unavailableReason) return;
           if (
             !Object.values(this.#state.workspaceTerminals ?? {}).some((items) =>
@@ -390,6 +402,7 @@ export class ApplicationController {
             return;
           }
           this.inFlightConfirmations.add(token);
+          this.inFlightTargets.add(targetKey);
           this.apply({ type: "open-modal", modal: { ...captured, busy: true } });
         }
         try {
@@ -421,6 +434,7 @@ export class ApplicationController {
           });
         } finally {
           if (token !== undefined) this.inFlightConfirmations.delete(token);
+          this.inFlightTargets.delete(targetKey);
         }
         return;
       }
@@ -1710,7 +1724,18 @@ export class ApplicationController {
         ? origin
         : undefined;
     const token = confirmation?.id;
+    const targetKey = confirmation ? `${command.type}:${confirmation.agentId}` : undefined;
     if (token !== undefined && confirmation) {
+      if (targetKey && this.inFlightTargets.has(targetKey)) {
+        this.apply({
+          type: "open-modal",
+          modal: {
+            ...confirmation,
+            unavailableReason: "Request already in progress for this captured session.",
+          },
+        });
+        return;
+      }
       if (this.inFlightConfirmations.has(token) || confirmation?.unavailableReason) return;
       if (
         this.#state.connection !== "connected" ||
@@ -1725,6 +1750,7 @@ export class ApplicationController {
         return;
       }
       this.inFlightConfirmations.add(token);
+      if (targetKey) this.inFlightTargets.add(targetKey);
       this.apply({ type: "open-modal", modal: { ...confirmation, busy: true } });
     }
     try {
@@ -1757,6 +1783,7 @@ export class ApplicationController {
       );
     } finally {
       if (token !== undefined) this.inFlightConfirmations.delete(token);
+      if (targetKey) this.inFlightTargets.delete(targetKey);
     }
   }
 
