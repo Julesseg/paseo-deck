@@ -241,7 +241,7 @@ describe("runCli", () => {
       workspaceId: "workspace",
       providerId: "codex",
       modelId: "model",
-      prompt: "Build this",
+      prompt: "",
     });
     terminal.sendInput("\u0003");
     terminal.sendInput("\r");

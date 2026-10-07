@@ -81,7 +81,7 @@ export function newTabUnavailableReason(state: AppState): string | undefined {
   const workspace = requireWorkspace(state);
   if (workspace) return workspace;
   if (state.modal.type !== "none") return "Close the dialog first";
-  if (state.focus === "tree") return "Leave sidebar navigation first";
+
   if (state.focus === "composer" && state.composerMode !== "normal")
     return "Return to normal mode first";
   if (state.focus === "timeline" && state.activeTerminalId)
@@ -121,10 +121,10 @@ export const deckCommands: readonly DeckCommand[] = [
     label: "New Tab",
     group: "Tabs",
     shortcuts: ["Ctrl-T"],
-    contexts: ["composer", "timeline"],
+    contexts: ["composer", "timeline", "tree"],
     palette: true,
     disabledReason: newTabUnavailableReason,
-    intent: (state) => ({ type: "open-new-tab", workspaceId: state.selectedWorkspaceId ?? "" }),
+    intent: (state) => ({ type: "open-new-tab", workspaceId: targetWorkspaceId(state) ?? "" }),
   },
   {
     id: "discard-draft",
@@ -134,12 +134,12 @@ export const deckCommands: readonly DeckCommand[] = [
     contexts: ["composer", "timeline"],
     palette: true,
     disabledReason: (state) =>
-      state.selectedWorkspaceId && state.sessionDrafts[state.selectedWorkspaceId]
+      activeSessionDraftWorkspaceId(state) || activeLaunchWorkspaceId(state)
         ? undefined
-        : "No session draft in this workspace",
+        : "No active draft",
     intent: (state) => ({
       type: "discard-session-draft",
-      workspaceId: state.selectedWorkspaceId ?? "",
+      workspaceId: activeSessionDraftWorkspaceId(state) ?? activeLaunchWorkspaceId(state) ?? "",
     }),
   },
   {
@@ -671,10 +671,22 @@ export const deckCommands: readonly DeckCommand[] = [
     intent: () => ({ type: "open-filter" }),
   },
   {
+    id: "workspace-session-draft",
+    label: "New Session draft in Workspace",
+    group: "Tabs",
+    shortcuts: ["c"],
+    contexts: ["tree"],
+    disabledReason: requireWorkspace,
+    intent: (state) => ({
+      type: "open-workspace-session-draft",
+      workspaceId: targetWorkspaceId(state) ?? "",
+    }),
+  },
+  {
     id: "new-workspace",
     label: "New workspace",
     group: "Workspaces",
-    shortcuts: ["c"],
+    shortcuts: ["n"],
     contexts: ["tree"],
     disabledReason: (state) =>
       state.newWorkspace ? "Finish or cancel the New workspace composer first" : undefined,
@@ -907,6 +919,7 @@ export function resolvedCommands(
           command.id,
         ) &&
         !(
+          (context === "tree" && command.id === "new-tab") ||
           (context === "composer" && state.composerMode === "normal") ||
           (context === "timeline" &&
             !state.activeTerminalId &&
