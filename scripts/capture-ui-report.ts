@@ -55,7 +55,7 @@ const shots: Array<{
   rows: number;
   state: AppState;
   appearance?: TerminalAppearance;
-  input?: string[];
+  input?: readonly string[];
 }> = [
   {
     name: "command-palette-appearance",
@@ -475,19 +475,44 @@ const shots: Array<{
     name: "composer-normal",
     columns: 100,
     rows: 28,
-    state: { ...baseState, focus: "composer", composerMode: "normal" },
+    state: {
+      ...baseState,
+      focus: "composer",
+      composerMode: "normal",
+      composer: {
+        ...baseState.composer,
+        drafts: { "agent-atlas-1234": "Read the release notes before sending." },
+      },
+    },
   },
   {
     name: "composer-insert",
     columns: 100,
     rows: 28,
-    state: { ...baseState, focus: "composer", composerMode: "insert" },
+    state: {
+      ...baseState,
+      focus: "composer",
+      composerMode: "insert",
+      composer: {
+        ...baseState.composer,
+        drafts: { "agent-atlas-1234": "Read the release notes before sending." },
+      },
+    },
   },
   {
     name: "composer-visual",
     columns: 100,
     rows: 28,
-    state: { ...baseState, focus: "composer", composerMode: "visual" },
+    state: {
+      ...baseState,
+      focus: "composer",
+      composerMode: "visual",
+      composer: {
+        ...baseState.composer,
+        drafts: { "agent-atlas-1234": "Read the release notes before sending." },
+      },
+    },
+    input: ["0"],
   },
   {
     name: "composer-sending",
@@ -516,6 +541,168 @@ const shots: Array<{
     columns: 100,
     rows: 28,
     state: { ...baseState, focus: "timeline" },
+  },
+  {
+    name: "timeline-buffer-normal",
+    columns: 100,
+    rows: 28,
+    state: withTimeline(baseState, "timeline-buffer", [
+      {
+        id: "buffer-user",
+        type: "user-message",
+        text: "Read the [docs](https://example.test/docs) before the release.",
+      },
+      {
+        id: "buffer-reply",
+        type: "assistant-message",
+        messageId: "buffer-reply",
+        text: "The release is ready.\nReview the notes and publish.",
+      },
+    ]),
+    input: ["g", "g", "j"],
+  },
+  {
+    name: "timeline-search-forward",
+    columns: 100,
+    rows: 28,
+    state: withTimeline(baseState, "timeline-search", [
+      { id: "search-user", type: "user-message", text: "Read the release notes." },
+      {
+        id: "search-reply",
+        type: "assistant-message",
+        messageId: "search-reply",
+        text: "Release ready.",
+      },
+    ]),
+    input: ["/", "release"],
+  },
+  {
+    name: "timeline-search-backward",
+    columns: 100,
+    rows: 28,
+    state: withTimeline(baseState, "timeline-search", [
+      { id: "search-user", type: "user-message", text: "Read the release notes." },
+      {
+        id: "search-reply",
+        type: "assistant-message",
+        messageId: "search-reply",
+        text: "Release ready.",
+      },
+    ]),
+    input: ["?", "release"],
+  },
+  {
+    name: "timeline-buffer-wide",
+    columns: 160,
+    rows: 30,
+    state: withTimeline(baseState, "timeline-buffer", [
+      {
+        id: "buffer-user",
+        type: "user-message",
+        text: "Read the [docs](https://example.test/docs) before the release.",
+      },
+      {
+        id: "buffer-reply",
+        type: "assistant-message",
+        messageId: "buffer-reply",
+        text: "The release is ready.\nReview the notes and publish.",
+      },
+    ]),
+    input: ["g", "g", "j"],
+  },
+  {
+    name: "timeline-buffer-normal-light",
+    columns: 100,
+    rows: 28,
+    state: withTimeline(baseState, "timeline-buffer", [
+      {
+        id: "buffer-user",
+        type: "user-message",
+        text: "Read the [docs](https://example.test/docs) before the release.",
+      },
+      {
+        id: "buffer-reply",
+        type: "assistant-message",
+        messageId: "buffer-reply",
+        text: "The release is ready.\nReview the notes and publish.",
+      },
+    ]),
+    appearance: { ...sampledTerminalAppearance, background: [240, 230, 220] },
+    input: ["g", "g", "j"],
+  },
+  {
+    name: "timeline-buffer-normal-plain",
+    columns: 100,
+    rows: 28,
+    state: withTimeline(baseState, "timeline-buffer", [
+      {
+        id: "buffer-user",
+        type: "user-message",
+        text: "Read the [docs](https://example.test/docs) before the release.",
+      },
+      {
+        id: "buffer-reply",
+        type: "assistant-message",
+        messageId: "buffer-reply",
+        text: "The release is ready.\nReview the notes and publish.",
+      },
+    ]),
+    appearance: { color: "none", unicode: false, theme: "plain", symbols: "ascii" },
+    input: ["g", "g", "j"],
+  },
+  {
+    name: "timeline-buffer-page",
+    columns: 100,
+    rows: 28,
+    state: withTimeline(
+      baseState,
+      "timeline-buffer-page",
+      Array.from({ length: 24 }, (_, index) => ({
+        id: `page-${index}`,
+        type: "assistant-message" as const,
+        messageId: `page-${index}`,
+        text: `Checking release step ${index + 1}.`,
+      })),
+    ),
+    input: ["\u0015"],
+  },
+  {
+    name: "timeline-buffer-visual-line",
+    columns: 100,
+    rows: 28,
+    state: withTimeline(baseState, "timeline-buffer", [
+      {
+        id: "buffer-user",
+        type: "user-message",
+        text: "Read the [docs](https://example.test/docs) before the release.",
+      },
+      {
+        id: "buffer-reply",
+        type: "assistant-message",
+        messageId: "buffer-reply",
+        text: "The release is ready.\nReview the notes and publish.",
+      },
+    ]),
+    input: ["g", "g", "j", "V", "j", "j"],
+  },
+  {
+    name: "timeline-buffer-visual-block",
+    columns: 100,
+    rows: 28,
+    state: withTimeline(baseState, "timeline-buffer", [
+      {
+        id: "buffer-user",
+        type: "user-message",
+        text: "Read the [docs](https://example.test/docs) before the release.",
+      },
+      {
+        id: "buffer-reply",
+        type: "assistant-message",
+        messageId: "buffer-reply",
+        text: "The release is ready.\nReview the notes and publish.",
+      },
+    ]),
+    input: ["g", "g", "j", "\u0016", "j", "l", "l", "l", "l", "l"],
   },
   {
     name: "active-turn",
@@ -850,6 +1037,9 @@ for (const shot of shots) {
     ? viewport.findIndex((line) => line.includes("New Tab")) + 1
     : -1;
   const cursorColumn = inputRow > 0 ? terminal.viewportInverseCells()[inputRow]?.indexOf(true) : -1;
+  const timelineCursor = shot.name.startsWith("timeline-buffer-")
+    ? terminal.viewportCursor()
+    : undefined;
   if (inputRow > 0 && (cursorColumn === undefined || cursorColumn < 0)) {
     throw new Error(`No visible New Tab input cursor in ${shot.name}`);
   }
@@ -867,7 +1057,7 @@ for (const shot of shots) {
         : undefined,
       inputRow > 0 && cursorColumn !== undefined && cursorColumn >= 0
         ? { row: inputRow, column: cursorColumn }
-        : undefined,
+        : timelineCursor,
     ),
     "utf8",
   );
@@ -1121,12 +1311,23 @@ function terminalSvg(
   const chromeHeight = 32;
   const width = columns * cellWidth + padding * 2;
   const height = rows * lineHeight + padding * 2 + chromeHeight;
+  // SVG rasterizers disagree on preserving leading/repeated spaces in <text>.
+  // Place each terminal grapheme at its actual cell column instead.
+  const graphemes = new Intl.Segmenter(undefined, { granularity: "grapheme" });
   const text = lines
     .slice(0, rows)
-    .map(
-      (line, row) =>
-        `<text x="${padding}" y="${chromeHeight + padding + (row + 1) * lineHeight - 4}" xml:space="preserve">${escapeXml(line.replaceAll("", " ").replaceAll("", " "))}</text>`,
-    )
+    .flatMap((line, row) => {
+      const glyphs: string[] = [];
+      let column = 0;
+      for (const { segment } of graphemes.segment(line)) {
+        if (segment !== " " && segment !== "" && segment !== "")
+          glyphs.push(
+            `<text x="${padding + column * cellWidth}" y="${chromeHeight + padding + (row + 1) * lineHeight - 4}">${escapeXml(segment)}</text>`,
+          );
+        column += terminalDisplayWidth(segment);
+      }
+      return glyphs;
+    })
     .join("\n");
   const pillCaps = lines
     .slice(0, rows)
@@ -1161,7 +1362,7 @@ function terminalSvg(
     })
     .join("\n");
   const cursorSvg = cursor
-    ? `<rect x="${padding + cursor.column * cellWidth + 1}" y="${chromeHeight + padding + cursor.row * lineHeight + 2}" width="2" height="${lineHeight - 4}" fill="#f5f5f4"/>`
+    ? `<rect x="${padding + cursor.column * cellWidth}" y="${chromeHeight + padding + cursor.row * lineHeight}" width="${cellWidth}" height="${lineHeight}" fill="#f5f5f4" opacity="0.55"/>`
     : "";
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">
   <title>${escapeXml(title)}</title>
