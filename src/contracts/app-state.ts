@@ -99,6 +99,13 @@ export type ModalState =
       submitting?: boolean;
     }
   | { type: "rename"; agentId: string; value: string }
+  | {
+      type: "session-setting";
+      agentId: string;
+      setting: "model" | "mode" | "thinking";
+      busy?: boolean;
+      error?: string;
+    }
   | { type: "mode"; agentId: string }
   | { type: "thinking"; agentId: string }
   | { type: "error-details"; message: string; detail: string };

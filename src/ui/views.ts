@@ -21,6 +21,7 @@ import {
 import { wordWrapLine } from "@earendil-works/pi-tui/dist/components/editor.js";
 import type { AppState, ModalState } from "../contracts/app-state.js";
 import type { TimelineEvent, TimelineItem } from "../contracts/domain.js";
+import { sessionSettingChoices } from "../domain/session-settings.js";
 import {
   activeSessionDraftWorkspaceId,
   composerAvailability,
@@ -32,7 +33,6 @@ import { defaultTerminalAppearance, type TerminalAppearance } from "./capabiliti
 import { type ClipboardAdapter, SharedClipboard, systemClipboard } from "./clipboard.js";
 import {
   type CommandContext,
-  commandById,
   commandForKey,
   contextualHelp,
   type ResolvedCommand,
@@ -1906,10 +1906,10 @@ export function composerControlRow(state: AppState, theme: DeckTheme, width: num
   if (draftWorkspaceId || launch) {
     const draft = launch ?? (draftWorkspaceId ? state.sessionDrafts[draftWorkspaceId] : undefined);
     const controls = [
-      ["Provider", draft?.providerId ?? "provider"],
-      ["Model", draft?.modelId ?? "model"],
-      ["Thinking", draft?.thinkingLevel ?? "thinking"],
-      ["Mode", draft?.modeId ?? "mode"],
+      ["mp", draft?.providerId ?? "provider"],
+      ["mm", draft?.modelId ?? "model"],
+      ["mt", draft?.thinkingLevel ?? "thinking"],
+      ["mo", draft?.modeId ?? "mode"],
     ] as const;
     return theme.clipRendered(
       kindControl +
@@ -1922,14 +1922,13 @@ export function composerControlRow(state: AppState, theme: DeckTheme, width: num
     );
   }
   const agent = state.directory.agents.find((item) => item.id === state.selectedAgentId);
-  const modelCommand = commandById(state, "model");
-  const model = modelCommand?.disabledReason ? "unavailable" : (agent?.modelId ?? "-");
+  const model = agent?.modelId ?? "-";
   const thinking = agent?.thinkingLevel ?? "-";
   const mode = agent?.modeId ?? "-";
   const controls = [
-    [commandById(state, "model")?.shortcuts[0] ?? "Model", model],
-    [commandById(state, "thinking")?.shortcuts[0] ?? "Think", thinking],
-    [commandById(state, "operational-mode")?.shortcuts[0] ?? "Mode", mode],
+    ["mm", model],
+    ["mt", thinking],
+    ["mo", mode],
   ] as const;
   const left = controls
     .map(([key, current]) => `${theme.style("muted", `[${key}]`)} ${theme.style("focus", current)}`)
@@ -2324,8 +2323,8 @@ export class SearchableChoiceDialog implements Component, Focusable {
   private readonly query: SingleLineField;
   private selected = 0;
   constructor(
-    private readonly title: string,
-    private readonly items: readonly CreationChoice[],
+    private title: string,
+    private items: readonly CreationChoice[],
     private readonly choose: (value: string) => void,
     private readonly back: () => void,
     preferredValue?: string,
@@ -2336,6 +2335,13 @@ export class SearchableChoiceDialog implements Component, Focusable {
     this.query = new SingleLineField({ prompt: desktopNewTabStyle ? "" : "Filter: " });
     const index =
       preferredValue === undefined ? -1 : items.findIndex((item) => item.value === preferredValue);
+    if (index >= 0) this.selected = index;
+  }
+  updateChoices(title: string, items: readonly CreationChoice[]): void {
+    const selectedValue = this.matches()[this.selected]?.value;
+    this.title = title;
+    this.items = items;
+    const index = this.matches().findIndex((item) => item.value === selectedValue);
     if (index >= 0) this.selected = index;
   }
   invalidate(): void {
@@ -2543,6 +2549,7 @@ export class DeckTui {
   private treeWidth: number;
   private appOverlay: OverlayHandle | undefined;
   private appModalKey = "";
+  private sessionPicker: SearchableChoiceDialog | undefined;
   private suspendedQuit:
     | {
         key: string;
@@ -2662,6 +2669,7 @@ export class DeckTui {
             [
               "new-tab",
               "draft-setting",
+              "session-setting",
               "launch-profile",
               "new-workspace-project",
               "new-workspace-placement",
@@ -3673,6 +3681,34 @@ export class DeckTui {
 
   private syncModal(): void {
     const key = JSON.stringify(this.state.modal);
+    const current = this.state.modal;
+    const previous = this.appModalKey ? (JSON.parse(this.appModalKey) as ModalState) : undefined;
+    if (
+      current.type === "session-setting" &&
+      previous?.type === "session-setting" &&
+      current.agentId === previous.agentId &&
+      current.setting === previous.setting &&
+      this.appOverlay &&
+      this.sessionPicker &&
+      !this.suspendedQuit
+    ) {
+      const agent = this.state.directory.agents.find((item) => item.id === current.agentId);
+      this.sessionPicker.updateChoices(
+        `${titleForModal(current.setting)}${current.error ? ` · ${current.error}` : ""}`,
+        sessionSettingChoices(
+          this.state.directory,
+          agent,
+          current.setting,
+          current.busy || this.state.composer.sendingAgentIds.has(current.agentId)
+            ? "Settings request is in progress"
+            : this.state.connection !== "connected"
+              ? "Disconnected"
+              : undefined,
+        ),
+      );
+      this.appModalKey = key;
+      return;
+    }
     if (key === this.appModalKey) return;
     this.controller.cancelPendingInput();
     this.composer.cancelPendingInput();
@@ -3936,18 +3972,67 @@ export class DeckTui {
         margin: 1,
         visible: (columns, rows) => shellLayout(columns, rows, this.treeWidth).supported,
       };
+    } else if (modal.type === "session-setting") {
+      const agent = this.state.directory.agents.find((item) => item.id === modal.agentId);
+      const choices = sessionSettingChoices(
+        this.state.directory,
+        agent,
+        modal.setting,
+        modal.busy || this.state.composer.sendingAgentIds.has(modal.agentId)
+          ? "Settings request is in progress"
+          : this.state.connection !== "connected"
+            ? "Disconnected"
+            : undefined,
+      );
+      const title = `${titleForModal(modal.setting)}${modal.error ? ` · ${modal.error}` : ""}`;
+      component = this.sessionPicker = new SearchableChoiceDialog(
+        title,
+        choices,
+        (choice) => this.emit({ type: "create-choice", choice }),
+        close,
+        modal.setting === "model"
+          ? agent?.modelId
+          : modal.setting === "mode"
+            ? agent?.modeId
+            : agent?.thinkingLevel,
+        this.choicePickerMaxVisible(true),
+        this.theme,
+      );
+      overlayOptions = {
+        width: Math.min(
+          Math.max(1, this.terminal.columns - 2),
+          Math.max(60, centeredChoicePickerWidth(this.terminal.columns, title, choices)),
+        ),
+        maxHeight: Math.max(1, this.terminal.rows - 2),
+        margin: 1,
+      };
     } else if (modal.type === "draft-setting") {
       const draft =
         activeLaunchWorkspaceId(this.state) === modal.workspaceId
           ? launchDraft(this.state, modal.workspaceId)
           : this.state.sessionDrafts[modal.workspaceId];
-      const choices = creationChoices(this.state, {
+      let choices = creationChoices(this.state, {
         type: "create-agent",
         workspaceId: modal.workspaceId,
         step: modal.setting,
         ...(draft?.providerId ? { providerId: draft.providerId } : {}),
         ...(draft?.modelId ? { modelId: draft.modelId } : {}),
       });
+      if (draft?.submitting)
+        choices = choices.map((item) => ({
+          ...item,
+          disabled: true,
+          description: "Session draft is busy",
+        }));
+      if (!choices.length)
+        choices = [
+          {
+            value: "",
+            label: `No ${modal.setting} choices available`,
+            disabled: true,
+            description: "Provider/model does not support this setting",
+          },
+        ];
       const title = titleForModal(modal.setting);
       component = new SearchableChoiceDialog(
         title,

@@ -59,6 +59,7 @@ export type UiIntent =
     }
   | { type: "discard-session-draft"; workspaceId: string }
   | { type: "discard-session-draft-confirmed"; workspaceId: string }
+  | { type: "open-session-setting"; setting: "provider" | "model" | "mode" | "thinking" }
   | { type: "open-draft-setting"; setting: "provider" | "model" | "mode" | "thinking" }
   | { type: "draft-setting-choice"; choice: string }
   | { type: "submit-session-draft"; workspaceId: string; prompt: string }
@@ -161,6 +162,7 @@ export type UiIntent =
   | { type: "create-choice"; choice: string };
 
 export class DeckController {
+  #settingsPrefix = false;
   #tabPrefix = "";
   #tabCountPrefix = "";
   #timelinePrefix = "";
@@ -172,6 +174,7 @@ export class DeckController {
   ) {}
 
   cancelPendingInput(): void {
+    this.#settingsPrefix = false;
     this.#tabPrefix = "";
     this.#tabCountPrefix = "";
     this.#timelinePrefix = "";
@@ -224,6 +227,24 @@ export class DeckController {
     ) {
       this.cancelPendingInput();
       return this.send({ type: "open-help" });
+    }
+    const settingsNormal =
+      state.modal.type === "none" &&
+      !state.activeTerminalId &&
+      ((state.focus === "composer" && state.composerMode === "normal") ||
+        (state.focus === "timeline" && state.timelineMode === "normal"));
+    if (!settingsNormal) this.#settingsPrefix = false;
+    if (settingsNormal && this.#settingsPrefix) {
+      this.#settingsPrefix = false;
+      const setting = ({ p: "provider", m: "model", t: "thinking", o: "mode" } as const)[
+        data as "p"
+      ];
+      if (setting) return this.send({ type: "open-session-setting", setting });
+      return true;
+    }
+    if (settingsNormal && data === "m") {
+      this.#settingsPrefix = true;
+      return true;
     }
     const tabNormalMode =
       state.modal.type === "none" &&
@@ -325,6 +346,7 @@ export class DeckController {
     if (
       state.modal.type === "new-tab" ||
       state.modal.type === "draft-setting" ||
+      state.modal.type === "session-setting" ||
       state.modal.type === "launch-profile" ||
       state.modal.type === "new-workspace-project" ||
       state.modal.type === "new-workspace-placement" ||
