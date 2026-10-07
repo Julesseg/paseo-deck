@@ -1,4 +1,7 @@
 export type AgentCommand =
+  | { type: "archive-workspace"; workspaceId: string }
+  | { type: "rename-workspace"; workspaceId: string; name: string }
+  | { type: "rename-terminal"; terminalId: string; workspaceId: string; name: string }
   | { type: "send-prompt"; agentId: string; prompt: string }
   | {
       type: "create-agent";

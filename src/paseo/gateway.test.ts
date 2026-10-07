@@ -856,6 +856,12 @@ describe("ProductionPaseoGateway", () => {
     });
     await gateway.execute({ type: "stop-agent", agentId: "agent-1" });
     await gateway.execute({ type: "rename-agent", agentId: "agent-1", name: "Renamed" });
+    await gateway.execute({
+      type: "rename-workspace",
+      workspaceId: "workspace-1",
+      name: "Renamed workspace",
+    });
+    await gateway.execute({ type: "archive-workspace", workspaceId: "workspace-1" });
     expect(fixture.agent.respondToPermission).toHaveBeenCalledWith({
       requestId: "permission-1",
       response: { behavior: "deny" },
@@ -879,6 +885,23 @@ describe("ProductionPaseoGateway", () => {
       "agent-1",
       "--name",
       "Renamed",
+    ]);
+    expect(runner).toHaveBeenNthCalledWith(3, [
+      "--json",
+      "--host",
+      "tcp://host.test:6767",
+      "workspace",
+      "rename",
+      "workspace-1",
+      "Renamed workspace",
+    ]);
+    expect(runner).toHaveBeenNthCalledWith(4, [
+      "--json",
+      "--host",
+      "tcp://host.test:6767",
+      "workspace",
+      "archive",
+      "workspace-1",
     ]);
   });
 });
@@ -1365,6 +1388,7 @@ it("changes existing model through the isolated SDK lifecycle and preserves part
   const settings = {
     connect: vi.fn(async () => {}),
     close: vi.fn(async () => {}),
+    renameTerminal: vi.fn(async () => ({ success: true, error: null })),
     setAgentModel: vi.fn(async () => {}),
     setAgentThinkingOption: vi.fn(async () => {
       throw new Error("thinking rejected");
@@ -1416,6 +1440,7 @@ it("reuses the settings connection, exposes provider notices and closes it once"
   const settings = {
     connect: vi.fn(async () => {}),
     close: vi.fn(async () => {}),
+    renameTerminal: vi.fn(async () => ({ success: true, error: null })),
     setAgentModel: vi.fn(async () => {}),
     setAgentThinkingOption: vi.fn(async () => ({
       type: "warning" as const,
@@ -1464,6 +1489,47 @@ it("does not invoke a model setter for a provider without a verified contract", 
   ).rejects.toThrow("Model switching is unverified");
   expect(createSettingsClient).not.toHaveBeenCalled();
   await gateway.close();
+});
+
+it("renames a Terminal through the owned SDK, rejects false success, and never restarts it", async () => {
+  const fixture = testClient();
+  const settings = {
+    connect: vi.fn(async () => {}),
+    close: vi.fn(async () => {}),
+    setAgentModel: vi.fn(async () => {}),
+    setAgentThinkingOption: vi.fn(async () => null),
+    renameTerminal: vi.fn(
+      async (): Promise<{ success: boolean; error: string | null }> => ({
+        success: false,
+        error: "terminal rejected",
+      }),
+    ),
+  };
+  const cliRunner = vi.fn();
+  const gateway = new ProductionPaseoGateway({
+    host: "127.0.0.1:6767",
+    createClient: () => fixture.client as never,
+    createSettingsClient: () => settings,
+    cliRunner,
+  });
+  await gateway.connect();
+  const command = {
+    type: "rename-terminal" as const,
+    terminalId: "term",
+    workspaceId: "w",
+    name: "New title",
+  };
+  await expect(gateway.execute(command)).rejects.toThrow("terminal rejected");
+  settings.renameTerminal.mockResolvedValue({ success: true, error: null });
+  await expect(gateway.execute(command)).resolves.toEqual({ type: "ok" });
+  expect(settings.renameTerminal).toHaveBeenLastCalledWith({
+    terminalId: "term",
+    title: "New title",
+  });
+  expect(cliRunner).not.toHaveBeenCalled();
+  await gateway.close();
+  expect(settings.connect).toHaveBeenCalledOnce();
+  expect(settings.close).toHaveBeenCalledOnce();
 });
 
 it("creates an existing Workspace Session without an initial prompt, then sends to its returned identity", async () => {

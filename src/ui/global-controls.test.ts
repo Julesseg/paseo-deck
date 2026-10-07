@@ -321,7 +321,7 @@ it("captured confirmation runs once and late completion leaves a newer dialog in
   try {
     await app.handleIntent({ type: "open-confirmation", action: "stop", agentId: "a" });
     await terminal.waitForRender();
-    expect(terminal.viewport().join("\n")).toContain("stop Captured session?");
+    expect(terminal.viewport().join("\n")).toContain("Stop Session Captured session (a)?");
     terminal.sendInput("\r");
     terminal.sendInput("\r");
     await terminal.waitForRender();
@@ -339,7 +339,7 @@ it("captured confirmation runs once and late completion leaves a newer dialog in
     terminal.sendInput("New ");
     finish();
     await terminal.waitForRender();
-    expect(terminal.viewport().join("\n")).toContain("Rename agent");
+    expect(terminal.viewport().join("\n")).toContain("Rename Session");
     expect(terminal.viewport().join("\n")).toContain("New Captured session");
   } finally {
     stop();
@@ -381,7 +381,7 @@ it("a vanished captured target stays visible with a reason and never executes", 
     terminal.sendInput("\r");
     await terminal.waitForRender();
     expect(gateway.commands).toEqual([]);
-    expect(terminal.viewport().join("\n")).toContain("Captured session is no longer available");
+    expect(terminal.viewport().join("\n")).toContain("Captured Session is no longer available");
     terminal.sendInput("\r");
     expect(gateway.commands).toEqual([]);
   } finally {

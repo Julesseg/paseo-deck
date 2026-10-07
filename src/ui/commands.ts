@@ -1,4 +1,5 @@
 import type { AppState, FocusArea } from "../contracts/app-state.js";
+import { resourceActionUnavailable, terminalDisplayName } from "../domain/resource-actions.js";
 import { activeSessionDraftWorkspaceId, selectedComposerDraft } from "../state/composer.js";
 import { activeLaunchWorkspaceId } from "../state/launch.js";
 import { activeNotification, pendingPermissions } from "../state/store.js";
@@ -67,7 +68,17 @@ const requireWorkspace = (state: AppState): string | undefined =>
 const requireConnected = (state: AppState): string | undefined =>
   state.connection === "connected" ? undefined : "Reconnect to Paseo first";
 const requireRemoteAgent = (state: AppState): string | undefined =>
-  requireConnected(state) ?? requireAgent(state);
+  requireConnected(state) ??
+  requireAgent(state) ??
+  resourceActionUnavailable(state, "session", { agentId: selectedAgent(state) ?? "" });
+
+function activeTerminal(state: AppState) {
+  return Object.values(state.workspaceTerminals ?? {})
+    .flat()
+    .find((item) => item.id === state.activeTerminalId);
+}
+const requireTerminal = (state: AppState): string | undefined =>
+  requireConnected(state) ?? (activeTerminal(state) ? undefined : "No active terminal tab");
 
 const requireNormalBuffer = (state: AppState): string | undefined =>
   !state.activeTerminalId &&
@@ -92,6 +103,53 @@ export function newTabUnavailableReason(state: AppState): string | undefined {
 }
 
 export const deckCommands: readonly DeckCommand[] = [
+  {
+    id: "terminal-rename",
+    label: "Rename active terminal",
+    group: "Sessions",
+    shortcuts: [],
+    contexts: ["tree"],
+    disabledReason: requireTerminal,
+    intent: (state) => ({
+      type: "open-resource-rename",
+      workspaceId: activeTerminal(state)?.workspaceId ?? "",
+      terminalId: state.activeTerminalId ?? "",
+    }),
+  },
+  {
+    id: "terminal-reconnect",
+    label: "Reconnect active terminal",
+    group: "Sessions",
+    shortcuts: [],
+    contexts: ["tree"],
+    disabledReason: requireTerminal,
+    intent: () => ({ type: "reconnect-terminal" }),
+  },
+  {
+    id: "rename-workspace",
+    label: "Rename Workspace",
+    group: "Workspaces",
+    shortcuts: [],
+    contexts: ["tree"],
+    disabledReason: (state) => requireConnected(state) ?? requireWorkspace(state),
+    intent: (state) => ({
+      type: "open-resource-rename",
+      workspaceId: targetWorkspaceId(state) ?? "",
+    }),
+  },
+  {
+    id: "archive-workspace",
+    label: "Archive Workspace",
+    group: "Workspaces",
+    shortcuts: ["Ctrl-A"],
+    contexts: ["tree"],
+    disabledReason: (state) => requireConnected(state) ?? requireWorkspace(state),
+    intent: (state) => ({
+      type: "open-confirmation",
+      action: "archive-workspace",
+      workspaceId: targetWorkspaceId(state) ?? "",
+    }),
+  },
   {
     id: "composer-submit",
     label: "Send composer text",
@@ -160,9 +218,9 @@ export const deckCommands: readonly DeckCommand[] = [
     label: "Terminate active terminal (confirm)",
     group: "Sessions",
     shortcuts: ["gk"],
-    contexts: ["timeline", "tree"],
+    contexts: ["tree"],
     palette: true,
-    disabledReason: (state) => (state.activeTerminalId ? undefined : "No active terminal tab"),
+    disabledReason: requireTerminal,
     intent: () => ({ type: "kill-terminal" }),
   },
   {
@@ -728,11 +786,14 @@ export const deckCommands: readonly DeckCommand[] = [
   },
   {
     id: "stop-agent",
-    label: "Stop agent",
+    label: "Stop Session",
     group: "Agent",
     shortcuts: ["x"],
     contexts: ["composer", "timeline"],
-    disabledReason: (state) => requireNormalBuffer(state) ?? requireRemoteAgent(state),
+    disabledReason: (state) =>
+      requireNormalBuffer(state) ??
+      requireRemoteAgent(state) ??
+      resourceActionUnavailable(state, "stop", { agentId: selectedAgent(state) ?? "" }),
     intent: (state) => ({
       type: "open-confirmation",
       action: "stop",
@@ -741,7 +802,7 @@ export const deckCommands: readonly DeckCommand[] = [
   },
   {
     id: "archive-agent",
-    label: "Archive agent",
+    label: "Archive Session",
     group: "Agent",
     shortcuts: ["A"],
     contexts: ["composer", "timeline"],
@@ -754,10 +815,11 @@ export const deckCommands: readonly DeckCommand[] = [
   },
   {
     id: "detach-agent",
-    label: "Detach agent",
+    label: "Detach Session",
     group: "Agent",
     shortcuts: ["d"],
-    disabledReason: requireRemoteAgent,
+    contexts: ["composer", "timeline"],
+    disabledReason: (state) => requireNormalBuffer(state) ?? requireRemoteAgent(state),
     intent: (state) => ({
       type: "open-confirmation",
       action: "detach",
@@ -766,10 +828,11 @@ export const deckCommands: readonly DeckCommand[] = [
   },
   {
     id: "rename-agent",
-    label: "Rename agent",
+    label: "Rename Session",
     group: "Agent",
     shortcuts: ["e"],
-    disabledReason: requireRemoteAgent,
+    contexts: ["composer", "timeline"],
+    disabledReason: (state) => requireNormalBuffer(state) ?? requireRemoteAgent(state),
     intent: (state) => ({ type: "open-rename", agentId: selectedAgent(state) ?? "" }),
   },
   {
@@ -936,7 +999,23 @@ export function resolvedCommands(
       )
         shortcuts = [];
       if (context === "notifications" && command.id === "retry") shortcuts = ["r"];
-      return { ...definition, shortcuts, ...(disabledReason ? { disabledReason } : {}) };
+      const terminal = ["terminal-rename", "terminal-reconnect", "terminal-kill"].includes(
+        command.id,
+      )
+        ? activeTerminal(state)
+        : undefined;
+      const terminalWorkspace =
+        terminal && state.directory.workspaces.find((item) => item.id === terminal.workspaceId);
+      return {
+        ...definition,
+        ...(terminal
+          ? {
+              label: `${definition.label} · ${terminalDisplayName(terminal)} (${terminal.id}) · Workspace ${terminalWorkspace?.title ?? terminal.workspaceId} (${terminal.workspaceId})`,
+            }
+          : {}),
+        shortcuts,
+        ...(disabledReason ? { disabledReason } : {}),
+      };
     });
 }
 

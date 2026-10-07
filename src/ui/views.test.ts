@@ -3288,7 +3288,7 @@ describe("DeckTui viewport and focus", () => {
     deck.update(current);
     deck.start();
     await terminal.waitForRender();
-    expect(terminal.viewport().join("\n")).toContain("kill-terminal terminal-1?");
+    expect(terminal.viewport().join("\n")).toContain("Terminate terminal-1?");
     expect(terminal.viewport().join("\n")).toContain("Enter confirms");
     for (const input of ["y", "n", "\u001b[B", "\u001b[A"]) terminal.sendInput(input);
     expect(intents).toEqual([]);
@@ -3540,7 +3540,7 @@ describe("DeckTui viewport and focus", () => {
   });
 
   it("lists bounded tree-width keys in help", async () => {
-    const terminal = new RecordingTerminal();
+    const terminal = new RecordingTerminal(100, 45);
     const deck = new DeckTui(terminal, state(), () => undefined);
 
     deck.start();
@@ -3548,10 +3548,9 @@ describe("DeckTui viewport and focus", () => {
     await terminal.waitForRender();
     terminal.sendInput("G");
     await terminal.waitForRender();
-    await deck.stop();
-
     expect(terminal.viewport().join("\n")).toContain("[  Narrow Sidebar");
     expect(terminal.viewport().join("\n")).toContain("]  Widen Sidebar");
+    await deck.stop();
   });
 
   it("applies tree-width keys locally and restores the expanded tree view", async () => {
