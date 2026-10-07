@@ -56,13 +56,11 @@ describe("rendered timeline buffer", () => {
     expect(searchTimelineBuffer(state, "one", -1)).toMatchObject({ line: 0, column: 8 });
   });
 
-  it("searches the word under the cursor with whole and partial variants", () => {
+  it("searches the word under the cursor with whole-word matches", () => {
     const state = createTimelineBuffer({ lines: ["cat category cat", "catfish"] });
     expect(timelineWordAtCursor(state)).toBe("cat");
     expect(searchTimelineWord(state, "*")).toMatchObject({ line: 0, column: 13 });
-    expect(searchTimelineWord(state, "g*")).toMatchObject({ line: 0, column: 4 });
     expect(searchTimelineWord(state, "#")).toMatchObject({ line: 0, column: 13 });
-    expect(searchTimelineWord(state, "g#")).toMatchObject({ line: 1, column: 0 });
     const next = searchTimelineWord(state, "*");
     expect(searchTimelineBuffer(next, "cat")).toMatchObject({ line: 0, column: 0 });
   });

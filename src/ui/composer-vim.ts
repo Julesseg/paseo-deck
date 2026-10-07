@@ -28,6 +28,7 @@ export interface ComposerVimState {
   readonly goalColumn?: number | undefined;
   readonly lastFind?: { key: "f" | "F" | "t" | "T"; character: string };
   readonly searchQuery?: string;
+  readonly searchWholeWord?: boolean;
   readonly searchDirection?: -1 | 1;
   readonly searchInput?: string | undefined;
   readonly insertSnapshot?: ComposerSnapshot | undefined;
@@ -336,22 +337,23 @@ function search(
   query: string,
   direction: -1 | 1,
   amount: number,
+  wholeWord = state.searchWholeWord ?? false,
 ): number | undefined {
   if (!query) return undefined;
+  const matches: number[] = [];
+  const word = (value: string | undefined) => value !== undefined && /[\p{L}\p{N}_]/u.test(value);
+  for (let at = state.text.indexOf(query); at >= 0; at = state.text.indexOf(query, at + 1))
+    if (!wholeWord || (!word(state.text[at - 1]) && !word(state.text[at + query.length])))
+      matches.push(at);
+  if (!matches.length) return undefined;
   let cursor = state.cursor;
-  for (let index = 0; index < amount; index++) {
-    const found =
-      direction === 1
-        ? state.text.indexOf(query, cursor + 1)
-        : state.text.lastIndexOf(query, cursor - 1);
+  for (let index = 0; index < amount; index++)
     cursor =
-      found >= 0
-        ? found
-        : direction === 1
-          ? state.text.indexOf(query)
-          : state.text.lastIndexOf(query);
-    if (cursor < 0) return undefined;
-  }
+      direction === 1
+        ? (matches.find((at) => at > cursor) ?? matches[0] ?? cursor)
+        : ([...matches].reverse().find((at) => at < cursor) ??
+          matches[matches.length - 1] ??
+          cursor);
   return cursor;
 }
 
@@ -359,11 +361,12 @@ function searchWordUnderCursor(state: ComposerVimState, direction: -1 | 1): Comp
   const range = wordObject(state, false, false);
   const query = state.text.slice(range.start, range.end);
   if (!query) return { state: clearCommand(state), handled: true };
-  const cursor = search(state, query, direction, count(state));
+  const cursor = search(state, query, direction, count(state), true);
   return {
     state: {
       ...clearCommand(state),
       searchQuery: query,
+      searchWholeWord: true,
       searchDirection: direction,
       cursor: cursor ?? state.cursor,
     },
@@ -754,12 +757,13 @@ export function handleComposerVim(state: ComposerVimState, key: string): Compose
     if (key === "\r" || key === "\n") {
       const query = state.searchInput || state.searchQuery || "";
       const direction = state.pending === "/" ? 1 : -1;
-      const cursor = search(state, query, direction, count(state));
+      const cursor = search(state, query, direction, count(state), false);
       return {
         state: {
           ...jumpTo(state, cursor ?? state.cursor),
           searchInput: undefined,
           searchQuery: query,
+          searchWholeWord: false,
           searchDirection: direction,
         },
         handled: true,

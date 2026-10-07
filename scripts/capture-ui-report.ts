@@ -844,6 +844,13 @@ const shots: Array<{
     ]),
     input: ["g", "g", "j"],
   },
+  ...[100, 64].map((columns) => ({
+    name: `composer-buffer-search-${columns}`,
+    columns,
+    rows: 28,
+    state: { ...baseState, focus: "composer" as const, composerMode: "normal" as const },
+    input: ["/", "release nN g?"],
+  })),
   {
     name: "timeline-search-forward",
     columns: 100,
