@@ -34,8 +34,10 @@ import type {
   TerminalRecord,
   TerminalStreamUpdate,
 } from "../contracts/terminal.js";
+import { existingModelSwitchReason } from "../domain/session-settings.js";
 import { type CliRunner, createCliRunner, runJson } from "./cli.js";
 import { PaseoGatewayError, paseoFailure } from "./errors.js";
+import { createSessionSettingsClient, type SessionSettingsClient } from "./session-settings.js";
 import { type PaseoTarget, type PaseoTargetInput, targetFromDaemonStatus } from "./target.js";
 
 import {
@@ -62,6 +64,7 @@ type ClientSurface = PaseoClient;
 export interface PaseoGatewayOptions extends PaseoTargetInput {
   cliRunner?: CliRunner;
   fetchRemote?: (directory: string, branch: string) => Promise<void>;
+  createSettingsClient?: (target: PaseoTarget) => SessionSettingsClient;
   createMetadataClient?: (target: PaseoTarget) => WorkspaceMetadataClient;
   createClient?: (target: PaseoTarget) => ClientSurface;
 }
@@ -73,6 +76,7 @@ export class ProductionPaseoGateway implements PaseoGateway {
   private target: PaseoTarget | undefined;
   private focused: Observation | undefined;
   private focusGeneration = 0;
+  private settings: Promise<SessionSettingsClient> | undefined;
   private metadata: Promise<WorkspaceMetadataClient> | undefined;
 
   public constructor(private readonly options: PaseoGatewayOptions = {}) {
@@ -180,6 +184,8 @@ export class ProductionPaseoGateway implements PaseoGateway {
   }
 
   public async close(): Promise<void> {
+    const settings = this.settings;
+    this.settings = undefined;
     this.focusGeneration += 1;
     const focused = this.focused;
     const metadata = this.metadata;
@@ -187,6 +193,7 @@ export class ProductionPaseoGateway implements PaseoGateway {
     this.focused = undefined;
     this.metadata = undefined;
     const outcomes = await Promise.allSettled([
+      settings?.then((connection) => connection.close()),
       focused?.release(),
       metadata?.then((connection) => connection.close()),
       client?.close(),
@@ -533,6 +540,35 @@ export class ProductionPaseoGateway implements PaseoGateway {
         case "rename-agent":
           await this.runFallback(["agent", "update", command.agentId, "--name", command.name]);
           return { type: "ok" };
+        case "set-agent-model": {
+          const snapshot = await this.getDirectorySnapshot();
+          const agent = snapshot.agents.find((item) => item.id === command.agentId);
+          const reason = existingModelSwitchReason(agent?.providerId);
+          if (reason) throw new PaseoGatewayError(reason);
+          if (!this.settings) {
+            const target = this.target;
+            if (!target) throw new PaseoGatewayError("Paseo Deck is not connected.");
+            const settings = (this.options.createSettingsClient ?? createSessionSettingsClient)(
+              target,
+            );
+            this.settings = settings
+              .connect()
+              .then(() => settings)
+              .catch(async (error) => {
+                this.settings = undefined;
+                await settings.close().catch(() => {});
+                throw error;
+              });
+          }
+          const settings = await this.settings;
+          await settings.setAgentModel(command.agentId, command.modelId);
+          const notice = await settings.setAgentThinkingOption(
+            command.agentId,
+            command.thinkingLevel,
+          );
+          if (notice?.type === "error") throw new PaseoGatewayError(notice.message);
+          return { type: "ok", ...(notice ? { notice: notice.message } : {}) };
+        }
         case "set-thinking-level":
           await this.runFallback([
             "agent",

@@ -245,13 +245,14 @@ describe("ApplicationController", () => {
     expect(app.state.activeSessionId).toBe("agent-orphan");
   });
 
-  it("toggles a project row without changing active workspace content", async () => {
+  it("Project Enter leaves expansion and active workspace content unchanged", async () => {
     const app = new ApplicationController(new FakePaseoGateway(remoteSnapshot));
     await app.start();
     await app.selectAgent("agent-remote");
     await app.handleIntent({ type: "select-boundary", boundary: "start" });
+    const expanded = app.state.expandedIds.has("remote:github.com/acme/paseo-deck");
     await app.handleIntent({ type: "select-or-open" });
-    expect(app.state.expandedIds.has("remote:github.com/acme/paseo-deck")).toBe(false);
+    expect(app.state.expandedIds.has("remote:github.com/acme/paseo-deck")).toBe(expanded);
     expect(app.state.selectedWorkspaceId).toBe("workspace-remote");
     expect(app.state.activeSessionId).toBe("agent-remote");
   });

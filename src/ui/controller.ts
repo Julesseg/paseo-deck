@@ -57,6 +57,7 @@ export type UiIntent =
     }
   | { type: "discard-session-draft"; workspaceId: string }
   | { type: "discard-session-draft-confirmed"; workspaceId: string }
+  | { type: "open-session-setting"; setting: "provider" | "model" | "mode" | "thinking" }
   | { type: "open-draft-setting"; setting: "provider" | "model" | "mode" | "thinking" }
   | { type: "draft-setting-choice"; choice: string }
   | { type: "submit-session-draft"; workspaceId: string; prompt: string }
@@ -157,6 +158,7 @@ export type UiIntent =
   | { type: "create-choice"; choice: string };
 
 export class DeckController {
+  #settingsPrefix = false;
   #tabPrefix = "";
   #timelineOperatorCount: number | undefined;
   #timelinePrefix = "";
@@ -174,6 +176,7 @@ export class DeckController {
   }
 
   cancelPendingInput(): void {
+    this.#settingsPrefix = false;
     this.#tabPrefix = "";
     this.#timelinePrefix = "";
     this.#timelineCount = "";
@@ -434,14 +437,17 @@ export class DeckController {
       }
       return this.send({ type: "scroll-timeline", direction: data === "\u0015" ? -1 : 1 });
     }
-    if (
-      state.focus === "tree" &&
-      state.modal.type === "none" &&
-      this.#tabPrefix === "g" &&
-      data === "?"
-    ) {
-      this.cancelPendingInput();
-      return this.send({ type: "open-help" });
+    if (state.focus === "tree" && state.modal.type === "none") {
+      if (this.#tabPrefix === "g") {
+        this.#tabPrefix = "";
+        if (data === "g") return this.send({ type: "select-boundary", boundary: "start" });
+        if (data === "?") return this.send({ type: "open-help" });
+        return true;
+      }
+      if (data === "g") {
+        this.#tabPrefix = "g";
+        return true;
+      }
     }
     const normalBuffer =
       state.modal.type === "none" &&
@@ -451,6 +457,19 @@ export class DeckController {
     if (normalBuffer && ["\u0014", "\u0018", "\u0001"].includes(data)) {
       this.cancelPendingInput();
       return this.sendResolved(commandForKey(state, data), state);
+    }
+    if (!normalBuffer) this.#settingsPrefix = false;
+    if (normalBuffer && this.#settingsPrefix) {
+      this.#settingsPrefix = false;
+      const setting = ({ p: "provider", m: "model", t: "thinking", o: "mode" } as const)[
+        data as "p"
+      ];
+      if (setting) return this.send({ type: "open-session-setting", setting });
+      return true;
+    }
+    if (normalBuffer && data === "m" && !this.hasPendingTimelineInput) {
+      this.#settingsPrefix = true;
+      return true;
     }
     // ProcessTerminal enables raw mode, so Ctrl+C is delivered as input rather
     // than raising SIGINT. It must remain a global escape hatch even while an
@@ -477,6 +496,7 @@ export class DeckController {
     if (
       state.modal.type === "new-tab" ||
       state.modal.type === "draft-setting" ||
+      state.modal.type === "session-setting" ||
       state.modal.type === "launch-profile" ||
       state.modal.type === "new-workspace-project" ||
       state.modal.type === "new-workspace-placement" ||

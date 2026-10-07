@@ -144,11 +144,7 @@ export function deriveTreeRows(state: AppState): TreeRow[] {
     sorted(
       items.filter((workspace) => {
         const matches =
-          !filter ||
-          projectMatches ||
-          workspace.title.toLocaleLowerCase().includes(filter) ||
-          workspace.id.toLocaleLowerCase().includes(filter) ||
-          workspace.directory.toLocaleLowerCase().includes(filter);
+          !filter || projectMatches || workspace.title.toLocaleLowerCase().includes(filter);
         return matches && (!state.attentionOnly || activity(workspace.id) === "attention");
       }),
     );
@@ -169,15 +165,12 @@ export function deriveTreeRows(state: AppState): TreeRow[] {
     });
   };
   for (const project of projects) {
-    const projectMatches =
-      Boolean(filter) &&
-      (project.name.toLocaleLowerCase().includes(filter) ||
-        project.id.toLocaleLowerCase().includes(filter));
+    const projectMatches = Boolean(filter) && project.name.toLocaleLowerCase().includes(filter);
     const children = visible(
       workspaces.filter((workspace) => projectForWorkspace(projects, workspace)?.id === project.id),
       projectMatches,
     );
-    if (children.length === 0 && !projectMatches) continue;
+    if (children.length === 0 && (!projectMatches || state.attentionOnly)) continue;
     const expanded = Boolean(filter) || state.expandedIds.has(project.id);
     rows.push({
       id: project.id,

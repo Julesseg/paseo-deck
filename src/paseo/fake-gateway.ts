@@ -100,6 +100,36 @@ export class FakePaseoGateway implements PaseoGateway {
   public async execute(command: AgentCommand): Promise<CommandResult> {
     this.assertConnected();
     this.commands.push(command);
+    if (
+      command.type === "set-agent-model" ||
+      command.type === "set-agent-mode" ||
+      command.type === "set-thinking-level"
+    ) {
+      this.snapshot = {
+        ...this.snapshot,
+        agents: this.snapshot.agents.map((agent) => {
+          const { thinkingLevel: _thinkingLevel, ...withoutThinking } = agent;
+          return agent.id !== command.agentId
+            ? agent
+            : {
+                ...(command.type === "set-agent-model" && command.thinkingLevel === null
+                  ? withoutThinking
+                  : agent),
+                ...(command.type === "set-agent-model"
+                  ? {
+                      modelId: command.modelId,
+                      ...(command.thinkingLevel === null
+                        ? {}
+                        : { thinkingLevel: command.thinkingLevel }),
+                    }
+                  : command.type === "set-agent-mode"
+                    ? { modeId: command.modeId }
+                    : { thinkingLevel: command.thinkingLevel }),
+              };
+        }),
+      };
+      this.emitDirectory({ type: "snapshot", snapshot: this.snapshot });
+    }
     if (command.type === "create-agent")
       return { type: "agent-created", agentId: `fake-agent-${this.commands.length}` };
     if (command.type === "respond-permission")

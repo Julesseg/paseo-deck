@@ -1186,6 +1186,59 @@ const shots: Array<{
       },
     },
   },
+  ...(
+    [
+      ["session-model-picker", undefined, undefined],
+      ["session-model-busy", true, undefined],
+      ["session-model-error", false, "Request failed; confirmed state refreshed"],
+    ] as const
+  ).map(([name, busy, error]) => ({
+    name,
+    columns: 100,
+    rows: 28,
+    state: {
+      ...baseState,
+      directory: {
+        ...baseState.directory,
+        agents: baseState.directory.agents.map((agent) =>
+          agent.id === "agent-atlas-1234" ? { ...agent, status: "idle" as const } : agent,
+        ),
+      },
+      modal: {
+        type: "session-setting" as const,
+        agentId: "agent-atlas-1234",
+        setting: "model" as const,
+        ...(busy === undefined ? {} : { busy }),
+        ...(error ? { error } : {}),
+      },
+    },
+  })),
+  {
+    name: "session-model-unsupported",
+    columns: 100,
+    rows: 28,
+    state: {
+      ...baseState,
+      directory: {
+        ...baseState.directory,
+        agents: baseState.directory.agents.map((agent) =>
+          agent.id === "agent-atlas-1234"
+            ? { ...agent, providerId: "other", status: "idle" }
+            : agent,
+        ),
+        providers: [
+          ...baseState.directory.providers,
+          {
+            ...(baseState.directory.providers.find(
+              (provider) => provider.id === "codex",
+            ) as NonNullable<(typeof baseState.directory.providers)[number]>),
+            id: "other",
+          },
+        ],
+      },
+      modal: { type: "session-setting", agentId: "agent-atlas-1234", setting: "model" },
+    },
+  },
   {
     name: "session-mode-picker",
     columns: 100,

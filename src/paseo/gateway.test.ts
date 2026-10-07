@@ -1342,3 +1342,126 @@ describe("Pinned Git metadata protocol", () => {
     await gateway.close();
   });
 });
+
+it("changes existing model through the isolated SDK lifecycle and preserves partial success on rejection", async () => {
+  const fixture = testClient();
+  fixture.client.agents.list.mockResolvedValue({
+    subscriptionId: "agents",
+    entries: [
+      {
+        agent: {
+          id: "agent-1",
+          workspaceId: "workspace-1",
+          title: "Same Session",
+          status: "idle",
+          provider: "codex",
+          model: "old",
+          availableModes: [],
+          pendingPermissions: [],
+        },
+      },
+    ],
+  } as never);
+  const settings = {
+    connect: vi.fn(async () => {}),
+    close: vi.fn(async () => {}),
+    setAgentModel: vi.fn(async () => {}),
+    setAgentThinkingOption: vi.fn(async () => {
+      throw new Error("thinking rejected");
+    }),
+  };
+  const cliRunner = vi.fn();
+  const gateway = new ProductionPaseoGateway({
+    host: "127.0.0.1:6767",
+    createClient: () => fixture.client as never,
+    createSettingsClient: () => settings,
+    cliRunner,
+  });
+  await gateway.connect();
+  await expect(
+    gateway.execute({
+      type: "set-agent-model",
+      agentId: "agent-1",
+      modelId: "new",
+      thinkingLevel: "medium",
+    }),
+  ).rejects.toThrow("thinking rejected");
+  expect(settings.setAgentModel).toHaveBeenCalledExactlyOnceWith("agent-1", "new");
+  expect(settings.setAgentThinkingOption).toHaveBeenCalledExactlyOnceWith("agent-1", "medium");
+  expect(cliRunner).not.toHaveBeenCalled();
+  await gateway.close();
+  expect(settings.connect).toHaveBeenCalledOnce();
+  expect(settings.close).toHaveBeenCalledOnce();
+});
+
+it("reuses the settings connection, exposes provider notices and closes it once", async () => {
+  const fixture = testClient();
+  fixture.client.agents.list.mockResolvedValue({
+    subscriptionId: "agents",
+    entries: [
+      {
+        agent: {
+          id: "agent-1",
+          workspaceId: "workspace-1",
+          title: "Same Session",
+          status: "idle",
+          provider: "codex",
+          model: "old",
+          availableModes: [],
+          pendingPermissions: [],
+        },
+      },
+    ],
+  } as never);
+  const settings = {
+    connect: vi.fn(async () => {}),
+    close: vi.fn(async () => {}),
+    setAgentModel: vi.fn(async () => {}),
+    setAgentThinkingOption: vi.fn(async () => ({
+      type: "warning" as const,
+      message: "Applies to the next turn",
+    })),
+  };
+  const gateway = new ProductionPaseoGateway({
+    host: "127.0.0.1:6767",
+    createClient: () => fixture.client as never,
+    createSettingsClient: () => settings,
+  });
+  await gateway.connect();
+  for (const modelId of ["new", "another"]) {
+    expect(
+      await gateway.execute({
+        type: "set-agent-model",
+        agentId: "agent-1",
+        modelId,
+        thinkingLevel: null,
+      }),
+    ).toEqual({ type: "ok", notice: "Applies to the next turn" });
+  }
+  expect(settings.connect).toHaveBeenCalledOnce();
+  expect(settings.setAgentThinkingOption).toHaveBeenLastCalledWith("agent-1", null);
+  await gateway.close();
+  await gateway.close();
+  expect(settings.close).toHaveBeenCalledOnce();
+});
+
+it("does not invoke a model setter for a provider without a verified contract", async () => {
+  const fixture = testClient();
+  const createSettingsClient = vi.fn();
+  const gateway = new ProductionPaseoGateway({
+    host: "127.0.0.1:6767",
+    createClient: () => fixture.client as never,
+    createSettingsClient,
+  });
+  await gateway.connect();
+  await expect(
+    gateway.execute({
+      type: "set-agent-model",
+      agentId: "agent-1",
+      modelId: "new",
+      thinkingLevel: null,
+    }),
+  ).rejects.toThrow("Model switching is unverified");
+  expect(createSettingsClient).not.toHaveBeenCalled();
+  await gateway.close();
+});
