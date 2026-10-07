@@ -466,10 +466,7 @@ class ContentPane implements Component {
       return [
         this.theme.styleRendered(
           this.state.focus === "timeline" ? "focus" : "header",
-          this.theme.clipRendered(
-            `${(this.state.terminalMode ?? "normal").toUpperCase()} Terminal${stale}`,
-            width,
-          ),
+          this.theme.clipRendered(`Terminal · direct input${stale}`, width),
         ),
         ...(this.state.terminalLines?.[this.state.activeTerminalId] ?? [])
           .slice(this.state.terminalScrollTop?.[this.state.activeTerminalId] ?? 0)
@@ -1748,6 +1745,16 @@ class ComposerView implements Component, Focusable {
       0,
       this.visibleEditorLines,
     );
+    if (current.mode === "normal" && current.pending === "g" && (data === "t" || data === "T")) {
+      const tabCount = current.count ? Number(current.count) : undefined;
+      this.cancelPendingInput();
+      this.emit({
+        type: "switch-tab",
+        direction: data === "t" ? 1 : -1,
+        ...(tabCount === undefined ? {} : { count: tabCount }),
+      });
+      return;
+    }
     if (
       current.mode === "normal" &&
       !current.pending &&
@@ -2748,7 +2755,7 @@ export class DeckTui {
         global?.id === "command-palette" ||
         (global?.id === "help" &&
           !(this.state.focus === "composer" && this.state.composerMode === "insert") &&
-          !(this.state.focus === "timeline" && this.state.terminalMode === "insert"))
+          !(this.state.focus === "timeline" && this.state.activeTerminalId))
       )
         return this.controller.handleKey(data) ? { consume: true } : undefined;
       if (this.localOverlayKey.startsWith("__timeline-")) {
@@ -3415,6 +3422,12 @@ export class DeckTui {
                 "Visual d/x c/s; D/X C/S/R whole lines; y/Y copies; u/U/~ case; r replaces.",
                 "Visual J/gJ joins; counted >/< shifts by two spaces; p replaces and copies removed text; P preserves clipboard.",
                 "Native Visual paste replaces once and enters Insert; Escape cancels pending input before exiting.",
+              ]
+            : []),
+          ...(this.state.activeTerminalId
+            ? [
+                "Terminal: direct program input; only Ctrl-S, distinguishable Ctrl-Tab/Ctrl-Shift-Tab are reserved.",
+                "Escape, ordinary Tab/Shift-Tab and paste pass literally; Ctrl-S then Ctrl-P reaches utilities.",
               ]
             : []),
           ...contextualHelp(this.state, context).map((command) => commandHelpLine(command)),

@@ -1432,7 +1432,6 @@ describe("New Tab terminals", () => {
     await app.handleIntent({ type: "new-tab-choice", choice: { kind: "terminal" } });
     expect(gateway.createdTerminals).toEqual([{ workspaceId: "workspace-1", options: undefined }]);
     expect(app.state.activeTerminalId).toBe("fake-terminal-1");
-    expect(app.state.terminalMode).toBe("normal");
     expect(app.state.sessionDrafts["workspace-1"]?.prompt).toBe("Keep this draft");
     await app.handleIntent({ type: "open-new-tab", workspaceId: "workspace-1" });
     await app.handleIntent({ type: "new-tab-choice", choice: { kind: "session" } });
