@@ -1326,6 +1326,12 @@ export class ApplicationController {
   }
 
   private openWorkspaceSessionDraft(workspaceId: string): void {
+    const launch = this.#state.launchDrafts?.[workspaceId];
+    if (launch && (launch.submitting || launch.createdAgentId || launch.createdTerminal)) {
+      this.apply({ type: "activate-workspace", workspaceId });
+      this.apply({ type: "set-focus", focus: "composer" });
+      return;
+    }
     const provider = this.#state.directory.providers.find((item) => item.ready);
     const model = provider ? defaultSelectableModel(provider) : undefined;
     if (!this.#state.sessionDrafts[workspaceId])
@@ -1653,8 +1659,6 @@ export class ApplicationController {
         agentId = result.agentId;
         update({ createdAgentId: agentId });
       }
-      await this.gateway.execute({ type: "send-prompt", agentId, prompt });
-      const keepFocus = activeLaunchWorkspaceId(this.#state) === workspaceId;
       if (!this.#state.directory.agents.some((agent) => agent.id === agentId))
         this.apply({
           type: "directory",
@@ -1675,6 +1679,8 @@ export class ApplicationController {
             },
           },
         });
+      await this.gateway.execute({ type: "send-prompt", agentId, prompt });
+      const keepFocus = activeLaunchWorkspaceId(this.#state) === workspaceId;
       this.apply({ type: "complete-launch", workspaceId });
       this.apply({
         type: "set-creation-default",
@@ -1688,9 +1694,10 @@ export class ApplicationController {
       });
       if (keepFocus) await this.selectAgent(agentId, true);
     } catch (error) {
+      const createdAgentId = this.#state.launchDrafts?.[workspaceId]?.createdAgentId;
       update({
         submitting: false,
-        error: `Could not launch session: ${errorDetail(error)}. Press Enter to retry.`,
+        error: `${createdAgentId ? `Session ${shortId(createdAgentId)} was created; could not send its first message` : "Could not create session"}: ${errorDetail(error)}. Press Enter to retry.`,
       });
     }
   }
@@ -1742,7 +1749,6 @@ export class ApplicationController {
           changes: { createdAgentId: agentId },
         });
       }
-      const keepFocus = activeSessionDraftWorkspaceId(this.#state) === workspaceId;
       if (!this.#state.directory.agents.some((agent) => agent.id === agentId))
         this.apply({
           type: "directory",
@@ -1766,6 +1772,7 @@ export class ApplicationController {
           },
         });
       await this.gateway.execute({ type: "send-prompt", agentId, prompt });
+      const keepFocus = activeSessionDraftWorkspaceId(this.#state) === workspaceId;
       this.apply({ type: "complete-session-draft", workspaceId, agentId: agentId });
       this.apply({
         type: "set-creation-default",
@@ -1780,12 +1787,13 @@ export class ApplicationController {
       if (keepFocus) await this.selectAgent(agentId, true);
       this.apply({ type: "notify", message: `Created session ${shortId(agentId)}.` });
     } catch (error) {
+      const createdAgentId = this.#state.sessionDrafts[workspaceId]?.createdAgentId;
       this.apply({
         type: "set-session-draft",
         workspaceId,
         changes: {
           submitting: false,
-          error: `Could not launch session: ${errorDetail(error)}. Press Enter to retry.`,
+          error: `${createdAgentId ? `Session ${shortId(createdAgentId)} was created; could not send its first message` : "Could not create session"}: ${errorDetail(error)}. Press Enter to retry.`,
         },
       });
     }

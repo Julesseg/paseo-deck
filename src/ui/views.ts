@@ -3906,6 +3906,17 @@ export class DeckTui {
     const current = this.state.modal;
     const previous = this.appModalKey ? (JSON.parse(this.appModalKey) as ModalState) : undefined;
     if (
+      current.type === "new-tab" &&
+      previous?.type === "new-tab" &&
+      current.workspaceId === previous.workspaceId &&
+      JSON.stringify(current.profiles) === JSON.stringify(previous.profiles) &&
+      this.appOverlay &&
+      !this.suspendedQuit
+    ) {
+      this.appModalKey = key;
+      return;
+    }
+    if (
       current.type === "session-setting" &&
       previous?.type === "session-setting" &&
       current.agentId === previous.agentId &&

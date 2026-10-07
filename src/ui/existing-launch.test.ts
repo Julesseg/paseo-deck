@@ -165,6 +165,7 @@ it("existing Workspace Terminal/profile creates immediately and retries attachme
     expect(f.gateway.createdTerminals).toHaveLength(1);
     expect(f.gateway.createdTerminals[0]?.workspaceId).toBe("other");
     expect(f.app.state.modal.type).toBe("new-tab");
+    expect(f.terminal.viewport().join("\n").match(/Build/g)).toHaveLength(2);
     await f.key("\r");
     expect(f.gateway.createdTerminals).toHaveLength(1);
     expect(f.app.state.activeTerminalId).toBe("fake-terminal-1");
@@ -310,6 +311,34 @@ it("failure before Session creation keeps the draft and allows one deliberate su
       },
       { type: "send-prompt", agentId: "fake-agent-1", prompt: "keep original input" },
     ]);
+  } finally {
+    await f.stop();
+  }
+});
+
+it("Sidebar c resumes a partially created empty-Workspace launch without replacing its captured Session", async () => {
+  const f = await fixture(true);
+  try {
+    f.app.setComposerText("launch retry");
+    f.gateway.failSend = true;
+    await f.key("\r");
+    expect(f.app.state.launchDrafts?.w?.createdAgentId).toBe("fake-agent-1");
+    expect(f.app.state.directory.agents.some((agent) => agent.id === "fake-agent-1")).toBe(true);
+    await f.key("\u0013");
+    await f.key("g");
+    await f.key("g");
+    await f.key("l");
+    await f.key("j");
+    await f.key("c");
+    expect(f.app.state.focus).toBe("composer");
+    expect(f.app.state.launchDrafts?.w?.prompt).toBe("launch retry");
+    await f.key("\r");
+    expect(f.gateway.commands.filter((command) => command.type === "create-agent")).toHaveLength(1);
+    expect(f.gateway.commands.at(-1)).toEqual({
+      type: "send-prompt",
+      agentId: "fake-agent-1",
+      prompt: "launch retry",
+    });
   } finally {
     await f.stop();
   }
