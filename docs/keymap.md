@@ -125,7 +125,7 @@ These work in composer and timeline Normal/Visual modes unless the context colum
 | Permission dialog | `a`, `d`, `h`, `l`, `Left`, `Right`, `r`, `Esc` | Allow/deny, previous/next request, retry failed decision, close. |
 | Notifications | `j`, `k`, `Down`, `Up`, `Enter`, `Esc` | Move selection, open, close. |
 | Timeline search overlay | Type, `Ctrl-N`, `Ctrl-P`, `Enter`, `Esc` | Enter query, next/previous result, choose next result, cancel. |
-| Palette | Type, `Up`, `Down`, `Enter`, `Esc` | Filter, move selection, run command, close. |
+| Choice pickers (palette, New tab, settings) | Type, `Down`/`Ctrl-J`, `Up`/`Ctrl-K`, `Enter`, `Esc` | Edit query, select without wrapping, apply enabled result, cancel. Legacy LF selects next; CR or distinguishable enhanced Enter confirms. |
 | Help overlay | `?`, `Esc` | Close help and return to the previous view or overlay. |
 | Confirmation, new-tab, draft-setting, mode, thinking, error-details and other dialogs | Type or `Up`/`Down` where offered, `Enter`, `Esc` | Filter/edit/select/confirm or cancel according to the dialog. |
 
@@ -136,3 +136,12 @@ Vim references: [motion commands](https://vimhelp.org/motion.txt.html), [complet
 An existing empty workspace shows the Launch composer with no tab row. Session and Terminal retain separate input when switching. Creation keeps the composer visible until the first message or command has been sent. After a resource has been created, its type and settings remain fixed during retry to avoid creating a duplicate resource.
 
 Sidebar `c` opens the New workspace composer with the highlighted project's original checkout selected (or the highlighted workspace's project). `\j` changes the project and `\n` edits the optional workspace title. Local uses the original checkout; repeated creation makes fresh workspaces for that same directory. The Launch composer controls above also apply here. `Esc` leaves Insert or Visual mode first; a second `Esc` in Normal mode cancels creation and returns to sidebar navigation. `T` is unavailable until creation finishes or is cancelled. If workspace creation succeeds but launch fails, the new workspace stays active with its inputs in the Launch composer; `\s` retries the resource without creating another workspace.
+
+
+## Single-line fields
+
+Picker queries, Sidebar name filter and Rename use ordinary text editing. Left/Right and Ctrl-B/Ctrl-F move by character; Alt-Left/Right, Ctrl-Left/Right and Alt-B/Alt-F move by word. Home/End, Ctrl-Home/End and Ctrl-A/Ctrl-E move to field boundaries. Backspace/Shift-Backspace and Delete/Shift-Delete delete a character; Ctrl-W/Alt-Backspace delete the previous word and Alt-D/Alt-Delete the next word.
+
+Ctrl-Z undoes locally; distinguishable Ctrl-Shift-Z redoes locally, with no single-line fallback chord. Native paste inserts literal text, converting each line break to a space (CRLF counts once), as one undo step. Ctrl-Y/Alt-Y private paste history is removed.
+
+Deck globals take precedence. Ctrl-K focuses Timeline from ordinary fields and selects the previous result inside searchable Choice pickers. Caret movement preserves the highlighted result. Disabled results remain visible with reasons and cannot execute; empty results cannot execute. Clearing a query leaves the applied setting unchanged. Reconfirming a setting closes without resetting dependent settings; palette and New tab entries still execute. Escape discards unapplied edits and restores the origin.

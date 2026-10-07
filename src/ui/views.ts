@@ -6,13 +6,11 @@ import {
   type Focusable,
   getOsc8LinkAtColumn,
   HStack,
-  Input,
   Markdown,
   matchesKey,
   type OverlayHandle,
   ScrollView,
   type SelectItem,
-  SelectList,
   Spacer,
   sliceByColumn,
   type Terminal,
@@ -63,6 +61,7 @@ import {
   shellLayout,
 } from "./layout.js";
 import { type RenderClock, RenderScheduler } from "./render-scheduler.js";
+import { choiceNavigation, SingleLineField } from "./single-line-field.js";
 import { TerminalLifecycle } from "./terminal.js";
 import { characterOffsets } from "./text-buffer.js";
 import {
@@ -2106,7 +2105,7 @@ class Dialog implements Component, Focusable {
 
 class InputDialog implements Component, Focusable {
   focused = false;
-  private readonly input = new Input();
+  private readonly input = new SingleLineField();
   constructor(
     private readonly title: string,
     value: string,
@@ -2173,7 +2172,7 @@ class CreationPromptDialog implements Component, Focusable {
 
 class SearchDialog implements Component, Focusable {
   focused = false;
-  private readonly input = new Input();
+  private readonly input = new SingleLineField();
   constructor(
     private readonly result: () => string,
     private readonly change: (value: string) => void,
@@ -2278,46 +2277,9 @@ function centeredChoicePickerWidth(
   return Math.min(Math.max(1, terminalColumns - 2), Math.min(64, desired));
 }
 
-class ChoiceDialog implements Component {
-  private readonly list: SelectList;
-  constructor(
-    title: string,
-    items: SelectItem[],
-    choose: (value: string) => void,
-    cancel: () => void,
-    maxVisible: number,
-    preferredValue: string | undefined,
-    private readonly theme: DeckTheme,
-  ) {
-    this.list = new SelectList(items, maxVisible, selectTheme(theme));
-    if (preferredValue !== undefined) {
-      const index = items.findIndex((item) => item.value === preferredValue);
-      if (index >= 0) this.list.setSelectedIndex(index);
-    }
-    this.list.onSelect = (item) => choose(item.value);
-    this.list.onCancel = cancel;
-    this.title = title;
-  }
-  private readonly title: string;
-  invalidate(): void {
-    this.list.invalidate();
-  }
-  render(width: number): string[] {
-    return framedChoicePickerLines(
-      this.title,
-      this.list.render(Math.max(1, width - 2)),
-      width,
-      this.theme,
-    );
-  }
-  handleInput(data: string): void {
-    this.list.handleInput(data);
-  }
-}
-
-class SearchableChoiceDialog implements Component, Focusable {
+export class SearchableChoiceDialog implements Component, Focusable {
   focused = false;
-  private readonly query: Input;
+  private readonly query: SingleLineField;
   private selected = 0;
   constructor(
     private readonly title: string,
@@ -2329,7 +2291,7 @@ class SearchableChoiceDialog implements Component, Focusable {
     private readonly theme: DeckTheme = new DeckTheme(defaultTerminalAppearance),
     private readonly desktopNewTabStyle = false,
   ) {
-    this.query = new Input({ prompt: desktopNewTabStyle ? "" : "Filter: " });
+    this.query = new SingleLineField({ prompt: desktopNewTabStyle ? "" : "Filter: " });
     const index =
       preferredValue === undefined ? -1 : items.findIndex((item) => item.value === preferredValue);
     if (index >= 0) this.selected = index;
@@ -2340,6 +2302,7 @@ class SearchableChoiceDialog implements Component, Focusable {
   render(width: number): string[] {
     this.query.focused = this.focused;
     const matches = this.matches();
+    this.selected = Math.max(0, Math.min(this.selected, matches.length - 1));
     const start = Math.max(
       0,
       Math.min(this.selected - Math.floor(this.maxVisible / 2), matches.length - this.maxVisible),
@@ -2410,15 +2373,16 @@ class SearchableChoiceDialog implements Component, Focusable {
       return;
     }
     const matches = this.matches();
-    if (matchesKey(data, "up") || data === "\u000b") this.selected = Math.max(0, this.selected - 1);
-    else if (matchesKey(data, "down"))
-      this.selected = Math.min(Math.max(0, matches.length - 1), this.selected + 1);
-    else if (matchesKey(data, "enter")) {
+    const direction = choiceNavigation(data);
+    if (direction !== undefined)
+      this.selected = Math.max(0, Math.min(matches.length - 1, this.selected + direction));
+    else if (data !== "\n" && matchesKey(data, "enter")) {
       const item = matches[this.selected];
       if (item && !item.disabled) this.choose(item.value);
     } else {
+      const before = this.query.getValue();
       this.query.handleInput(data);
-      this.selected = 0;
+      if (before !== this.query.getValue()) this.selected = 0;
     }
   }
   private matches(): readonly CreationChoice[] {
@@ -2453,7 +2417,7 @@ function fuzzyChoiceScore(label: string, query: string): number {
 
 class CommandPaletteDialog implements Component, Focusable {
   focused = false;
-  private readonly query = new Input();
+  private readonly query = new SingleLineField();
   private selected = 0;
   constructor(
     private readonly commands: () => readonly ResolvedCommand[],
@@ -2467,14 +2431,16 @@ class CommandPaletteDialog implements Component, Focusable {
   render(width: number): string[] {
     this.query.focused = this.focused;
     const matches = this.matches();
+    this.selected = Math.max(0, Math.min(this.selected, matches.length - 1));
+    const start = Math.max(0, this.selected - 8);
     return [
       this.theme.clipOwnedLabel("Command palette", width),
       ...this.query.render(width),
-      ...matches.slice(0, 9).map((command, index) => {
+      ...matches.slice(start, start + 9).map((command, index) => {
         const shortcut = command.shortcuts.join(" / ");
         const suffix = command.disabledReason ? ` - ${command.disabledReason}` : "";
         return this.theme.clipOwnedLabel(
-          `${index === this.selected ? "> " : "  "}${command.label}  ${shortcut}${suffix}`,
+          `${start + index === this.selected ? "> " : "  "}${command.label}  ${shortcut}${suffix}`,
           width,
         );
       }),
@@ -2486,15 +2452,16 @@ class CommandPaletteDialog implements Component, Focusable {
       return;
     }
     const matches = this.matches();
-    if (matchesKey(data, "up") || data === "\u000b") this.selected = Math.max(0, this.selected - 1);
-    else if (matchesKey(data, "down"))
-      this.selected = Math.min(Math.max(0, matches.length - 1), this.selected + 1);
-    else if (matchesKey(data, "enter")) {
+    const direction = choiceNavigation(data);
+    if (direction !== undefined)
+      this.selected = Math.max(0, Math.min(matches.length - 1, this.selected + direction));
+    else if (data !== "\n" && matchesKey(data, "enter")) {
       const command = matches[this.selected];
       if (command && !command.disabledReason) this.choose(command.id);
     } else {
+      const before = this.query.getValue();
       this.query.handleInput(data);
-      this.selected = 0;
+      if (before !== this.query.getValue()) this.selected = 0;
     }
   }
   private matches(): readonly ResolvedCommand[] {
@@ -2660,7 +2627,10 @@ export class DeckTui {
               "mode",
               "thinking",
             ].includes(this.state.modal.type);
-          if (data === "\u000b" && picker) return undefined;
+          const creationPicker =
+            this.state.modal.type === "create-agent" &&
+            !["prompt", "confirm"].includes(this.state.modal.step);
+          if (data === "\u000b" && (picker || creationPicker)) return undefined;
           const destination = data === "\u0013" ? "tree" : "timeline";
           const available =
             destination === "tree" ||
@@ -4048,18 +4018,18 @@ export class DeckTui {
           this.theme,
         );
       } else {
-        component = new ChoiceDialog(
+        component = new SearchableChoiceDialog(
           titleForModal(modal.type),
           agentChoices(
             this.state,
             modal.type === "mode" || modal.type === "thinking" ? modal.type : "mode",
-          ),
+          ).map((item) => ({ ...item, disabled: false })),
           (choice) => this.emit({ type: "create-choice", choice }),
           close,
-          this.choicePickerMaxVisible(false),
           this.state.directory.agents.find((agent) => agent.id === modal.agentId)?.[
             modal.type === "mode" ? "modeId" : "thinkingLevel"
           ],
+          this.choicePickerMaxVisible(true),
           this.theme,
         );
       }
