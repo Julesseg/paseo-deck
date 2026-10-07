@@ -63,6 +63,13 @@ const requireConnected = (state: AppState): string | undefined =>
 const requireRemoteAgent = (state: AppState): string | undefined =>
   requireConnected(state) ?? requireAgent(state);
 
+const requireNormalBuffer = (state: AppState): string | undefined =>
+  !state.activeTerminalId &&
+  ((state.focus === "composer" && state.composerMode === "normal") ||
+    (state.focus === "timeline" && (state.timelineMode ?? "normal") === "normal"))
+    ? undefined
+    : "Available in Composer or Timeline Normal only";
+
 export function newTabUnavailableReason(state: AppState): string | undefined {
   if (state.newWorkspace) return "Finish or cancel the New workspace composer first";
   const workspace = requireWorkspace(state);
@@ -71,8 +78,8 @@ export function newTabUnavailableReason(state: AppState): string | undefined {
   if (state.focus === "tree") return "Leave sidebar navigation first";
   if (state.focus === "composer" && state.composerMode !== "normal")
     return "Return to normal mode first";
-  if (state.focus === "timeline" && state.activeTerminalId && state.terminalMode !== "normal")
-    return "Leave terminal insert mode first";
+  if (state.focus === "timeline" && state.activeTerminalId)
+    return "Use Ctrl-S to leave Terminal input first";
   if (state.focus === "timeline" && !state.activeTerminalId && state.timelineMode === "visual")
     return "Leave visual mode first";
   return undefined;
@@ -107,7 +114,7 @@ export const deckCommands: readonly DeckCommand[] = [
     id: "new-tab",
     label: "New Tab",
     group: "Tabs",
-    shortcuts: ["T"],
+    shortcuts: ["Ctrl-T"],
     contexts: ["composer", "timeline"],
     palette: true,
     disabledReason: newTabUnavailableReason,
@@ -157,8 +164,9 @@ export const deckCommands: readonly DeckCommand[] = [
     label: "Next tab",
     group: "Tabs",
     shortcuts: ["gt"],
-    contexts: ["tree", "timeline", "composer"],
+    contexts: ["timeline", "composer"],
     palette: true,
+    disabledReason: requireNormalBuffer,
     intent: () => ({ type: "switch-tab", direction: 1 }),
   },
   {
@@ -166,8 +174,9 @@ export const deckCommands: readonly DeckCommand[] = [
     label: "Previous tab",
     group: "Tabs",
     shortcuts: ["gT"],
-    contexts: ["tree", "timeline", "composer"],
+    contexts: ["timeline", "composer"],
     palette: true,
+    disabledReason: requireNormalBuffer,
     intent: () => ({ type: "switch-tab", direction: -1 }),
   },
   {
@@ -701,7 +710,8 @@ export const deckCommands: readonly DeckCommand[] = [
     label: "Stop agent",
     group: "Agent",
     shortcuts: ["x"],
-    disabledReason: requireRemoteAgent,
+    contexts: ["composer", "timeline"],
+    disabledReason: (state) => requireNormalBuffer(state) ?? requireRemoteAgent(state),
     intent: (state) => ({
       type: "open-confirmation",
       action: "stop",
@@ -713,7 +723,8 @@ export const deckCommands: readonly DeckCommand[] = [
     label: "Archive agent",
     group: "Agent",
     shortcuts: ["A"],
-    disabledReason: requireRemoteAgent,
+    contexts: ["composer", "timeline"],
+    disabledReason: (state) => requireNormalBuffer(state) ?? requireRemoteAgent(state),
     intent: (state) => ({
       type: "open-confirmation",
       action: "archive",
@@ -834,11 +845,11 @@ const bufferShortcuts: Readonly<Record<string, readonly string[]>> = {
   "sidebar-navigation": ["Ctrl-S"],
   "timeline-navigation": ["Ctrl-K"],
   help: ["g?"],
-  "new-tab": [],
+  "new-tab": ["Ctrl-T"],
   "discard-draft": [],
   "terminal-kill": [],
-  "tab-next": [],
-  "tab-previous": [],
+  "tab-next": ["gt"],
+  "tab-previous": ["gT"],
   "focus-composer": [],
   "composer-history-previous": [],
   "composer-history-next": [],
@@ -850,8 +861,8 @@ const bufferShortcuts: Readonly<Record<string, readonly string[]>> = {
   permissions: [],
   "toggle-archived": [],
   "toggle-attention": [],
-  "stop-agent": [],
-  "archive-agent": [],
+  "stop-agent": ["Ctrl-X"],
+  "archive-agent": ["Ctrl-A"],
   "detach-agent": [],
   "rename-agent": [],
   model: ["mm"],
@@ -877,9 +888,21 @@ export function resolvedCommands(
       const buffer =
         (context === "timeline" && !state.activeTerminalId) ||
         (context === "composer" && state.composerMode !== "insert");
-      const shortcuts = buffer
+      let shortcuts = buffer
         ? (bufferShortcuts[command.id] ?? command.shortcuts)
         : command.shortcuts;
+      if (
+        ["new-tab", "tab-next", "tab-previous", "stop-agent", "archive-agent"].includes(
+          command.id,
+        ) &&
+        !(
+          (context === "composer" && state.composerMode === "normal") ||
+          (context === "timeline" &&
+            !state.activeTerminalId &&
+            (state.timelineMode ?? "normal") === "normal")
+        )
+      )
+        shortcuts = [];
       return { ...definition, shortcuts, ...(disabledReason ? { disabledReason } : {}) };
     });
 }
@@ -898,7 +921,20 @@ export function contextualHelp(
   state: AppState,
   context: CommandContext = commandContext(state),
 ): readonly ResolvedCommand[] {
-  return resolvedCommands(state, context);
+  const commands = resolvedCommands(state, context);
+  if (context === "timeline" && state.activeTerminalId)
+    return commands
+      .filter((command) => ["sidebar-navigation", "tab-next", "tab-previous"].includes(command.id))
+      .map(({ disabledReason: _disabledReason, ...command }) => ({
+        ...command,
+        shortcuts:
+          command.id === "tab-next"
+            ? ["Ctrl-Tab"]
+            : command.id === "tab-previous"
+              ? ["Ctrl-Shift-Tab"]
+              : ["Ctrl-S"],
+      }));
+  return commands;
 }
 
 export function commandContext(state: AppState): CommandContext {
@@ -912,6 +948,9 @@ export function commandContext(state: AppState): CommandContext {
 export function shortcutForInput(data: string): string | undefined {
   if (data === "\u001b") return "Esc";
   if (data === "\u0013") return "Ctrl-S";
+  if (data === "\u0014") return "Ctrl-T";
+  if (data === "\u0018") return "Ctrl-X";
+  if (data === "\u0001") return "Ctrl-A";
   if (data === "\u000b") return "Ctrl-K";
   if (data === "\u0006") return "Ctrl-F";
   if (data === "\u001b[A") return "Up";

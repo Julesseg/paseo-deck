@@ -439,9 +439,6 @@ export class ApplicationController {
         }
         return;
       }
-      case "set-terminal-mode":
-        this.apply({ type: "set-terminal-mode", mode: intent.mode });
-        return;
       case "terminal-input":
         if (this.#state.activeTerminalId)
           this.gateway.sendTerminalInput(this.#state.activeTerminalId, intent.data);
@@ -458,14 +455,20 @@ export class ApplicationController {
           const current = tabs.findIndex(
             (tab) => `${tab.kind}:${tab.id}` === this.#state.activeTabIds[workspaceId],
           );
+          if (
+            intent.count !== undefined &&
+            (!Number.isSafeInteger(intent.count) || intent.count < 1)
+          )
+            return;
+          if (intent.count !== undefined && intent.direction === 1 && intent.count > tabs.length)
+            return;
           const index =
-            intent.count === undefined
-              ? current === -1
-                ? intent.direction === 1
-                  ? 0
-                  : tabs.length - 1
-                : (current + intent.direction + tabs.length) % tabs.length
-              : Math.min(tabs.length - 1, Math.max(0, intent.count - 1));
+            intent.count !== undefined && intent.direction === 1
+              ? intent.count - 1
+              : ((current < 0 ? (intent.direction === 1 ? -1 : 0) : current) +
+                  ((intent.direction * (intent.count ?? 1)) % tabs.length) +
+                  tabs.length) %
+                tabs.length;
           const next = tabs[index];
           if (next?.kind === "session") await this.selectAgent(next.id, true);
           else if (next?.kind === "draft") this.focusSessionDraft(next.id);

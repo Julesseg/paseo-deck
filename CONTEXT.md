@@ -35,6 +35,9 @@ _Avoid_: Session process
 A persistent shell owned by a workspace. A terminal is a workspace resource in the active Workspace's Tab row, not a sidebar row or session timeline item.
 _Avoid_: Console, shell tab
 
+**Terminal input**:
+Literal input delivered immediately to the Active terminal. Deck reserves Ctrl-S for Sidebar focus and distinguishable Ctrl-Tab/Ctrl-Shift-Tab for tab navigation. Escape, ordinary Tab/Shift-Tab and paste belong to the terminal program. Deck overlays own their normal controls while displayed.
+
 **Terminal profile**:
 A named terminal configuration supplied by the connected Paseo daemon.
 _Avoid_: Deck terminal profile
@@ -99,7 +102,7 @@ The composer, sidebar, timeline, or terminal currently receiving keyboard comman
 _Avoid_: Pane focus, focus area
 
 **Normal mode**:
-The default Vim mode for the composer, timeline, or terminal. Composer normal mode is the application's resting state, timeline normal mode navigates its read-only buffer, and terminal normal mode handles Deck commands.
+The default Vim mode for the Composer or Timeline. Composer Normal mode is the application's resting state; Timeline Normal mode navigates its read-only buffer. Terminals receive direct program input without a Deck Vim mode.
 
 **Application leader**:
 The backslash key (`\\`) followed by a mnemonic key in composer or timeline Normal and Visual modes. It opens a Deck action without taking a Vim buffer key. Sidebar, dialogs, and terminals retain their own bindings.
@@ -108,7 +111,7 @@ The backslash key (`\\`) followed by a mnemonic key in composer or timeline Norm
 The position in rendered timeline text or editable composer text that Vim motions move. Timeline text is read-only; composer operators may change it.
 
 **Insert mode**:
-The Vim mode for entering prompt text in the composer or sending literal input to a terminal. Pressing Escape returns that region to normal mode.
+The Vim mode for entering prompt text in the Composer. Pressing Escape returns it to Normal mode.
 
 **Visual mode**:
 The Vim mode for selecting text in the composer or read-only timeline. Timeline Visual mode supports character, line, and rectangular block selections. Pressing Escape clears the selection and returns that region to normal mode.

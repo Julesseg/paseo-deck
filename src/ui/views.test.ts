@@ -415,7 +415,7 @@ describe("composer controls", () => {
     await deck.stop();
   });
 
-  it("labels the active terminal content with its Vim mode", async () => {
+  it("labels the active Terminal as direct input", async () => {
     const terminal = new RecordingTerminal(100, 24);
     const deck = new DeckTui(
       terminal,
@@ -423,7 +423,6 @@ describe("composer controls", () => {
         ...state(),
         selectedWorkspaceId: "w",
         activeTerminalId: "term",
-        terminalMode: "insert",
         terminalLines: { term: ["literal input"] },
         workspaceTerminals: {
           w: [{ id: "term", workspaceId: "w", cwd: "/workspace", name: "build" }],
@@ -439,8 +438,8 @@ describe("composer controls", () => {
     await terminal.waitForRender();
     const lines = terminal.viewport();
     await deck.stop();
-    expect(lines.join("\n")).toContain("INSERT");
-    expect(lines.filter((line) => line.includes("INSERT"))).toHaveLength(1);
+    expect(lines.join("\n")).toContain("Terminal · direct input");
+    expect(lines.join("\n")).not.toContain("INSERT Terminal");
     expect(lines.join("\n")).toContain("literal input");
 
     const sidebarTerminal = new RecordingTerminal(100, 24);
@@ -450,7 +449,6 @@ describe("composer controls", () => {
         ...state(),
         selectedWorkspaceId: "w",
         activeTerminalId: "term",
-        terminalMode: "normal",
         terminalLines: { term: ["literal input"] },
         workspaceTerminals: {
           w: [{ id: "term", workspaceId: "w", cwd: "/workspace", name: "build" }],
@@ -466,17 +464,16 @@ describe("composer controls", () => {
     await sidebarTerminal.waitForRender();
     const sidebarLines = sidebarTerminal.viewport();
     await sidebarDeck.stop();
-    expect(sidebarLines.filter((line) => line.includes("NORMAL"))).toHaveLength(1);
+    expect(sidebarLines.join("\n")).toContain("Terminal · direct input");
   });
 
-  it("forwards question marks to a terminal in Insert mode", async () => {
+  it("forwards question marks to a Terminal", async () => {
     const terminal = new RecordingTerminal(100, 24);
     const intents: unknown[] = [];
     const terminalState: AppState = {
       ...state(),
       selectedWorkspaceId: "w",
       activeTerminalId: "term",
-      terminalMode: "insert",
       terminalLines: { term: ["terminal input"] },
       workspaceTerminals: {
         w: [{ id: "term", workspaceId: "w", cwd: "/workspace", name: "build" }],
@@ -3697,7 +3694,7 @@ describe("DeckTui viewport and focus", () => {
   it("does not stack a palette over itself and keeps disabled palette actions inert", async () => {
     const terminal = new RecordingTerminal();
     const intents: unknown[] = [];
-    const base = state();
+    const base: AppState = { ...state(), focus: "composer", composerMode: "normal" };
     const deck = new DeckTui(terminal, base, (intent) => intents.push(intent));
     deck.start();
     terminal.sendInput("\u0010");
@@ -3716,7 +3713,7 @@ describe("DeckTui viewport and focus", () => {
 
   it("recomputes palette availability without reconstructing the open overlay", async () => {
     const terminal = new RecordingTerminal();
-    const base = state();
+    const base: AppState = { ...state(), focus: "composer", composerMode: "normal" };
     const deck = new DeckTui(terminal, base, () => undefined);
     deck.start();
     terminal.sendInput("\u0010");

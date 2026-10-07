@@ -3,7 +3,6 @@ import type {
   FocusArea,
   ModalState,
   TabId,
-  TerminalMode,
   TimelineNavigationState,
   TreeOrder,
 } from "../contracts/app-state.js";
@@ -44,7 +43,6 @@ export type AppAction =
     }
   | { type: "discard-session-draft"; workspaceId: string }
   | { type: "complete-session-draft"; workspaceId: string; agentId: string }
-  | { type: "set-terminal-mode"; mode: TerminalMode }
   | { type: "terminal-lines"; terminalId: string; lines: readonly string[]; stale?: boolean }
   | { type: "set-terminal-scroll"; terminalId: string; offset: number }
   | { type: "select-sidebar"; selection?: AppState["sidebarSelection"]; order?: readonly string[] }
@@ -125,7 +123,6 @@ export function createInitialState(): AppState {
     composer: createComposerState(),
     creationDefaults: {},
     workspaceTerminals: {},
-    terminalMode: "normal",
     terminalLines: {},
     staleTerminalIds: new Set(),
     notifications: [],
@@ -886,7 +883,6 @@ export function reduceApp(state: AppState, action: AppAction): AppState {
         ...state,
         selectedWorkspaceId: terminal.workspaceId,
         activeTabIds: { ...state.activeTabIds, [terminal.workspaceId]: id },
-        terminalMode: "normal",
         focus: "timeline",
       });
     }
@@ -953,8 +949,6 @@ export function reduceApp(state: AppState, action: AppAction): AppState {
           : state.activeTabIds,
       });
     }
-    case "set-terminal-mode":
-      return { ...state, terminalMode: action.mode };
     case "set-terminal-scroll":
       return {
         ...state,
