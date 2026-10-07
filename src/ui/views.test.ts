@@ -182,7 +182,7 @@ describe("creation picker choices", () => {
       expect(top).toContain("┌");
       expect(top).toContain("┐");
       expect(lines.join("\n")).toContain("│");
-      expect(lines.join("\n")).toContain(type === "mode" ? "→ full-access" : "→ high");
+      expect(lines.join("\n")).toContain(type === "mode" ? "> full-access" : "> high");
     },
   );
 

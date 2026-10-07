@@ -616,6 +616,18 @@ export class ApplicationController {
           ? launchDraft(this.#state, modal.workspaceId)
           : this.#state.sessionDrafts[modal.workspaceId];
         if (!draft) return;
+        const selected =
+          modal.setting === "provider"
+            ? draft.providerId
+            : modal.setting === "model"
+              ? draft.modelId
+              : modal.setting === "mode"
+                ? draft.modeId
+                : draft.thinkingLevel;
+        if (selected === intent.choice) {
+          this.apply({ type: "close-modal" });
+          return;
+        }
         const provider = this.#state.directory.providers.find(
           (item) => item.id === (modal.setting === "provider" ? intent.choice : draft.providerId),
         );
@@ -1719,6 +1731,19 @@ export class ApplicationController {
 
   private async runCommand(command: AgentCommand): Promise<void> {
     const origin = this.#state.modal;
+    if (command.type === "rename-agent") {
+      const name = command.name.trim();
+      if (!name || /[\p{Cc}\p{Cs}]/u.test(name)) return;
+      const agentId = command.agentId;
+      const target = this.#state.directory.agents.find((agent) => agent.id === agentId);
+      if (!target) return;
+      if (name === target.title) {
+        if (origin.type === "rename" && origin.agentId === command.agentId)
+          this.apply({ type: "close-modal" });
+        return;
+      }
+      command = { ...command, name };
+    }
     const confirmation =
       origin.type === "confirm" && "agentId" in command && origin.agentId === command.agentId
         ? origin
@@ -1811,6 +1836,14 @@ export class ApplicationController {
       this.apply({ type: "set-filter", filter: choice });
       this.apply({ type: "close-modal" });
       return;
+    }
+    if (modal.type === "mode" || modal.type === "thinking") {
+      const agent = this.#state.directory.agents.find((item) => item.id === modal.agentId);
+      const selected = modal.type === "mode" ? agent?.modeId : agent?.thinkingLevel;
+      if (choice === selected) {
+        this.apply({ type: "close-modal" });
+        return;
+      }
     }
     if (modal.type === "mode") {
       await this.runCommand({ type: "set-agent-mode", agentId: modal.agentId, modeId: choice });
