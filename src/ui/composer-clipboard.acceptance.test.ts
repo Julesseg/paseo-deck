@@ -143,6 +143,13 @@ it("reports clipboard failures without pasting the prior copied value or changin
     await terminal.waitForRender();
     expect(selectedComposerDraft(app.state)).toBe("two");
     expect(app.state.composerMode).toBe("normal");
+    terminal.sendInput("v");
+    terminal.sendInput("l");
+    terminal.sendInput("p");
+    await terminal.waitForRender();
+    expect(selectedComposerDraft(app.state)).toBe("two");
+    expect(app.state.composerMode).toBe("visual");
+    expect(terminal.viewport().join("\n")).toContain("selected 2 chars");
     expect(gateway.commands).toEqual([]);
   } finally {
     unsubscribe();
@@ -209,6 +216,101 @@ it("keeps clipboard reads through background updates and discards them after swi
     expect(gateway.commands).toEqual([]);
   } finally {
     unsubscribe();
+    await deck.stop();
+    await gateway.close();
+  }
+});
+
+it("replaces wrapped backward Visual selections using fresh p/P and native paste across focus", async () => {
+  const gateway = new FakePaseoGateway({
+    ...emptyDirectory(),
+    workspaces: [{ id: "w", title: "Workspace", directory: "/w", archived: false }],
+    agents: [
+      {
+        id: "a",
+        workspaceId: "w",
+        title: "Session",
+        status: "idle",
+        archived: false,
+        pendingPermissions: [],
+        needsAttention: false,
+        availableModeIds: [],
+        availableThinkingLevels: [],
+      },
+    ],
+  });
+  const app = new ApplicationController(gateway);
+  await app.start();
+  const text = `😀é ${"word ".repeat(28)}END`;
+  await app.handleIntent({ type: "set-composer-text", text });
+  await app.handleIntent({ type: "set-composer-mode", mode: "normal" });
+  await app.handleIntent({ type: "set-focus", focus: "composer" });
+  let clipboard = "EXTERNAL";
+  const terminal = new RecordingTerminal(100, 30);
+  const deck = new DeckTui(
+    terminal,
+    app.state,
+    (intent) => {
+      void app.handleIntent(intent);
+    },
+    {
+      appearance: {
+        color: "truecolor",
+        unicode: true,
+        theme: "ember",
+        symbols: "unicode",
+        palette: "ember",
+      },
+      clipboard: {
+        read: () => clipboard,
+        write: (value) => {
+          clipboard = value;
+        },
+      },
+    },
+  );
+  const stop = app.subscribe((state) => deck.update(state));
+  deck.start();
+  try {
+    for (const key of ["0", "v", "$", "o", "\u0013", "\u001b"]) terminal.sendInput(key);
+    await terminal.waitForRender();
+    expect(app.state.composerMode).toBe("visual");
+    expect(terminal.viewport().join("\n")).toContain("selected");
+    const rows = terminal.viewport();
+    const backgrounds = terminal.viewportBackgrounds();
+    const wordRows = rows
+      .map((row, index) => (row.includes("word") ? index : -1))
+      .filter((index) => index >= 0);
+    expect(wordRows.length).toBeGreaterThan(1);
+    expect(wordRows.every((row) => new Set(backgrounds[row]?.filter(Boolean)).size > 1)).toBe(true);
+    terminal.sendInput("P");
+    await terminal.waitForRender();
+    expect(selectedComposerDraft(app.state)).toBe("EXTERNAL");
+    expect(clipboard).toBe("EXTERNAL");
+    terminal.sendInput("u");
+    for (const key of ["0", "v", "l", "p"]) terminal.sendInput(key);
+    await terminal.waitForRender();
+    expect(selectedComposerDraft(app.state)).toBe(`EXTERNAL ${"word ".repeat(28)}END`);
+    expect(clipboard).toBe("😀é");
+    for (const key of ["0", "v", "l"]) terminal.sendInput(key);
+    terminal.sendInput("\u001b[200~N\n😀\u001b[201~");
+    await terminal.waitForRender();
+    expect(selectedComposerDraft(app.state).startsWith("N\n😀TERNAL")).toBe(true);
+    expect(app.state.composerMode).toBe("insert");
+    expect(clipboard).toBe("😀é");
+    terminal.sendInput("\u001b");
+    await terminal.waitForRender();
+    expect(app.state.composerMode).toBe("normal");
+    terminal.sendInput("u");
+    await terminal.waitForRender();
+    expect(selectedComposerDraft(app.state)).toBe(`EXTERNAL ${"word ".repeat(28)}END`);
+    terminal.sendInput("g");
+    terminal.sendInput("v");
+    await terminal.waitForRender();
+    expect(app.state.composerMode).toBe("normal");
+    expect(gateway.commands).toEqual([]);
+  } finally {
+    stop();
     await deck.stop();
     await gateway.close();
   }
