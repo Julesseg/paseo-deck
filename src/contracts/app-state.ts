@@ -72,6 +72,10 @@ export type ModalState =
       workspaceId?: string;
       terminalId?: string;
       draftWarning?: boolean;
+      id?: number;
+      label?: string;
+      busy?: boolean;
+      unavailableReason?: string;
     }
   | {
       type: "permission";

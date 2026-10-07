@@ -118,9 +118,9 @@ describe("command registry", () => {
 
   it("uses composer-specific controls for model, thinking, and operational mode", () => {
     const current = { ...state(), focus: "composer" as const, composerMode: "normal" as const };
-    expect(commandForKey(current, "\\m")?.disabledReason).toContain("model switching");
-    expect(commandForKey(current, "\\z")?.id).toBe("thinking");
-    expect(commandForKey(current, "\\o")?.id).toBe("operational-mode");
+    expect(commandById(current, "model")?.disabledReason).toContain("model switching");
+    expect(commandById(current, "thinking")?.id).toBe("thinking");
+    expect(commandById(current, "operational-mode")?.id).toBe("operational-mode");
     expect(commandForKey({ ...current, focus: "tree" }, "o")?.id).toBe("toggle-order");
     expect(contextualHelp(current).map((command) => command.id)).toContain("operational-mode");
     expect(contextualHelp(current).map((command) => command.id)).not.toContain("mode");
@@ -176,14 +176,14 @@ describe("command registry", () => {
     ]);
   });
 
-  it("resolves Ctrl-K in an editor without leaking normal keys", () => {
+  it("resolves Ctrl-P in an editor without leaking normal keys", () => {
     const intents: unknown[] = [];
     const controller = new DeckController(
       () => ({ ...state(), focus: "composer" }),
       (intent) => intents.push(intent),
     );
     expect(controller.handleKey("x")).toBe(false);
-    expect(controller.handleKey("\u000b")).toBe(true);
+    expect(controller.handleKey("\u0010")).toBe(true);
     expect(intents).toEqual([{ type: "open-command-palette" }]);
   });
 
@@ -246,7 +246,11 @@ describe("command registry", () => {
             () => current,
             (intent) => intents.push(intent),
           ).handleKey(input);
-          expect(intents, `${focus}:${command.id}:${shortcut}`).toEqual([command.intent(current)]);
+          expect(intents, `${focus}:${command.id}:${shortcut}`).toEqual(
+            command.id === "timeline-navigation" && focus === "timeline"
+              ? []
+              : [command.intent(current)],
+          );
         }
       }
     },

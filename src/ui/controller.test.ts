@@ -69,8 +69,7 @@ describe("DeckController keyboard seam", () => {
       () => state,
       (intent) => intents.push(intent),
     );
-    controller.handleKey("\\");
-    controller.handleKey("T");
+    controller.invokeCommand("new-tab");
     expect(intents).toEqual([{ type: "open-new-tab", workspaceId: "w" }]);
     for (const variant of [
       { focus: "composer" as const, composerMode: "insert" as const },
@@ -127,7 +126,7 @@ describe("DeckController keyboard seam", () => {
     expect(intents).toEqual([{ type: "terminal-input", data: "T" }]);
   });
 
-  it("routes gc to the workspace draft from active or background tabs", () => {
+  it("routes palette discard to the workspace draft from active or background tabs", () => {
     const intents: unknown[] = [];
     const state = {
       ...makeState(),
@@ -140,8 +139,7 @@ describe("DeckController keyboard seam", () => {
       () => state,
       (intent) => intents.push(intent),
     );
-    controller.handleKey("\\");
-    controller.handleKey("D");
+    controller.invokeCommand("discard-draft");
     expect(intents).toEqual([{ type: "discard-session-draft", workspaceId: "w" }]);
     const backgroundState: AppState = {
       ...state,
@@ -152,8 +150,7 @@ describe("DeckController keyboard seam", () => {
       () => backgroundState,
       (intent) => intents.push(intent),
     );
-    backgroundController.handleKey("\\");
-    backgroundController.handleKey("D");
+    backgroundController.invokeCommand("discard-draft");
     expect(intents.at(-1)).toEqual({ type: "discard-session-draft", workspaceId: "w" });
   });
   it("recognizes tab navigation sequences and counts", () => {
@@ -216,7 +213,7 @@ describe("DeckController keyboard seam", () => {
       { type: "set-focus", focus: "timeline" },
     ]);
   });
-  it("uses mnemonic buffer commands for region transitions", () => {
+  it("uses global controls for region transitions", () => {
     const intents: unknown[] = [];
     let current: AppState = { ...makeState(), focus: "composer", composerMode: "normal" };
     const controller = new DeckController(
@@ -229,11 +226,9 @@ describe("DeckController keyboard seam", () => {
       },
     );
     expect(controller.handleKey("i")).toBe(false);
-    controller.handleKey("\\");
-    controller.handleKey("n");
+    controller.handleKey("\u0013");
     controller.handleKey("\u001b");
-    controller.handleKey("\\");
-    controller.handleKey("t");
+    controller.handleKey("\u000b");
     expect(intents).toEqual([
       { type: "set-focus", focus: "tree" },
       { type: "set-focus", focus: "composer" },
@@ -241,7 +236,7 @@ describe("DeckController keyboard seam", () => {
     ]);
   });
 
-  it("reserves Ctrl-U for Vim in the composer and scrolls other regions", () => {
+  it("scrolls Timeline from every region with Ctrl-U", () => {
     for (const focus of ["composer", "tree", "timeline"] as const) {
       const intents: unknown[] = [];
       new DeckController(
@@ -252,9 +247,7 @@ describe("DeckController keyboard seam", () => {
         }),
         (intent) => intents.push(intent),
       ).handleKey("\u0015");
-      expect(intents).toEqual(
-        focus === "composer" ? [] : [{ type: "scroll-timeline", direction: -1 }],
-      );
+      expect(intents).toEqual([{ type: "scroll-timeline", direction: -1 }]);
     }
   });
 
@@ -734,7 +727,7 @@ describe("DeckController keyboard seam", () => {
     expect(intents).toEqual([{ type: "set-focus", focus: "tree" }]);
   });
 
-  it("uses up and down for selected-agent prompt history while composing", () => {
+  it("reserves Ctrl-P for palette and removes Ctrl-N history alias", () => {
     const intents: unknown[] = [];
     const controller = new DeckController(
       () => ({ ...makeState(), focus: "composer", composerMode: "insert" }),
@@ -742,11 +735,8 @@ describe("DeckController keyboard seam", () => {
     );
 
     expect(controller.handleKey("\u0010")).toBe(true);
-    expect(controller.handleKey("\u000e")).toBe(true);
-    expect(intents).toEqual([
-      { type: "navigate-composer-history", direction: -1 },
-      { type: "navigate-composer-history", direction: 1 },
-    ]);
+    expect(controller.handleKey("\u000e")).toBe(false);
+    expect(intents).toEqual([{ type: "open-command-palette" }]);
   });
 
   it("leaves plain up and down available to the multiline editor", () => {
