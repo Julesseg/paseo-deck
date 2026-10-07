@@ -279,7 +279,6 @@ describe("runCli", () => {
     terminal.sendInput("\r");
     await terminal.waitForRender();
     expect(gateway.createdTerminals).toEqual([{ workspaceId: "workspace", options: undefined }]);
-    terminal.sendInput("i");
     terminal.sendInput("x");
     await terminal.waitForRender();
     expect(gateway.terminalInput).toEqual([{ terminalId: "fake-terminal-1", data: "x" }]);

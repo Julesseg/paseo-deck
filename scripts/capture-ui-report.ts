@@ -703,7 +703,6 @@ const shots: Array<{
           { id: "terminal-1", workspaceId: "workspace-main", cwd: "/demo/deck", name: "build" },
         ],
       },
-      terminalMode: "normal",
       sessionDrafts: {
         "workspace-main": { ...draftFixture, prompt: "Keep this first message", dirty: true },
       },
@@ -732,7 +731,6 @@ const shots: Array<{
           { id: "terminal-1", workspaceId: "workspace-main", cwd: "/demo/deck", name: "build" },
         ],
       },
-      terminalMode: "insert",
       terminalLines: { "terminal-1": ["$ "] },
     },
   },

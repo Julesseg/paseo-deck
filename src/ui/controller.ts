@@ -1,8 +1,9 @@
+import { isKeyRelease, matchesKey } from "@earendil-works/pi-tui";
 import type { AppState, FocusArea, ModalState } from "../contracts/app-state.js";
 import type { AgentCommand } from "../contracts/commands.js";
 import { activeSessionDraftWorkspaceId } from "../state/composer.js";
 import { activeLaunchWorkspaceId } from "../state/launch.js";
-import { commandById, commandForKey, newTabUnavailableReason } from "./commands.js";
+import { commandById, commandForKey } from "./commands.js";
 import { isCharacter } from "./text-buffer.js";
 
 const timelineTextMotionKeys = [
@@ -62,7 +63,6 @@ export type UiIntent =
   | { type: "quit-confirmed" }
   | { type: "set-terminal-name"; name: string }
   | { type: "submit-terminal-name" }
-  | { type: "set-terminal-mode"; mode: "normal" | "insert" }
   | { type: "terminal-input"; data: string }
   | { type: "select-next"; direction: -1 | 1 }
   | { type: "select-boundary"; boundary: "start" | "end" }
@@ -157,7 +157,6 @@ export type UiIntent =
 
 export class DeckController {
   #tabPrefix = "";
-  #tabCountPrefix = "";
   #timelineOperatorCount: number | undefined;
   #timelinePrefix = "";
   #timelineCount = "";
@@ -167,9 +166,14 @@ export class DeckController {
     private readonly emit: (intent: UiIntent) => void,
   ) {}
 
+  get hasPendingTimelineInput(): boolean {
+    return Boolean(
+      this.#timelinePrefix || this.#timelineCount || this.#timelineOperatorCount !== undefined,
+    );
+  }
+
   cancelPendingInput(): void {
     this.#tabPrefix = "";
-    this.#tabCountPrefix = "";
     this.#timelinePrefix = "";
     this.#timelineCount = "";
     this.#timelineOperatorCount = undefined;
@@ -383,15 +387,23 @@ export class DeckController {
       this.#timelinePrefix = "";
       this.#timelineCount = "";
     }
-    if (
-      state.activeTerminalId &&
-      state.focus === "timeline" &&
-      state.modal.type === "none" &&
-      ["\u0003", "\u000b", "\u0010", "\u0015", "\u0004"].includes(data)
-    )
+    if (state.activeTerminalId && state.focus === "timeline" && state.modal.type === "none") {
+      if (matchesKey(data, "ctrl+s")) {
+        if (isKeyRelease(data)) return true;
+        this.cancelPendingInput();
+        return this.send({ type: "set-focus", focus: "tree" });
+      }
+      if (matchesKey(data, "ctrl+tab") || matchesKey(data, "ctrl+shift+tab")) {
+        if (isKeyRelease(data)) return true;
+        return this.send({
+          type: "switch-tab",
+          direction: matchesKey(data, "ctrl+shift+tab") ? -1 : 1,
+        });
+      }
       return this.send({ type: "terminal-input", data });
-    // This must precede terminal passthrough as well as every editor, modal,
-    // and focus branch. In raw mode Ctrl-C is Deck's unconditional exit key.
+    }
+    // Outside direct Terminal input, Ctrl-C belongs to Deck before editors
+    // and overlays can interpret it.
     if (data === "\u0003") return this.send({ type: "quit" });
     if (data === "\u0010") return this.send({ type: "open-command-palette" });
     if (data === "\u0013") {
@@ -429,80 +441,14 @@ export class DeckController {
       this.cancelPendingInput();
       return this.send({ type: "open-help" });
     }
-    const tabNormalMode =
+    const normalBuffer =
       state.modal.type === "none" &&
-      (state.focus === "tree" ||
-        (state.focus === "timeline" && state.activeTerminalId && state.terminalMode !== "insert"));
-    if (
-      data === "T" &&
-      state.focus !== "composer" &&
-      !this.#tabPrefix &&
-      !newTabUnavailableReason(state) &&
-      state.selectedWorkspaceId
-    )
-      return this.send({ type: "open-new-tab", workspaceId: state.selectedWorkspaceId });
-    if (
-      tabNormalMode &&
-      !this.#tabPrefix &&
-      /^[0-9]$/.test(data) &&
-      (this.#tabCountPrefix || data !== "0")
-    ) {
-      this.#tabCountPrefix += data;
-      return true;
-    }
-    if (tabNormalMode && data === "g" && this.#tabCountPrefix) {
-      this.#tabPrefix = `g${this.#tabCountPrefix}`;
-      this.#tabCountPrefix = "";
-      return true;
-    }
-    if (data !== "g") this.#tabCountPrefix = "";
-    if (tabNormalMode && this.#tabPrefix.startsWith("g")) {
-      if (/^[0-9]$/.test(data)) {
-        this.#tabPrefix += data;
-        return true;
-      }
-      const countText = this.#tabPrefix.slice(1);
-      this.#tabPrefix = "";
-      if (data === "t" || data === "T") {
-        this.#timelinePrefix = "";
-        return this.send({
-          type: "switch-tab",
-          direction: data === "t" ? 1 : -1,
-          ...(countText ? { count: Number(countText) } : {}),
-        });
-      }
-      if (data === "c") {
-        const workspaceId = state.selectedWorkspaceId;
-        if (workspaceId && state.sessionDrafts[workspaceId])
-          return this.send({ type: "discard-session-draft", workspaceId });
-        return true;
-      }
-      if (data === "k" && state.activeTerminalId) return this.send({ type: "kill-terminal" });
-    }
-    if (
-      state.activeTerminalId !== undefined &&
-      state.terminalMode !== undefined &&
-      state.terminalLines !== undefined &&
-      state.focus === "timeline" &&
-      state.modal.type === "none"
-    ) {
-      if (data === "\u001b")
-        return state.terminalMode === "insert"
-          ? this.send({ type: "set-terminal-mode", mode: "normal" })
-          : this.send({ type: "set-focus", focus: "tree" });
-      if (state.terminalMode === "insert") return this.send({ type: "terminal-input", data });
-      if (data === "i") return this.send({ type: "set-terminal-mode", mode: "insert" });
-      if (data === "q" || data === "n") return this.send({ type: "set-focus", focus: "tree" });
-      if (data === "g") {
-        this.#tabPrefix = "g";
-        return true;
-      }
-      if (data === "\u001b[A" || data === "\u001b[B" || data === "\u0004" || data === "\u0015")
-        return this.send({
-          type: "scroll-terminal",
-          direction: data === "\u001b[A" || data === "\u0015" ? -1 : 1,
-        });
-      if (data === "r") return this.send({ type: "reconnect-terminal" });
+      !state.activeTerminalId &&
+      ((state.focus === "composer" && state.composerMode === "normal") ||
+        (state.focus === "timeline" && (state.timelineMode ?? "normal") === "normal"));
+    if (normalBuffer && ["\u0014", "\u0018", "\u0001"].includes(data)) {
+      this.cancelPendingInput();
+      return this.sendResolved(commandForKey(state, data), state);
     }
     // ProcessTerminal enables raw mode, so Ctrl+C is delivered as input rather
     // than raising SIGINT. It must remain a global escape hatch even while an

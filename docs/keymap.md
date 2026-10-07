@@ -6,7 +6,7 @@ Keys depend on the active region. In composer and timeline Normal or Visual mode
 
 | Context | Key | Action |
 | --- | --- | --- |
-| Everywhere | `Ctrl-C` | Quit Deck, including from an overlay or terminal Insert mode. |
+| Everywhere | `Ctrl-C` | Quit Deck, including from an overlay. Direct Terminal input passes Ctrl-C to the program. |
 | Everywhere | `Ctrl-K`, `Cmd-P` | Command palette. `Cmd-P` requires a terminal that sends the supported escape sequence. |
 | Composer and timeline Normal/Visual | `\?` | Contextual help. |
 | Composer and timeline Normal/Visual | `\q` | Quit Deck. |
@@ -37,12 +37,9 @@ Keys depend on the active region. In composer and timeline Normal or Visual mode
 | Launch Terminal composer Normal/Visual | `\p` | Choose the default shell or a daemon terminal profile. |
 | Launch composer Normal/Visual | `\s` | Launch the resource with the first message or single-line command; retry failed input on the resource already created. |
 | Session draft composer Normal/Visual | `\p`, `\m`, `\z`, `\o` | Choose provider, model, thinking level, or operational mode for the draft. |
-| Tree or terminal Normal | `T` | New tab, where available. |
-| Tree or terminal Normal | `q`, `?`, `r`, `N`, `R`, `E`, `/`, `p`, `v`, `!`, `x`, `A`, `d`, `e`, `z` | Quit; help; refresh; notifications; retry; error details; filter; permissions; archived/attention filters; stop/archive/detach/rename session; thinking level, where available. Terminal `q` focuses the sidebar. |
-| Tree or terminal Normal | `gt`, `gT`, count + `gt`/`gT` | Next/previous tab or indexed tab. |
-| Timeline Normal/Visual | `gt`, `gT` | Next/previous tab. |
-| Tree or terminal Normal | `gc` | Discard session draft. |
-| Terminal Normal | `gk` | Terminate active terminal after confirmation. |
+| Composer/Timeline Normal | `Ctrl-T`; `Ctrl-X` / `Ctrl-A` | New Tab; Stop / Archive Active session. |
+| Composer/Timeline Normal | `gt` / `gT` | Next/previous Active workspace Tab with wrapping. |
+| Composer/Timeline Normal | count + `gt` / `gT` | One-based Tab index (invalid index is inert) / move backward count Tabs with wrapping. |
 | Command palette only | Theme, terminal creation, and other listed actions | Run actions without a dedicated direct key. |
 
 ## Reviewed Composer Normal
@@ -120,9 +117,10 @@ These work in composer and timeline Normal/Visual modes unless the context colum
 | Sidebar | `g`, `G`, `Enter` | First/last row; activate workspace or open selection. |
 | Sidebar | `[`, `]`, `o`, `c`, `m`, `t` | Resize tree, toggle order, create workspace, choose operational mode, or choose thinking level. |
 | Sidebar | `Esc` | Return to composer or active terminal. |
-| Terminal Normal | `i`, `Esc`, `q`, `n`, `r` | Enter terminal Insert, focus sidebar, or reconnect terminal. |
-| Terminal Normal | `Up`, `Down`, `Ctrl-U`, `Ctrl-D` | Scroll captured terminal output. |
-| Terminal Insert | All ordinary keys, `Esc` | Forward bytes to terminal; Escape returns to Normal. |
+| Terminal direct input | `Ctrl-S` | Focus Sidebar; Ctrl-P there opens the Deck palette. |
+| Terminal direct input | distinguishable `Ctrl-Tab` / `Ctrl-Shift-Tab` | Next/previous Tab; no ordinary Tab fallback. |
+| Terminal direct input | Every other key and paste | Deliver literally, including Escape, Ctrl-C/U/D/K/P/T/A/X, Tab/Shift-Tab, g?, gt/gT, q/n/i and arrows. |
+| Deck overlay above Terminal | Overlay controls | Overlay owns its normal Deck controls; closing restores direct Terminal input. |
 | Permission dialog | `a`, `d`, `h`, `l`, `Left`, `Right`, `r`, `Esc` | Allow/deny, previous/next request, retry failed decision, close. |
 | Notifications | `j`, `k`, `Down`, `Up`, `Enter`, `Esc` | Move selection, open, close. |
 | Timeline search overlay | Type, `Ctrl-N`, `Ctrl-P`, `Enter`, `Esc` | Enter query, next/previous result, choose next result, cancel. |

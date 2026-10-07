@@ -108,13 +108,12 @@ describe("DeckController keyboard seam", () => {
     expect(intents).toEqual([]);
   });
 
-  it("keeps New Tab unavailable in terminal insert mode through the command palette", () => {
+  it("keeps New Tab unavailable during direct Terminal input through the command palette", () => {
     const intents: unknown[] = [];
     const state: AppState = {
       ...makeState(),
       focus: "timeline",
       activeTerminalId: "terminal",
-      terminalMode: "insert",
       terminalLines: { terminal: ["$ "] },
     };
     const controller = new DeckController(
@@ -153,52 +152,34 @@ describe("DeckController keyboard seam", () => {
     backgroundController.invokeCommand("discard-draft");
     expect(intents.at(-1)).toEqual({ type: "discard-session-draft", workspaceId: "w" });
   });
-  it("recognizes tab navigation sequences and counts", () => {
+  it("Sidebar does not own tab navigation sequences or counts", () => {
     const intents: unknown[] = [];
     const controller = new DeckController(
       () => makeState(),
       (intent) => intents.push(intent),
     );
-    controller.handleKey("g");
-    controller.handleKey("3");
-    controller.handleKey("t");
-    controller.handleKey("g");
-    controller.handleKey("c");
-    expect(intents).toContainEqual({ type: "switch-tab", direction: 1, count: 3 });
-    expect(intents).not.toContainEqual({ type: "close-tab" });
+    for (const key of ["3", "g", "t", "g", "T"]) controller.handleKey(key);
+    expect(intents).not.toContainEqual({ type: "switch-tab", direction: 1, count: 3 });
+    expect(intents).not.toContainEqual({ type: "switch-tab", direction: -1 });
   });
-  it("uses the same numbered tab navigation in terminal and timeline normal modes", () => {
+  it("Terminal tab sequences are literal while Timeline Normal owns them", () => {
     const intents: unknown[] = [];
-    let current: AppState = {
-      ...makeState(),
-      focus: "timeline" as const,
-      activeTerminalId: "terminal-1",
-      terminalMode: "normal" as const,
-      terminalLines: { "terminal-1": ["$ "] },
-    };
+    let current: AppState = { ...makeState(), focus: "timeline", activeTerminalId: "terminal-1" };
     const controller = new DeckController(
       () => current,
       (intent) => intents.push(intent),
     );
-    for (const key of ["3", "g", "t", "g", "T"]) controller.handleKey(key);
-    expect(intents).toEqual([
-      { type: "switch-tab", direction: 1, count: 3 },
-      { type: "switch-tab", direction: -1 },
-    ]);
+    const input = ["3", "g", "t", "g", "T"];
+    for (const key of input) controller.handleKey(key);
+    expect(intents).toEqual(input.map((data) => ({ type: "terminal-input", data })));
     const { activeTerminalId: _activeTerminalId, ...sessionState } = current;
     current = sessionState;
     for (const key of ["g", "t"]) controller.handleKey(key);
     expect(intents.at(-1)).toEqual({ type: "switch-tab", direction: 1 });
   });
-  it("leaves terminal normal mode for the sidebar and returns without a hidden composer", () => {
+  it("Ctrl-S leaves direct Terminal input and Sidebar Escape returns", () => {
     const intents: unknown[] = [];
-    let current: AppState = {
-      ...makeState(),
-      focus: "timeline",
-      activeTerminalId: "terminal-1",
-      terminalMode: "normal",
-      terminalLines: { "terminal-1": ["$ "] },
-    };
+    let current: AppState = { ...makeState(), focus: "timeline", activeTerminalId: "terminal-1" };
     const controller = new DeckController(
       () => current,
       (intent) => {
@@ -206,7 +187,7 @@ describe("DeckController keyboard seam", () => {
         if (intent.type === "set-focus") current = { ...current, focus: intent.focus };
       },
     );
-    controller.handleKey("\u001b");
+    controller.handleKey("\u0013");
     controller.handleKey("\u001b");
     expect(intents).toEqual([
       { type: "set-focus", focus: "tree" },
@@ -301,13 +282,14 @@ describe("DeckController keyboard seam", () => {
   });
 
   it.each([
-    ["x", "stop"],
-    ["A", "archive"],
+    ["\u0018", "stop"],
+    ["\u0001", "archive"],
     ["d", "detach"],
   ] as const)("requires confirmation before %s operation", (key, action) => {
     const intents: unknown[] = [];
     const controller = new DeckController(
-      () => makeState(),
+      () =>
+        key === "d" ? makeState() : { ...makeState(), focus: "composer", composerMode: "normal" },
       (intent) => intents.push(intent),
     );
 
@@ -475,7 +457,6 @@ describe("DeckController keyboard seam", () => {
         ...makeState(),
         focus: "timeline",
         activeTerminalId: "terminal-1",
-        terminalMode: "insert",
         terminalLines: { "terminal-1": ["$ "] },
       }),
       (intent) => intents.push(intent),
