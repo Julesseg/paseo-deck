@@ -6,7 +6,12 @@ import type {
   TimelineUpdate,
   WorkspaceRecord,
 } from "../contracts/domain.js";
-import type { Observation, PaseoGateway, WorkspaceCreateOptions } from "../contracts/gateway.js";
+import type {
+  Observation,
+  PaseoGateway,
+  WorkspaceCreateOptions,
+  WorkspacePlacement,
+} from "../contracts/gateway.js";
 import type {
   TerminalCreateOptions,
   TerminalProfile,
@@ -34,6 +39,12 @@ export class FakePaseoGateway implements PaseoGateway {
   >();
 
   public constructor(private snapshot: DirectorySnapshot) {}
+
+  public workspacePlacement: WorkspacePlacement = { supportsWorktree: false, refs: [] };
+
+  public async getWorkspacePlacement(_directory: string): Promise<WorkspacePlacement> {
+    return this.workspacePlacement;
+  }
 
   public readonly createdWorkspaces: WorkspaceCreateOptions[] = [];
 

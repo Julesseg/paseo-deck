@@ -1346,7 +1346,12 @@ class ComposerView implements Component, Focusable {
       ...(this.state.newWorkspace
         ? [
             ` ${this.theme.clipOwnedLabel(`[\\j] Project · ${this.state.directory.projects.find((project) => project.id === this.state.newWorkspace?.projectId)?.name ?? "Choose project"}`, Math.max(1, innerWidth - 1))}`,
-            ` ${this.theme.clipOwnedLabel(`Local · ${this.state.directory.projects.find((project) => project.id === this.state.newWorkspace?.projectId)?.path ?? "Original checkout unavailable"}`, Math.max(1, innerWidth - 1))}`,
+            ` ${this.theme.clipOwnedLabel(this.state.newWorkspace.placementLoading ? "Loading workspace placement…" : this.state.newWorkspace.placementError ? "Workspace placement unavailable · Retry [\\s]" : `${this.state.newWorkspace.placementOptions?.supportsWorktree ? "[\\w] " : ""}${this.state.newWorkspace.placement === "worktree" ? "Worktree" : "Local"} · ${this.state.directory.projects.find((project) => project.id === this.state.newWorkspace?.projectId)?.path ?? "Original checkout unavailable"}`, Math.max(1, innerWidth - 1))}`,
+            ...(this.state.newWorkspace.placement === "worktree"
+              ? [
+                  ` ${this.theme.clipOwnedLabel(`[\\b] Base ref · ${this.state.newWorkspace.placementOptions?.refs.find((ref) => ref.ref === this.state.newWorkspace?.baseRef)?.label ?? "Choose base"}`, Math.max(1, innerWidth - 1))}`,
+                ]
+              : []),
             ` ${this.theme.clipOwnedLabel(`[\\n] Title · ${this.state.newWorkspace.title || "Optional"}`, Math.max(1, innerWidth - 1))}`,
           ]
         : []),
@@ -3193,6 +3198,50 @@ export class DeckTui {
         maxHeight: Math.max(1, this.terminal.rows - 2),
         margin: 1,
         visible: (columns, rows) => shellLayout(columns, rows, this.treeWidth).supported,
+      };
+    } else if (modal.type === "new-workspace-placement" || modal.type === "new-workspace-base") {
+      const placement = modal.type === "new-workspace-placement";
+      const choices = placement
+        ? [
+            {
+              value: "local",
+              label: "Local",
+              description: "Use the original checkout",
+              disabled: false,
+            },
+            {
+              value: "worktree",
+              label: "Worktree",
+              description: "Create a Paseo-managed worktree",
+              disabled: false,
+            },
+          ]
+        : (this.state.newWorkspace?.placementOptions?.refs ?? []).map((ref) => ({
+            value: ref.ref,
+            label: ref.label,
+            disabled: false,
+            description: ref.remote
+              ? `Refresh origin/${ref.label} before creating`
+              : "Use on-disk branch without fetching",
+          }));
+      const title = placement ? "Workspace placement" : "Base ref";
+      component = new SearchableChoiceDialog(
+        title,
+        choices,
+        (value) => {
+          if (placement && (value === "local" || value === "worktree"))
+            this.emit({ type: "new-workspace-placement-choice", placement: value });
+          else this.emit({ type: "new-workspace-base-choice", ref: value });
+        },
+        close,
+        placement ? this.state.newWorkspace?.placement : this.state.newWorkspace?.baseRef,
+        this.choicePickerMaxVisible(true),
+        this.theme,
+      );
+      overlayOptions = {
+        width: centeredChoicePickerWidth(this.terminal.columns, title, choices),
+        maxHeight: Math.max(1, this.terminal.rows - 2),
+        margin: 1,
       };
     } else if (modal.type === "new-workspace-title") {
       component = new InputDialog(

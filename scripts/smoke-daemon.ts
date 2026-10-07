@@ -18,7 +18,22 @@ try {
     ) {
       throw new Error("The daemon returned an invalid directory snapshot.");
     }
-    console.log("Connected to an isolated Paseo daemon and observed its directory.");
+    const placement = await gateway.getWorkspacePlacement(process.cwd());
+    if (
+      typeof placement.supportsWorktree !== "boolean" ||
+      !Array.isArray(placement.refs) ||
+      placement.refs.some(
+        (ref) =>
+          typeof ref.label !== "string" ||
+          typeof ref.ref !== "string" ||
+          typeof ref.remote !== "boolean",
+      )
+    ) {
+      throw new Error("The daemon returned invalid workspace placement metadata.");
+    }
+    console.log(
+      "Connected to an isolated Paseo daemon, observed its directory, and read Git placement metadata.",
+    );
   } finally {
     await observation.release();
   }

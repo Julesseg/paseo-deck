@@ -34,6 +34,10 @@ export type UiIntent =
   | { type: "open-new-workspace" }
   | { type: "open-new-workspace-project" }
   | { type: "open-new-workspace-title" }
+  | { type: "open-new-workspace-placement" }
+  | { type: "open-new-workspace-base" }
+  | { type: "new-workspace-placement-choice"; placement: "local" | "worktree" }
+  | { type: "new-workspace-base-choice"; ref: string }
   | { type: "new-workspace-project-choice"; projectId: string }
   | { type: "set-new-workspace-title"; title: string }
   | { type: "cancel-new-workspace" }
@@ -187,6 +191,8 @@ export class DeckController {
       if (data === "\u001b") return true;
       if (state.newWorkspace && state.focus === "composer") {
         if (data === "j") return this.send({ type: "open-new-workspace-project" });
+        if (data === "w") return this.send({ type: "open-new-workspace-placement" });
+        if (data === "b") return this.send({ type: "open-new-workspace-base" });
         if (data === "n") return this.send({ type: "open-new-workspace-title" });
       }
       const key = `\\${data}`;
@@ -312,6 +318,8 @@ export class DeckController {
       state.modal.type === "draft-setting" ||
       state.modal.type === "launch-profile" ||
       state.modal.type === "new-workspace-project" ||
+      state.modal.type === "new-workspace-placement" ||
+      state.modal.type === "new-workspace-base" ||
       state.modal.type === "new-workspace-title"
     ) {
       if (data === "\u001b") return this.send({ type: "close-modal" });

@@ -54,7 +54,7 @@ const launchState: AppState = {
     },
   },
 };
-const newWorkspaceState: AppState = {
+const newWorkspaceState = {
   ...baseState,
   focus: "composer",
   composerMode: "normal",
@@ -67,7 +67,28 @@ const newWorkspaceState: AppState = {
     title: "",
     launch: { ...draftFixture, kind: "session", command: "" },
   },
-};
+} satisfies AppState;
+const worktreeWorkspaceState = {
+  ...newWorkspaceState,
+  newWorkspace: {
+    ...newWorkspaceState.newWorkspace,
+    placement: "worktree",
+    placementOptions: {
+      supportsWorktree: true,
+      defaultRef: "refs/remotes/origin/main",
+      refs: [
+        { label: "main", ref: "refs/remotes/origin/main", remote: true },
+        { label: "main (local)", ref: "refs/heads/main", remote: false },
+        {
+          label: "feature/navigation (local)",
+          ref: "refs/heads/feature/navigation",
+          remote: false,
+        },
+      ],
+    },
+    baseRef: "refs/remotes/origin/main",
+  },
+} satisfies AppState;
 const emptyState = withoutSelection(baseState);
 const overflowTemplate = baseState.directory.agents[0];
 if (!overflowTemplate) throw new Error("UI report needs a session fixture");
@@ -141,6 +162,80 @@ const shots: Array<{
         type: "new-tab",
         workspaceId: "workspace-main",
         profiles: [{ id: "codex", name: "Codex", command: "codex" }],
+      },
+    },
+  },
+  { name: "new-workspace-worktree-session", columns: 100, rows: 28, state: worktreeWorkspaceState },
+  { name: "new-workspace-worktree-narrow", columns: 52, rows: 18, state: worktreeWorkspaceState },
+  {
+    name: "new-workspace-placement-picker",
+    columns: 100,
+    rows: 28,
+    state: { ...worktreeWorkspaceState, modal: { type: "new-workspace-placement" } },
+  },
+  {
+    name: "new-workspace-base-picker",
+    columns: 100,
+    rows: 28,
+    state: { ...worktreeWorkspaceState, modal: { type: "new-workspace-base" } },
+  },
+  {
+    name: "new-workspace-worktree-terminal",
+    columns: 100,
+    rows: 28,
+    state: {
+      ...worktreeWorkspaceState,
+      newWorkspace: {
+        ...worktreeWorkspaceState.newWorkspace,
+        baseRef: "refs/heads/main",
+        launch: { ...draftFixture, kind: "terminal", command: "npm run dev" },
+      },
+    },
+  },
+  {
+    name: "new-workspace-placement-loading",
+    columns: 100,
+    rows: 28,
+    state: {
+      ...newWorkspaceState,
+      newWorkspace: { ...newWorkspaceState.newWorkspace, placementLoading: true },
+    },
+  },
+  {
+    name: "new-workspace-worktree-submitting",
+    columns: 100,
+    rows: 28,
+    state: {
+      ...worktreeWorkspaceState,
+      newWorkspace: {
+        ...worktreeWorkspaceState.newWorkspace,
+        title: "Navigation",
+        launch: {
+          ...draftFixture,
+          kind: "session",
+          command: "",
+          prompt: "Improve sidebar navigation",
+          submitting: true,
+        },
+      },
+    },
+  },
+  {
+    name: "new-workspace-worktree-error",
+    columns: 100,
+    rows: 28,
+    state: {
+      ...worktreeWorkspaceState,
+      newWorkspace: {
+        ...worktreeWorkspaceState.newWorkspace,
+        title: "Navigation",
+        launch: {
+          ...draftFixture,
+          kind: "session",
+          command: "",
+          prompt: "Improve sidebar navigation",
+          error: "Remote base refresh failed: origin unreachable. Press \\s to retry.",
+        },
       },
     },
   },
