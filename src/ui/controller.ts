@@ -120,10 +120,10 @@ export type UiIntent =
   | { type: "timeline-repeat-find"; reverse: boolean }
   | { type: "timeline-viewport-motion"; key: "H" | "M" | "L"; count: number }
   | { type: "timeline-page"; direction: -1 | 1 }
-  | { type: "timeline-word-search"; key: "*" | "#" | "g*" | "g#"; count: number }
+  | { type: "timeline-word-search"; key: "*" | "#"; count: number }
   | { type: "timeline-visual"; selection: "character" | "line" }
   | { type: "timeline-search-text"; query: string; direction: -1 | 1 }
-  | { type: "timeline-repeat-search"; direction: -1 | 1 }
+  | { type: "timeline-repeat-search"; direction: -1 | 1; count?: number }
   | { type: "timeline-yank"; rows?: boolean }
   | { type: "timeline-swap-endpoints" }
   | { type: "timeline-reselect" }
@@ -151,7 +151,8 @@ export type UiIntent =
   | { type: "submit-composer"; agentId: string; prompt: string }
   | { type: "set-composer-text"; text: string }
   | { type: "navigate-composer-history"; direction: -1 | 1 }
-  | { type: "open-timeline-search"; direction?: -1 | 1 }
+  | { type: "open-timeline-search"; direction?: -1 | 1; count?: number }
+  | { type: "open-composer-search"; direction: -1 | 1; count: number }
   | { type: "notify"; message: string; kind?: "info" | "error" }
   | { type: "create-choice"; choice: string };
 
@@ -345,25 +346,26 @@ export class DeckController {
       return done({ type: "timeline-visual", selection: data === "v" ? "character" : "line" });
     if ((data === "o" || data === "O") && visual && !hasCount)
       return done({ type: "timeline-swap-endpoints" });
-    if (hasCount) return done();
+    const searchCount = repetitions() ?? 1;
     if (data === "/" || data === "?") {
       this.#timelineSearchDirection = data === "/" ? 1 : -1;
-      return done({ type: "open-timeline-search", direction: this.#timelineSearchDirection });
+      return done({
+        type: "open-timeline-search",
+        direction: this.#timelineSearchDirection,
+        ...(hasCount ? { count: searchCount } : {}),
+      });
     }
     if (data === "*" || data === "#") {
       this.#timelineSearchDirection = data === "*" ? 1 : -1;
-      return done({ type: "timeline-word-search", key: data, count: 1 });
+      return done({ type: "timeline-word-search", key: data, count: searchCount });
     }
     if (data === "n" || data === "N")
       return done({
         type: "timeline-repeat-search",
-        direction:
-          data === "n"
-            ? this.#timelineSearchDirection
-            : this.#timelineSearchDirection === 1
-              ? -1
-              : 1,
+        ...(hasCount ? { count: searchCount } : {}),
+        direction: data === "n" ? 1 : -1,
       });
+    if (hasCount) return done();
     if (["\u0006", "\u0002", "\u001b[5~", "\u001b[6~"].includes(data))
       return done({
         type: "timeline-page",

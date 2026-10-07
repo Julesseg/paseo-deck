@@ -1802,7 +1802,7 @@ describe("DeckTui viewport and focus", () => {
     expect(terminal.viewport().join("\n")).toContain("R retry");
   });
 
-  it("searches source timeline text through the overlay", async () => {
+  it("renders its buffer query outside the Composer", async () => {
     const terminal = new RecordingTerminal(80, 16);
     const searchState: AppState = {
       ...state(),
@@ -1828,7 +1828,7 @@ describe("DeckTui viewport and focus", () => {
     terminal.sendInput("/");
     terminal.sendInput("needle");
     await terminal.waitForRender();
-    expect(terminal.viewport().join("\n")).toContain("1 match · result 1");
+    expect(terminal.viewport().join("\n")).toContain("/ needle");
     terminal.sendInput("\u001b");
     await terminal.waitForRender();
     await terminal.waitForRender();
@@ -1864,7 +1864,7 @@ describe("DeckTui viewport and focus", () => {
     terminal.sendInput("/");
     terminal.sendInput("needle");
     await terminal.waitForRender();
-    expect(terminal.viewport().join("\n")).toContain("1 match · result 1");
+    expect(terminal.viewport().join("\n")).toContain("/ needle");
 
     deck.update({
       ...base,
@@ -1881,7 +1881,7 @@ describe("DeckTui viewport and focus", () => {
       },
     });
     await terminal.waitForRender();
-    expect(terminal.viewport().join("\n")).toContain("2 matches · result 1 · updated");
+    expect(terminal.viewport().join("\n")).toContain("/ needle");
     terminal.sendInput("\u0010");
     await terminal.waitForRender();
     expect(terminal.viewport().join("\n")).toContain("Command palette");
@@ -1894,7 +1894,7 @@ describe("DeckTui viewport and focus", () => {
     expect(terminal.viewport().join("\n")).toContain("first");
   });
 
-  it("shows no-match feedback and expands matched tool source before computing its range", async () => {
+  it("keeps unmatched queries editable without replacing Timeline content", async () => {
     const terminal = new RecordingTerminal(80, 16);
     const deck = new DeckTui(
       terminal,
@@ -1926,7 +1926,7 @@ describe("DeckTui viewport and focus", () => {
     terminal.sendInput("/");
     terminal.sendInput("missing");
     await terminal.waitForRender();
-    expect(terminal.viewport().join("\n")).toContain("No matches.");
+    expect(terminal.viewport().join("\n")).toContain("/ missing");
     for (let index = 0; index < "missing".length; index += 1) terminal.sendInput("\u007f");
     terminal.sendInput("matched");
     await terminal.waitForRender();
