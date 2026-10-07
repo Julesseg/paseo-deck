@@ -64,7 +64,7 @@ These work in composer and timeline Normal/Visual modes unless the context colum
 | Context | Keys | Action |
 | --- | --- | --- |
 | Both | `h`, `l`, `Left`, `Right`; composer also `Backspace`, `Space` | Left/right by character. |
-| Both | `j`, `k`, `Down`, `Up`; composer also `Ctrl-N`, `Ctrl-P` | Down/up by line, preserving the target column. |
+| Both | `j`, `k`, `Down`, `Up`; composer history uses uncounted standalone Normal `j/k` at logical boundaries | Down/up by line, preserving the target column. |
 | Both | `0`, `^`, `$`, `g0`, `g^`, `g$`, `g_`, `\|` | Line start, first nonblank, end, display-line variants, last nonblank, or counted column. |
 | Both | `+`, `-`, `_`, `Enter` | Next/previous line at first nonblank, counted line, or next line via Enter. |
 | Both | `w`, `W`, `b`, `B`, `e`, `E`, `ge`, `gE` | Word and whitespace-delimited WORD starts/ends. |
@@ -104,9 +104,10 @@ These work in composer and timeline Normal/Visual modes unless the context colum
 | Composer | `d{motion}`, `c{motion}`, `y{motion}`, `dd`, `cc`, `yy`, `Y`, `di{object}`, `da{object}`, `ci{object}`, `ca{object}`, `yi{object}`, `ya{object}` | Delete, change, or yank by motion, line, or object. |
 | Composer | Visual `d`, `x`, `c`, `y` | Delete, change, or yank selection. |
 | Composer | `r{char}`, `p`, `P`, `u`, `Ctrl-R`, `J`, `~` | Replace a character, paste current system clipboard, undo/redo, join lines, or toggle case. |
-| Composer Insert | Type, `Enter`, `Ctrl-U`, `Ctrl-W`, `Esc` | Enter text/newline, delete to line start/previous word, or return to Normal. |
-| Composer Insert | `Ctrl-P`, `Ctrl-N` | Previous/next prompt from history. |
-| Composer Insert | `PageUp`, `PageDown`, `Ctrl-Up`, `Ctrl-Down` | Scroll the background timeline. |
+| Composer Insert | Type, `Enter`/`Alt-Enter`, `Ctrl-W`, `Esc` | Enter text/newline, delete previous word, or finish the Insert undo group and return to Normal. |
+| Composer Insert | `Up`, `Down` | Move displayed rows, then reach outer line start/end before recalling older/newer prompts. Restore the saved unfinished draft and cursor beyond newest. |
+| Composer Insert | `Ctrl-Z`, distinguishable `Ctrl-Shift-Z` | Shared per-draft undo/redo with Normal `u`/`Ctrl-R`; native paste is one operation. |
+| Composer Insert | `Tab`/`Shift-Tab`, `Ctrl-N`, `Ctrl-X`, `Ctrl-T`, page keys and modified vertical arrows | No local action. `Ctrl-P` opens the palette; `Ctrl-U`/`Ctrl-D` scroll Timeline globally. |
 | Composer Normal/Visual | `Esc` | Cancel a prefix or selection and return to Normal. |
 | Timeline Visual | `Esc` | Clear selection and return to Normal. |
 | Timeline Normal | `Esc` | Focus composer. |

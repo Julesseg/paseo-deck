@@ -358,18 +358,7 @@ export class DeckController {
         return true;
       }
       if (global?.id === "command-palette") return this.send(global.intent(state));
-      if (mode === "insert") {
-        if (global?.id === "composer-history-previous" || global?.id === "composer-history-next")
-          return this.send(global.intent(state));
-        if (data === "\u001b[5~" || data === "\u001b[6~")
-          return this.send({
-            type: "scroll-timeline",
-            direction: data === "\u001b[6~" ? 1 : -1,
-          });
-        if (data === "\u001b[1;5A" || data === "\u001b[1;5B")
-          return this.send({ type: "scroll-timeline", direction: data === "\u001b[1;5A" ? -1 : 1 });
-        return false;
-      }
+      if (mode === "insert") return false;
       // The composer owns all normal and visual bytes. Its Vim reducer handles
       // prefixes, motions, operators, selection, and edits together.
       if (mode === "visual" || mode === "normal") return false;

@@ -95,15 +95,15 @@ describe("composer Vim buffer", () => {
     );
   });
 
-  it("keeps Enter inert and uses Ctrl-U to erase Insert text back to the line start", () => {
+  it("keeps Normal Enter inert and leaves global Ctrl-U out of Insert editing", () => {
     expect(keys("one\n  two", 0, ["\r"]).cursor).toBe(0);
     const insertion = {
       ...syncComposerVim(createComposerVim("one\nsecond"), "one\nsecond", { line: 1, col: 6 }),
       mode: "insert" as const,
     };
     expect(handleComposerVim(insertion, "\u0015").state).toMatchObject({
-      text: "one\n",
-      cursor: 4,
+      text: "one\nsecond",
+      cursor: 10,
       mode: "insert",
     });
   });

@@ -4001,8 +4001,8 @@ describe("New workspace composer", () => {
       expect(screen).not.toContain("[Model]");
       terminal.sendInput("\u001b");
       await terminal.waitForRender();
-      expect(app.state.newWorkspace).toBeUndefined();
-      expect(app.state.focus).toBe("tree");
+      expect(app.state.newWorkspace).toBeDefined();
+      expect(app.state.focus).toBe("composer");
     } finally {
       unsubscribe();
       await deck.stop();
