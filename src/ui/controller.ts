@@ -252,7 +252,7 @@ export class DeckController {
       if (setting) return this.send({ type: "open-session-setting", setting });
       return true;
     }
-    if (normalBuffer && data === "m") {
+    if (normalBuffer && data === "m" && !this.#timelinePrefix && !this.#timelineCount) {
       this.#settingsPrefix = true;
       return true;
     }

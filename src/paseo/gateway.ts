@@ -186,8 +186,6 @@ export class ProductionPaseoGateway implements PaseoGateway {
   public async close(): Promise<void> {
     const settings = this.settings;
     this.settings = undefined;
-    if (settings) await settings.then((client) => client.close()).catch(() => {});
-
     this.focusGeneration += 1;
     const focused = this.focused;
     const metadata = this.metadata;
@@ -195,6 +193,7 @@ export class ProductionPaseoGateway implements PaseoGateway {
     this.focused = undefined;
     this.metadata = undefined;
     const outcomes = await Promise.allSettled([
+      settings?.then((connection) => connection.close()),
       focused?.release(),
       metadata?.then((connection) => connection.close()),
       client?.close(),

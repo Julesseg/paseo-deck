@@ -392,3 +392,39 @@ it("an in-flight captured Session stays busy after dismissing and reopening its 
     await f.stop();
   }
 });
+
+it("Timeline character targets and pending yank/count sequences own m before Session settings", async () => {
+  const f = await fixture("codex");
+  try {
+    f.gateway.emitTimeline("a", {
+      type: "hydrated",
+      agentId: "a",
+      items: [
+        {
+          epoch: "e",
+          sequence: 1,
+          item: {
+            type: "assistant-message",
+            id: "message",
+            messageId: "message",
+            text: "some model text",
+          },
+        },
+      ],
+    });
+    await f.app.handleIntent({ type: "set-focus", focus: "timeline" });
+    for (const sequence of [
+      ["f", "m", "m"],
+      ["y", "m", "m"],
+      ["2", "m", "m"],
+    ]) {
+      for (const key of sequence) f.terminal.sendInput(key);
+      expect(f.app.state.modal.type).toBe("none");
+      f.terminal.sendInput("\u0013");
+      f.terminal.sendInput("\u000b");
+    }
+    expect(f.gateway.commands).toEqual([]);
+  } finally {
+    await f.stop();
+  }
+});

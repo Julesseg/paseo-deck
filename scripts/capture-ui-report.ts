@@ -1198,6 +1198,12 @@ const shots: Array<{
     rows: 28,
     state: {
       ...baseState,
+      directory: {
+        ...baseState.directory,
+        agents: baseState.directory.agents.map((agent) =>
+          agent.id === "agent-atlas-1234" ? { ...agent, status: "idle" as const } : agent,
+        ),
+      },
       modal: {
         type: "session-setting" as const,
         agentId: "agent-atlas-1234",
@@ -1216,7 +1222,9 @@ const shots: Array<{
       directory: {
         ...baseState.directory,
         agents: baseState.directory.agents.map((agent) =>
-          agent.id === "agent-atlas-1234" ? { ...agent, providerId: "other" } : agent,
+          agent.id === "agent-atlas-1234"
+            ? { ...agent, providerId: "other", status: "idle" }
+            : agent,
         ),
         providers: [
           ...baseState.directory.providers,
