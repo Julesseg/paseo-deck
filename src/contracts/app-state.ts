@@ -12,7 +12,6 @@ import type { TerminalProfile, TerminalRecord } from "./terminal.js";
 export type FocusArea = "tree" | "timeline" | "composer";
 export type ComposerMode = "normal" | "insert" | "visual";
 export type TimelineMode = "normal" | "visual";
-export type TerminalMode = "normal" | "insert";
 export type TreeOrder = "attention" | "alphabetical";
 export type SidebarSelection = { kind: "project" | "workspace"; id: string };
 export type TabId = `session:${string}` | `terminal:${string}` | `draft:${string}`;
@@ -206,7 +205,6 @@ export interface AppState {
   /** Workspaces observed with a resource during this run, including resources since removed. */
   workspaceHadResources?: ReadonlySet<string>;
   activeTerminalId?: string;
-  terminalMode?: TerminalMode;
   terminalLines?: Readonly<Record<string, readonly string[]>>;
   terminalScrollTop?: Readonly<Record<string, number>>;
   staleTerminalIds?: ReadonlySet<string>;

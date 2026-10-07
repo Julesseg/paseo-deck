@@ -1,4 +1,4 @@
-import { matchesKey, type Terminal } from "@earendil-works/pi-tui";
+import { isKeyRelease, matchesKey, type Terminal } from "@earendil-works/pi-tui";
 
 /** Frame escape sequences and paste before any Deck or inherited handler sees input. */
 export function ownedInputTerminal(
@@ -32,7 +32,7 @@ export function ownedInputTerminal(
                   return;
                 }
                 pending = pending.slice(sequence.length);
-                input(matchesKey(sequence, "enter") ? "\r" : sequence);
+                if (!isKeyRelease(sequence)) input(matchesKey(sequence, "enter") ? "\r" : sequence);
               } else if (pending === "\u001b") {
                 timer = setTimeout(() => {
                   pending = "";

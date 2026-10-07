@@ -90,7 +90,10 @@ describe("command registry", () => {
     } = state();
     const disconnected: AppState = { ...withoutSelection, connection: "disconnected" };
     expect(commandById(disconnected, "new-workspace")?.disabledReason).toBeUndefined();
-    expect(commandById(disconnected, "stop-agent")?.disabledReason).toContain("Reconnect");
+    expect(
+      commandById({ ...disconnected, focus: "composer", composerMode: "normal" }, "stop-agent")
+        ?.disabledReason,
+    ).toContain("Reconnect");
     expect(commandById(disconnected, "permissions")?.disabledReason).toContain("No pending");
     expect(commandById(disconnected, "error-details")?.disabledReason).toContain("No error");
     expect(
@@ -134,10 +137,10 @@ describe("command registry", () => {
   it("makes a direct key and palette invocation emit the identical confirmation intent", () => {
     const intents: unknown[] = [];
     const controller = new DeckController(
-      () => state(),
+      () => ({ ...state(), focus: "composer", composerMode: "normal" }),
       (intent) => intents.push(intent),
     );
-    controller.handleKey("x");
+    controller.handleKey("\u0018");
     controller.invokeCommand("stop-agent");
     expect(intents).toEqual([
       { type: "open-confirmation", action: "stop", agentId: "a" },
@@ -189,11 +192,17 @@ describe("command registry", () => {
 
   it("keeps disabled palette items inert and recomputes availability from current state", () => {
     const { selectedAgentId: _agent, ...noAgent }: AppState = state();
-    expect(commandForKey(noAgent, "x")?.disabledReason).toBe("Select an active session first");
-    expect(commandForKey(state(), "x")?.disabledReason).toBeUndefined();
+    expect(
+      commandForKey({ ...noAgent, focus: "composer", composerMode: "normal" }, "\u0018")
+        ?.disabledReason,
+    ).toBe("Select an active session first");
+    expect(
+      commandForKey({ ...state(), focus: "composer", composerMode: "normal" }, "\u0018")
+        ?.disabledReason,
+    ).toBeUndefined();
     const intents: unknown[] = [];
     new DeckController(
-      () => noAgent,
+      () => ({ ...noAgent, focus: "composer", composerMode: "normal" }),
       (intent) => intents.push(intent),
     ).invokeCommand("stop-agent");
     expect(intents).toEqual([]);

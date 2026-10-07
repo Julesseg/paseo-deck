@@ -64,12 +64,14 @@ The [complete keymap](docs/keymap.md) lists every buffer motion, edit command, D
 
 Each active workspace has one tab row with its sessions and terminals. Switching workspaces
 restores its last active tab during the current run. A fresh run starts at the first workspace
-and first tab. Terminal tabs start in normal mode: `gt`/`gT` switch across both resource types,
-`i` enters insert mode and forwards literal input, and `Esc` returns to terminal normal mode.
-`r` reconnects a stale terminal; terminating a terminal requires confirmation (`gk`).
-Ctrl-D/Ctrl-U or the arrow keys scroll captured output. Unsupported daemon terminal
-capabilities are reported as an actionable notification; named terminals can be created
-through the command palette for the selected workspace.
+and first tab. Terminal tabs immediately receive literal program input, including Escape,
+Ctrl-C, ordinary Tab/Shift-Tab and paste. Deck reserves Ctrl-S to focus the Sidebar and
+distinguishable Ctrl-Tab/Ctrl-Shift-Tab to switch tabs. Ordinary Tab is never a fallback
+for an unavailable modified chord. From the Sidebar, Ctrl-P opens the palette for Terminal
+rename, reconnect and termination; terminating requires confirmation. Composer/Timeline
+Normal use `gt`/`gT`; a count before `gt` selects a one-based Tab, while counted `gT`
+moves backward with wrapping. Invalid indices do nothing. Unsupported daemon terminal
+capabilities are reported as an actionable notification.
 
 ## Supported in v0.1
 
