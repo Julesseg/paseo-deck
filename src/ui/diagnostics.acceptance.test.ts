@@ -17,7 +17,9 @@ it("opens full selected notice and returns to its identity despite incoming noti
   await tui.start();
   try {
     await app.handleIntent({ type: "notify", message: "Original notice" });
-    await app.handleIntent({ type: "open-notifications" });
+    terminal.sendInput("\u0010");
+    terminal.sendInput("notification");
+    terminal.sendInput("\r");
     await app.handleIntent({ type: "notify", message: "Incoming notice" });
     terminal.sendInput("\r");
     await terminal.waitForRender();
@@ -25,7 +27,23 @@ it("opens full selected notice and returns to its identity despite incoming noti
     expect(terminal.viewport().join("\n")).not.toContain("Notifications 2/2");
     terminal.sendInput("\u001b");
     await terminal.waitForRender();
-    expect(terminal.viewport().join("\n")).toContain("> info: Original notice");
+    await expect
+      .poll(async () => {
+        await terminal.flush();
+        return terminal.viewport().join("\n");
+      })
+      .toContain("> info: Original notice");
+    for (let i = 0; i < 50; i++)
+      await app.handleIntent({ type: "notify", message: `Later notice ${i}` });
+    await terminal.waitForRender();
+    expect(terminal.viewport().join("\n")).toContain(
+      "Selected notification is no longer available.",
+    );
+    terminal.sendInput("\r");
+    await terminal.waitForRender();
+    expect(terminal.viewport().join("\n")).toContain(
+      "Selected notification is no longer available.",
+    );
   } finally {
     stop();
     await tui.stop();
@@ -75,6 +93,9 @@ it("retries the displayed failed decision after visiting another request and nev
   try {
     await app.handleIntent({ type: "open-permissions" });
     terminal.sendInput("\r");
+    terminal.sendInput("\n");
+    await terminal.waitForRender();
+    expect(terminal.viewport().join("\n")).toContain("Original request");
     expect(gateway.commands).toEqual([]);
     terminal.sendInput("d");
     await terminal.waitForRender();
@@ -126,6 +147,12 @@ it("scrolls full diagnostic rows and ignores unreviewed detail controls", async 
     await terminal.waitForRender();
     expect(terminal.viewport().join("\n")).toContain("Diagnostic beginning");
     terminal.sendInput("G");
+    await terminal.waitForRender();
+    expect(terminal.viewport().join("\n")).toContain("Diagnostic row 45");
+    terminal.sendInput("\u001b[5~");
+    await terminal.waitForRender();
+    expect(terminal.viewport().join("\n")).not.toContain("Diagnostic row 45");
+    terminal.sendInput("\u001b[6~");
     await terminal.waitForRender();
     expect(terminal.viewport().join("\n")).toContain("Diagnostic row 45");
     for (const key of ["?", "/", "r", "y", "v"]) terminal.sendInput(key);
@@ -240,9 +267,14 @@ it("retries the selected notice's failed action repeatedly without retargeting i
     await terminal.waitForRender();
     terminal.sendInput("r");
     await terminal.waitForRender();
+    terminal.sendInput("\u0010");
+    terminal.sendInput("retry");
+    terminal.sendInput("\r");
+    await terminal.waitForRender();
     expect(gateway.commands).toEqual([
       { type: "stop-agent", agentId: "original" },
       { type: "archive-agent", agentId: "incoming" },
+      { type: "stop-agent", agentId: "original" },
       { type: "stop-agent", agentId: "original" },
       { type: "stop-agent", agentId: "original" },
     ]);

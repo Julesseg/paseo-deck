@@ -193,10 +193,10 @@ class TreeView implements Component {
           : this.state.connection === "reconnecting"
             ? "Directory is stale while Paseo reconnects. Your selection and drafts are retained."
             : this.state.connection === "disconnected"
-              ? "Paseo is disconnected. Press r to retry."
+              ? "Paseo disconnected. Palette: Refresh."
               : this.state.filter.trim()
                 ? `No projects or workspaces match “${sanitizeTerminalText(this.state.filter)}”. Press / to change the filter.`
-                : "No projects or workspaces are available yet. Press r to refresh.";
+                : "No projects or workspaces yet. Palette: Refresh.";
       output.push(
         header,
         ...wrapTerminalProse(this.theme.label(message), width).map((line) =>
@@ -3295,13 +3295,6 @@ export class DeckTui {
     this.syncModal();
     (this.localOverlay ?? this.appOverlay)?.focus();
     this.syncSidebarOverlay();
-    if (
-      state.modal.type === "permission" &&
-      state.modal.agentId === state.selectedAgentId &&
-      state.modal.requestId &&
-      this.timeline.selectPermission(state.modal.requestId)
-    )
-      this.revealTimelineSelection();
     const restoredPaused =
       (previousAgentId !== state.selectedAgentId || recoveryChanged) &&
       state.selectedAgentId !== undefined &&
@@ -3705,6 +3698,8 @@ export class DeckTui {
       new ReadOnlyDialog(
         [
           `Paseo Deck keys · ${context}`,
+          "Help/Error details: j/k or arrows scroll rows; PageUp/Down pages; gg/G beginning/end; Esc returns.",
+          "Notifications: Enter full details; r retries selected notice. Permissions: a allow; d deny; h/l requests; r retry; Esc leaves unanswered.",
           ...(context === "timeline"
             ? [
                 "Read-only: shared motions/counts/finds; yy/Y counted rows; y + motion/object.",
@@ -4048,6 +4043,8 @@ export class DeckTui {
       component = new ReadOnlyDialog(
         [
           `Paseo Deck keys · ${this.state.focus}`,
+          "Help/Error details: j/k or arrows scroll rows; PageUp/Down pages; gg/G beginning/end; Esc returns.",
+          "Notifications: Enter full details; r retries selected notice. Permissions: a allow; d deny; h/l requests; r retry; Esc leaves unanswered.",
           ...(this.state.focus === "composer"
             ? [
                 "Normal Enter sends; Insert Enter/Alt-Enter adds a newline.",

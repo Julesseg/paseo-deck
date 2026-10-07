@@ -1483,7 +1483,7 @@ describe("terminal appearance", () => {
     const rendered = terminal.viewport().join("\n");
     await deck.stop();
 
-    expect(rendered).toContain("Press r to refresh");
+    expect(rendered).toContain("Palette: Refresh");
     expect(rendered).toContain("Choose a session tab");
     expect(rendered).not.toContain("avai\nlable");
     expect(rendered).not.toContain("ti\nmeline");
@@ -3545,6 +3545,8 @@ describe("DeckTui viewport and focus", () => {
 
     deck.start();
     deck.update({ ...state(), modal: { type: "help" } });
+    await terminal.waitForRender();
+    terminal.sendInput("G");
     await terminal.waitForRender();
     await deck.stop();
 
