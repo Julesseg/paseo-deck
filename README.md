@@ -97,6 +97,8 @@ The file contains only the global theme plus, for each hashed daemon target, tre
 
 With no theme configured, Deck uses ANSI terminal role escapes for semantic roles at every colour tier. Set `PASEO_DECK_THEME=ember` to opt into the built-in Ember palette, or `PASEO_DECK_THEME=terminal` to force the native palette. Configuration takes precedence over the saved interactive preference; otherwise the saved preference is used, followed by the terminal-native default. `NO_COLOR` and `TERM=dumb` always suppress colour while retaining textual and symbolic distinctions.
 
+Deck samples the terminal's default background for neutral surface layers. If the terminal does not answer, focused rows use the terminal's own reverse colors and Visual selections also use underline; no light/dark background is guessed. Plain/`NO_COLOR` retains its text-only presentation.
+
 Unicode tabs use the Powerline `` and `` glyphs. Use a Nerd Font for those shapes, or set `PASEO_DECK_ASCII=1` to show bracketed tabs when the font is unavailable.
 
 Preferences never contain prompts, prompt history, timeline content, agent or provider records, selected sessions, notifications, daemon passwords, or raw daemon targets. Updates use an atomic file replacement. On POSIX systems, Paseo Deck hardens the containing directory and file to user-only permissions; on Windows, keep the OS profile and configuration directory ACL private to your account.
