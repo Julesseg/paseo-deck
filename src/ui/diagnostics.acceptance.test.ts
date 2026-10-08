@@ -25,6 +25,7 @@ it("opens full selected notice and returns to its identity despite incoming noti
     await terminal.waitForRender();
     expect(terminal.viewport().join("\n")).toContain("Original notice");
     expect(terminal.viewport().join("\n")).not.toContain("Notifications 2/2");
+    await app.handleIntent({ type: "notify", message: "Incoming while reading details" });
     terminal.sendInput("\u001b");
     await terminal.waitForRender();
     await expect
@@ -229,6 +230,10 @@ it("dismisses an in-flight permission without answering again or reopening on la
     ]);
     expect(terminal.viewport().join("\n")).toContain("New notice while pending");
     expect(terminal.viewport().join("\n")).not.toContain("Original request");
+    await app.handleIntent({ type: "open-permissions" });
+    await terminal.waitForRender();
+    expect(terminal.viewport().join("\n")).toContain("Original request");
+    expect(terminal.viewport().join("\n")).toContain("Late failure");
   } finally {
     stop();
     await tui.stop();
@@ -244,7 +249,22 @@ it("retries the selected notice's failed action repeatedly without retargeting i
       throw new Error(`Failed ${command.type}`);
     }
   }
-  const gateway = new Gateway({ projects: [], providers: [], workspaces: [], agents: [] });
+  const gateway = new Gateway({
+    projects: [],
+    providers: [],
+    workspaces: [{ id: "w", title: "Workspace", directory: "/tmp", archived: false }],
+    agents: ["original", "incoming"].map((id) => ({
+      id,
+      workspaceId: "w",
+      title: id,
+      status: "running" as const,
+      archived: false,
+      availableModeIds: [],
+      availableThinkingLevels: [],
+      needsAttention: false,
+      pendingPermissions: [],
+    })),
+  });
   const app = new ApplicationController(gateway);
   await app.start();
   const terminal = new RecordingTerminal(100, 30);

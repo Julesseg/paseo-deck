@@ -2444,7 +2444,8 @@ class ReadOnlyDialog implements Component, Focusable {
     else if (data === "k" || matchesKey(data, "up")) this.offset--;
     else if (matchesKey(data, "pageDown")) this.offset += this.height();
     else if (matchesKey(data, "pageUp")) this.offset -= this.height();
-    else if (data === "G") this.offset = this.content.length;
+    else if (data === "G") this.offset = this.content.length - this.height();
+    this.offset = Math.max(0, Math.min(this.offset, this.content.length - this.height()));
   }
 }
 

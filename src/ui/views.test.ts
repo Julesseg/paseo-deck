@@ -3535,6 +3535,9 @@ describe("DeckTui viewport and focus", () => {
     deck.update({ ...state(), modal: { type: "help" } });
     await terminal.waitForRender();
     expect(terminal.viewport().join("\n")).not.toContain("Tab  Focus next pane");
+    terminal.sendInput("G");
+    terminal.sendInput("k");
+    await terminal.waitForRender();
     expect(terminal.viewport().join("\n")).toContain("h / Left  Collapse selected branch");
     await deck.stop();
   });
