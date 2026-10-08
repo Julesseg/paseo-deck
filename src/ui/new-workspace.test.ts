@@ -330,3 +330,180 @@ it("a failed Session creation retains the created Workspace and retries Session 
     await f.stop();
   }
 });
+
+it("Local hides Base and returning to Worktree revalidates its chosen same-Project ref", async () => {
+  const f = await fixture();
+  try {
+    f.gateway.workspacePlacement = {
+      ...f.gateway.workspacePlacement,
+      refs: [
+        ...f.gateway.workspacePlacement.refs,
+        { ref: "refs/heads/chosen", label: "chosen", remote: false },
+      ],
+    };
+    await f.key("\u0013");
+    await f.key("n");
+    await f.key("m");
+    await f.key("b");
+    await f.key("chosen");
+    await f.key("\r");
+    f.app.setComposerText("preserved Local prompt");
+    await f.key("m");
+    await f.key("w");
+    await f.key("Local");
+    await f.key("\r");
+    expect(f.terminal.viewport().join("\n")).not.toContain("[mb]");
+    await f.key("m");
+    await f.key("b");
+    expect(f.app.state.modal.type).toBe("none");
+    await f.key("m");
+    await f.key("w");
+    await f.key("Worktree");
+    await f.key("\r");
+    expect(f.terminal.viewport().join("\n")).toContain("refs/heads/chosen");
+    await f.key("m");
+    await f.key("w");
+    await f.key("Local");
+    await f.key("\r");
+    f.gateway.workspacePlacement = {
+      supportsWorktree: true,
+      defaultRef: "refs/remotes/origin/new-default",
+      refs: [{ ref: "refs/remotes/origin/new-default", label: "new default", remote: true }],
+    };
+    await f.key("m");
+    await f.key("w");
+    await f.key("Worktree");
+    await f.key("\r");
+    expect(f.terminal.viewport().join("\n")).toContain("refs/remotes/origin/new-default");
+    expect(f.terminal.viewport().join("\n")).toContain("preserved Local prompt");
+    expect(f.gateway.createdWorkspaces).toEqual([]);
+  } finally {
+    await f.stop();
+  }
+});
+
+it("shows why Local is unavailable without a Project original checkout", async () => {
+  const f = await fixture(false, true);
+  try {
+    await f.key("\u0010");
+    await f.key("New workspace");
+    await f.key("\r");
+    await f.key("m");
+    await f.key("w");
+    await f.key("Local");
+    expect(f.terminal.viewport().join("\n")).toContain("Original checkout unavailable");
+    await f.key("\r");
+    expect(f.app.state.modal.type).toBe("new-workspace-placement");
+    expect(f.app.state.newWorkspace?.placement).toBe("worktree");
+    expect(f.gateway.createdWorkspaces).toEqual([]);
+  } finally {
+    await f.stop();
+  }
+});
+
+it("failed Worktree restoration stays visible and blocks submission without losing Local input", async () => {
+  const f = await fixture();
+  try {
+    await f.key("\u0013");
+    await f.key("n");
+    f.app.setComposerText("kept across failure");
+    await f.key("m");
+    await f.key("w");
+    await f.key("Local");
+    await f.key("\r");
+    f.gateway.getWorkspacePlacement = async () => {
+      throw new Error("origin resolution failed");
+    };
+    await f.key("m");
+    await f.key("w");
+    await f.key("Worktree");
+    await f.key("\r");
+    expect(f.terminal.viewport().join("\n")).toContain("origin resolution failed");
+    expect(f.terminal.viewport().join("\n")).toContain("kept across failure");
+    await f.key("\r");
+    expect(f.gateway.createdWorkspaces).toEqual([]);
+  } finally {
+    await f.stop();
+  }
+});
+
+it("creates distinct Local Workspaces in the original checkout and retries only a captured failed send", async () => {
+  const f = await fixture();
+  try {
+    for (const prompt of ["first Local", "second Local"]) {
+      await f.key("\u0013");
+      await f.key("n");
+      expect(f.app.state.newWorkspace?.placement).toBe("worktree");
+      await f.key("m");
+      await f.key("w");
+      await f.key("Local");
+      await f.key("\r");
+      f.app.setComposerText(prompt);
+      f.gateway.failSend = true;
+      await f.key("\r");
+      expect(f.terminal.viewport().join("\n")).toContain("was created; could not send");
+      await f.key("\r");
+    }
+    expect(f.gateway.createdWorkspaces).toEqual([
+      { projectId: "p", directory: "/repo" },
+      { projectId: "p", directory: "/repo" },
+    ]);
+    expect(
+      f.app.state.directory.workspaces.filter((w) => w.directory === "/repo").map((w) => w.id),
+    ).toEqual(["fake-workspace-1", "fake-workspace-2"]);
+    expect(f.gateway.commands.filter((c) => c.type === "create-agent")).toHaveLength(2);
+    expect(f.gateway.commands.filter((c) => c.type === "send-prompt")).toEqual([
+      { type: "send-prompt", agentId: "fake-agent-1", prompt: "first Local" },
+      { type: "send-prompt", agentId: "fake-agent-1", prompt: "first Local" },
+      { type: "send-prompt", agentId: "fake-agent-4", prompt: "second Local" },
+      { type: "send-prompt", agentId: "fake-agent-4", prompt: "second Local" },
+    ]);
+    expect(f.app.state.selectedWorkspaceId).toBe("fake-workspace-2");
+  } finally {
+    await f.stop();
+  }
+});
+
+it("changing Project while Local preserves Session choices and returning Worktree uses only the new Project Base", async () => {
+  const f = await fixture();
+  try {
+    await f.key("\u0013");
+    await f.key("n");
+    f.app.setComposerText("same Local prompt");
+    await f.key("m");
+    await f.key("w");
+    await f.key("Local");
+    await f.key("\r");
+    f.gateway.workspacePlacement = {
+      supportsWorktree: true,
+      defaultRef: "refs/remotes/origin/other-project",
+      refs: [{ ref: "refs/remotes/origin/other-project", label: "Other", remote: true }],
+    };
+    await f.key("m");
+    await f.key("d");
+    await f.key("Other");
+    await f.key("\r");
+    expect(f.app.state.newWorkspace).toMatchObject({
+      projectId: "p2",
+      placement: "local",
+      launch: {
+        kind: "session",
+        prompt: "same Local prompt",
+        providerId: "provider",
+        modelId: "model",
+      },
+    });
+    expect(f.terminal.viewport().join("\n")).not.toContain("[mb]");
+    await f.key("\u0013");
+    await f.key("n");
+    expect(f.app.state.newWorkspace?.projectId).toBe("p2");
+    await f.key("m");
+    await f.key("w");
+    await f.key("Worktree");
+    await f.key("\r");
+    expect(f.terminal.viewport().join("\n")).toContain("refs/remotes/origin/other-project");
+    expect(f.gateway.createdWorkspaces).toEqual([]);
+  } finally {
+    await f.stop();
+  }
+});
