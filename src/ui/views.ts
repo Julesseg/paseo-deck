@@ -21,6 +21,7 @@ import {
 import { wordWrapLine } from "@earendil-works/pi-tui/dist/components/editor.js";
 import type { AppState, ModalState } from "../contracts/app-state.js";
 import type { TimelineEvent, TimelineItem } from "../contracts/domain.js";
+import { terminalDisplayName } from "../domain/resource-actions.js";
 import { sessionSettingChoices } from "../domain/session-settings.js";
 import {
   activeSessionDraftWorkspaceId,
@@ -337,7 +338,7 @@ class SessionTabsView implements Component {
           ? resource.agent.title
           : resource.kind === "draft"
             ? "New session"
-            : resource.terminal.name;
+            : terminalDisplayName(resource.terminal);
       return {
         label: ` ${glyph}${status} ${sanitizeTerminalText(title)} `,
         tone: `${resource.kind}:${resource.id}` === activeId ? "tab-active" : "tab-inactive",
@@ -2395,13 +2396,20 @@ class Dialog implements Component, Focusable {
     private readonly lines: readonly DialogLine[],
     private readonly onKey: (data: string) => boolean,
     private readonly theme: DeckTheme,
+    private readonly wrapLines = false,
   ) {}
   invalidate(): void {}
   render(width: number): string[] {
-    return this.lines.map((line) =>
-      typeof line === "string"
-        ? this.theme.clipOwnedLabel(line, width)
-        : this.theme.clipRemoteText(line.value, width),
+    return this.lines.flatMap((line) =>
+      this.wrapLines
+        ? wrapTerminalProse(typeof line === "string" ? line : line.value, width).map((value) =>
+            this.theme.clipOwnedLabel(value, width),
+          )
+        : [
+            typeof line === "string"
+              ? this.theme.clipOwnedLabel(line, width)
+              : this.theme.clipRemoteText(line.value, width),
+          ],
     );
   }
   handleInput(data: string): void {
@@ -2413,7 +2421,7 @@ class InputDialog implements Component, Focusable {
   focused = false;
   private readonly input = new SingleLineField();
   constructor(
-    private readonly title: string,
+    private title: string,
     value: string,
     submit: (value: string) => void,
     private readonly cancel: () => void,
@@ -2422,12 +2430,18 @@ class InputDialog implements Component, Focusable {
     this.input.setValue(value);
     this.input.onSubmit = submit;
   }
+  setTitle(title: string): void {
+    this.title = title;
+  }
   invalidate(): void {
     this.input.invalidate();
   }
   render(width: number): string[] {
     this.input.focused = this.focused;
-    return [this.theme.clipOwnedLabel(this.title, width), ...this.input.render(width)];
+    return [
+      ...wrapTerminalProse(this.title, width).map((line) => this.theme.clipOwnedLabel(line, width)),
+      ...this.input.render(width),
+    ];
   }
   handleInput(data: string): void {
     if (matchesKey(data, "escape")) this.cancel();
@@ -2768,6 +2782,7 @@ export class DeckTui {
   private treeWidth: number;
   private appOverlay: OverlayHandle | undefined;
   private appModalKey = "";
+  private renameInput: InputDialog | undefined;
   private sessionPicker: SearchableChoiceDialog | undefined;
   private suspendedQuit:
     | {
@@ -3933,6 +3948,24 @@ export class DeckTui {
     const current = this.state.modal;
     const previous = this.appModalKey ? (JSON.parse(this.appModalKey) as ModalState) : undefined;
     if (
+      current.type === "rename" &&
+      previous?.type === "rename" &&
+      current.id === previous.id &&
+      current.agentId === previous.agentId &&
+      current.workspaceId === previous.workspaceId &&
+      current.terminalId === previous.terminalId &&
+      this.appOverlay &&
+      this.renameInput &&
+      !this.suspendedQuit
+    ) {
+      this.appOverlay.focus();
+      this.renameInput.setTitle(
+        `Rename ${current.label ?? "Session"}${current.error ? ` · ${current.error}` : current.busy ? " · Saving… Escape dismisses; request continues." : ""}`,
+      );
+      this.appModalKey = key;
+      return;
+    }
+    if (
       current.type === "new-tab" &&
       previous?.type === "new-tab" &&
       current.workspaceId === previous.workspaceId &&
@@ -4083,13 +4116,23 @@ export class DeckTui {
         this.theme,
       );
     else if (modal.type === "rename")
-      component = new InputDialog(
-        "Rename agent",
+      component = this.renameInput = new InputDialog(
+        `Rename ${modal.label ?? "Session"}`,
         modal.value,
         (value) =>
           this.emit({
             type: "command",
-            command: { type: "rename-agent", agentId: modal.agentId, name: value },
+            command:
+              modal.terminalId && modal.workspaceId
+                ? {
+                    type: "rename-terminal",
+                    terminalId: modal.terminalId,
+                    workspaceId: modal.workspaceId,
+                    name: value,
+                  }
+                : modal.workspaceId
+                  ? { type: "rename-workspace", workspaceId: modal.workspaceId, name: value }
+                  : { type: "rename-agent", agentId: modal.agentId, name: value },
           }),
         close,
         this.theme,
@@ -4160,7 +4203,7 @@ export class DeckTui {
             label: `${ref.ref} (${ref.remote ? "remote" : "local"})`,
             disabled: false,
             description: ref.remote
-              ? `Refresh ${ref.ref} from origin before creating`
+              ? "Refresh from origin before creating"
               : "Use on-disk branch without fetching",
           }));
       const title = placement ? "Workspace placement" : "Base ref";
@@ -4342,7 +4385,7 @@ export class DeckTui {
         [
           modal.action === "quit"
             ? "Quit and discard unsent work?"
-            : `${modal.action} ${modal.label ?? modal.agentId ?? modal.terminalId ?? modal.workspaceId ?? "draft"}?`,
+            : `${{ "archive-workspace": "Archive", "kill-terminal": "Terminate", stop: "Stop", archive: "Archive", detach: "Detach", "discard-draft": "Discard", quit: "Quit" }[modal.action]} ${modal.label ?? modal.agentId ?? modal.terminalId ?? modal.workspaceId ?? "draft"}?`,
           modal.unavailableReason ??
             (modal.busy
               ? "Working… Escape dismisses; request continues."
@@ -4357,6 +4400,7 @@ export class DeckTui {
           return true;
         },
         this.theme,
+        true,
       );
     else if (modal.type === "permission")
       component = new Dialog(

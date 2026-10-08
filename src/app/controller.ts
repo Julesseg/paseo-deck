@@ -13,6 +13,7 @@ import type {
   TerminalProfile,
   TerminalRecord,
 } from "../contracts/terminal.js";
+import { resourceActionUnavailable, terminalDisplayName } from "../domain/resource-actions.js";
 import { sessionSettingChoices } from "../domain/session-settings.js";
 import { PaseoGatewayError, paseoFailure, redactTransportDetail } from "../paseo/errors.js";
 import {
@@ -42,6 +43,7 @@ export interface ApplicationControllerOptions {
 
 type RetryOperation =
   | { type: "command"; command: AgentCommand }
+  | { type: "terminal-kill"; terminalId: string }
   | { type: "send"; agentId: string; prompt: string }
   | { type: "focus"; agentId: string }
   | { type: "terminal-focus"; terminalId: string }
@@ -340,13 +342,12 @@ export class ApplicationController {
           }
           this.#terminalObservations.set(terminal.id, observation);
         } catch (error) {
-          this.apply({
-            type: "notify",
-            message: "Could not open terminal.",
-            detail: errorMessage(error),
-            kind: "error",
-            retry: this.registerRetry({ type: "terminal-focus", terminalId: terminal.id }),
-          });
+          this.reportError(
+            "Could not open terminal.",
+            error,
+            this.registerRetry({ type: "terminal-focus", terminalId: terminal.id }),
+            "command",
+          );
         }
         return;
       }
@@ -380,48 +381,38 @@ export class ApplicationController {
       case "kill-terminal-confirmed": {
         const captured = this.#state.modal;
         const targetKey = `kill-terminal:${intent.terminalId}`;
+        if (this.inFlightTargets.has(targetKey)) return;
+        const unavailable = resourceActionUnavailable(this.#state, "kill-terminal", {
+          terminalId: intent.terminalId,
+        });
+        if (unavailable) {
+          if (captured.type === "confirm")
+            this.apply({
+              type: "open-modal",
+              modal: { ...captured, unavailableReason: unavailable },
+            });
+          else this.apply({ type: "notify", message: unavailable, kind: "error" });
+          return;
+        }
+        const workspaceId = Object.values(this.#state.workspaceTerminals ?? {})
+          .flat()
+          .find((item) => item.id === intent.terminalId)?.workspaceId;
+        let terminated = false;
         const token =
           captured.type === "confirm" && captured.terminalId === intent.terminalId
             ? captured.id
             : undefined;
         if (token !== undefined && captured.type === "confirm") {
-          if (this.inFlightTargets.has(targetKey)) {
-            this.apply({
-              type: "open-modal",
-              modal: {
-                ...captured,
-                unavailableReason: "Request already in progress for this captured terminal.",
-              },
-            });
-            return;
-          }
           if (this.inFlightConfirmations.has(token) || captured.unavailableReason) return;
-          if (
-            !Object.values(this.#state.workspaceTerminals ?? {}).some((items) =>
-              items.some((terminal) => terminal.id === intent.terminalId),
-            ) ||
-            this.#state.connection !== "connected"
-          ) {
-            this.apply({
-              type: "open-modal",
-              modal: {
-                ...captured,
-                unavailableReason: "Captured terminal is no longer available.",
-              },
-            });
-            return;
-          }
           this.inFlightConfirmations.add(token);
-          this.inFlightTargets.add(targetKey);
           this.apply({ type: "open-modal", modal: { ...captured, busy: true } });
         }
+        this.inFlightTargets.add(targetKey);
         try {
           await this.gateway.killTerminal(intent.terminalId);
+          terminated = true;
           await this.#terminalObservations.get(intent.terminalId)?.release();
           this.#terminalObservations.delete(intent.terminalId);
-          const workspaceId = Object.entries(this.#state.workspaceTerminals ?? {}).find(
-            ([, items]) => items.some((item) => item.id === intent.terminalId),
-          )?.[0];
           if (workspaceId) await this.discoverTerminals(workspaceId);
           if (
             token === undefined
@@ -436,12 +427,18 @@ export class ApplicationController {
             this.#state.modal.id === token
           )
             this.apply({ type: "open-modal", modal: { ...this.#state.modal, busy: false } });
-          this.apply({
-            type: "notify",
-            message: "Could not terminate terminal.",
-            detail: errorMessage(error),
-            kind: "error",
-          });
+          this.reportError(
+            terminated
+              ? "Terminal terminated; cleanup or refresh failed."
+              : "Could not terminate terminal.",
+            error,
+            this.registerRetry(
+              terminated
+                ? { type: "refresh" }
+                : { type: "terminal-kill", terminalId: intent.terminalId },
+            ),
+            "command",
+          );
         } finally {
           if (token !== undefined) this.inFlightConfirmations.delete(token);
           this.inFlightTargets.delete(targetKey);
@@ -690,7 +687,7 @@ export class ApplicationController {
               thinkingLevel: defaultModel?.defaultThinkingLevel,
               dirty: true,
               settingsDirty: true,
-              error: undefined,
+              error: "",
             },
           });
         } else if (modal.setting === "model" && model?.selectable)
@@ -702,14 +699,14 @@ export class ApplicationController {
               thinkingLevel: model.defaultThinkingLevel,
               dirty: true,
               settingsDirty: true,
-              error: undefined,
+              error: "",
             },
           });
         else if (modal.setting === "mode" && provider?.modeIds.includes(intent.choice))
           this.apply({
             type: actionType,
             workspaceId: modal.workspaceId,
-            changes: { modeId: intent.choice, dirty: true, settingsDirty: true, error: undefined },
+            changes: { modeId: intent.choice, dirty: true, settingsDirty: true, error: "" },
           });
         else if (modal.setting === "thinking" && model?.thinkingLevels.includes(intent.choice))
           this.apply({
@@ -719,7 +716,7 @@ export class ApplicationController {
               thinkingLevel: intent.choice,
               dirty: true,
               settingsDirty: true,
-              error: undefined,
+              error: "",
             },
           });
         this.apply({ type: "close-modal" });
@@ -834,7 +831,7 @@ export class ApplicationController {
               launch: {
                 ...draft.launch,
                 settingsDirty: draft.launch.settingsDirty || draft.placement !== intent.placement,
-                error: undefined,
+                error: "",
               },
             },
           });
@@ -856,7 +853,7 @@ export class ApplicationController {
               launch: {
                 ...draft.launch,
                 settingsDirty: draft.launch.settingsDirty || draft.baseRef !== intent.ref,
-                error: undefined,
+                error: "",
               },
             },
           });
@@ -895,7 +892,7 @@ export class ApplicationController {
             draft: {
               ...this.#state.newWorkspace,
               projectId: intent.projectId,
-              launch: { ...this.#state.newWorkspace.launch, settingsDirty: true, error: undefined },
+              launch: { ...this.#state.newWorkspace.launch, settingsDirty: true, error: "" },
             },
           });
           this.apply({ type: "close-modal" });
@@ -924,7 +921,7 @@ export class ApplicationController {
         this.apply({
           type: "set-launch-draft",
           workspaceId: id,
-          changes: { kind: draft.kind === "session" ? "terminal" : "session", error: undefined },
+          changes: { kind: draft.kind === "session" ? "terminal" : "session", error: "" },
         });
         return;
       }
@@ -958,7 +955,7 @@ export class ApplicationController {
         this.apply({
           type: "set-launch-draft",
           workspaceId: modal.workspaceId,
-          changes: { profileId: intent.profileId || undefined, error: undefined },
+          changes: { profileId: intent.profileId || undefined, error: "" },
         });
         this.apply({ type: "close-modal" });
         return;
@@ -985,6 +982,18 @@ export class ApplicationController {
             });
             return;
           }
+          if (intent.action === "archive-workspace") {
+            if (intent.workspaceId)
+              this.apply({
+                type: "open-modal",
+                modal: {
+                  type: "confirm",
+                  action: "archive-workspace",
+                  workspaceId: intent.workspaceId,
+                },
+              });
+            return;
+          }
           if (!intent.agentId) return;
           const draft = this.#state.composer.drafts[intent.agentId] ?? "";
           this.apply({
@@ -998,11 +1007,41 @@ export class ApplicationController {
           });
         }
         return;
+      case "open-resource-rename": {
+        const workspace = this.#state.directory.workspaces.find(
+          (item) => item.id === intent.workspaceId,
+        );
+        const terminal = intent.terminalId
+          ? this.#state.workspaceTerminals?.[intent.workspaceId]?.find(
+              (item) => item.id === intent.terminalId,
+            )
+          : undefined;
+        if (!workspace || workspace.archived || (intent.terminalId && !terminal)) return;
+        this.apply({
+          type: "open-modal",
+          modal: {
+            type: "rename",
+            agentId: "",
+            workspaceId: workspace.id,
+            ...(terminal ? { terminalId: terminal.id } : {}),
+            value: terminal ? terminalDisplayName(terminal) : workspace.title,
+            label: terminal
+              ? `active Terminal ${terminalDisplayName(terminal)} (${terminal.id}) in Workspace ${workspace.title} (${workspace.id})`
+              : `Workspace ${workspace.title} (${workspace.id})`,
+          },
+        });
+        return;
+      }
       case "open-rename": {
         const agent = this.#state.directory.agents.find((item) => item.id === intent.agentId);
         this.apply({
           type: "open-modal",
-          modal: { type: "rename", agentId: intent.agentId, value: agent?.title ?? "" },
+          modal: {
+            type: "rename",
+            agentId: intent.agentId,
+            value: agent?.title ?? "",
+            label: `Session ${agent?.title ?? intent.agentId} (${intent.agentId})`,
+          },
         });
         return;
       }
@@ -1193,16 +1232,50 @@ export class ApplicationController {
     ) {
       const modal = action.modal;
       const label = modal.agentId
-        ? (this.#state.directory.agents.find((agent) => agent.id === modal.agentId)?.title ??
-          modal.agentId)
-        : (modal.terminalId ?? modal.workspaceId);
+        ? `Session ${this.#state.directory.agents.find((agent) => agent.id === modal.agentId)?.title ?? modal.agentId} (${modal.agentId})`
+        : modal.workspaceId && modal.action === "archive-workspace"
+          ? `Workspace ${this.#state.directory.workspaces.find((item) => item.id === modal.workspaceId)?.title ?? modal.workspaceId} (${modal.workspaceId})`
+          : modal.terminalId
+            ? (() => {
+                const terminal = Object.values(this.#state.workspaceTerminals ?? {})
+                  .flat()
+                  .find((item) => item.id === modal.terminalId);
+                const workspace = this.#state.directory.workspaces.find(
+                  (item) => item.id === terminal?.workspaceId,
+                );
+                return `Terminal ${terminal ? terminalDisplayName(terminal) : modal.terminalId} (${modal.terminalId}) in Workspace ${workspace?.title ?? terminal?.workspaceId ?? "unknown"} (${terminal?.workspaceId ?? "unknown"})`;
+              })()
+            : modal.workspaceId;
       action = {
         ...action,
         modal: { ...modal, id: ++this.confirmationSequence, ...(label ? { label } : {}) },
       };
     }
+    if (
+      action.type === "open-modal" &&
+      action.modal.type === "rename" &&
+      action.modal.id === undefined
+    )
+      action = { ...action, modal: { ...action.modal, id: ++this.confirmationSequence } };
     const previousModal = this.#state.modal;
     this.#state = reduceApp(this.#state, action);
+    const captured = this.#state.modal;
+    if (
+      captured.type === "confirm" &&
+      ["stop", "archive", "detach", "archive-workspace", "kill-terminal"].includes(captured.action)
+    ) {
+      const unavailableReason = resourceActionUnavailable(this.#state, captured.action, captured);
+      const { unavailableReason: _previousReason, ...available } = captured;
+      this.#state = reduceApp(this.#state, {
+        type: "open-modal",
+        modal: { ...available, ...(unavailableReason ? { unavailableReason } : {}) },
+      });
+    }
+    if (captured.type === "rename") {
+      const error = resourceActionUnavailable(this.#state, "rename", captured);
+      if (error)
+        this.#state = reduceApp(this.#state, { type: "open-modal", modal: { ...captured, error } });
+    }
     this.pruneRetries();
     for (const listener of this.#listeners) listener(this.#state);
     const modal = this.#state.modal;
@@ -1580,7 +1653,7 @@ export class ApplicationController {
       changes: {
         submitting: true,
         [draft.launch.kind === "session" ? "prompt" : "command"]: prompt,
-        error: undefined,
+        error: "",
       },
     });
     try {
@@ -1607,7 +1680,7 @@ export class ApplicationController {
           ...draft.launch,
           [draft.launch.kind === "session" ? "prompt" : "command"]: prompt,
           submitting: false,
-          error: undefined,
+          error: "",
         },
       });
       this.apply({ type: "set-new-workspace", draft: undefined });
@@ -1654,7 +1727,7 @@ export class ApplicationController {
         });
         return;
       }
-      update({ submitting: true, command: prompt, error: undefined });
+      update({ submitting: true, command: prompt, error: "" });
       try {
         let terminal = draft.createdTerminal;
         if (!terminal) {
@@ -1702,7 +1775,7 @@ export class ApplicationController {
       });
       return;
     }
-    update({ submitting: true, prompt, error: undefined });
+    update({ submitting: true, prompt, error: "" });
     try {
       let agentId = draft.createdAgentId;
       if (!agentId) {
@@ -1787,7 +1860,7 @@ export class ApplicationController {
     this.apply({
       type: "set-session-draft",
       workspaceId,
-      changes: { submitting: true, error: undefined, prompt, dirty: true },
+      changes: { submitting: true, error: "", prompt, dirty: true },
     });
     try {
       let agentId = draft.createdAgentId;
@@ -1888,68 +1961,137 @@ export class ApplicationController {
 
   private async runCommand(command: AgentCommand): Promise<void> {
     const origin = this.#state.modal;
-    if (command.type === "rename-agent") {
+    if (
+      ["archive-workspace", "stop-agent", "archive-agent", "detach-agent"].includes(command.type)
+    ) {
+      const reason = resourceActionUnavailable(this.#state, command.type, command);
+      if (reason) {
+        this.apply({ type: "notify", message: reason, kind: "error" });
+        return;
+      }
+    }
+    const rename =
+      command.type === "rename-agent" ||
+      command.type === "rename-workspace" ||
+      command.type === "rename-terminal";
+    const renameDialog = rename && origin.type === "rename" ? origin : undefined;
+    const renameKey = rename
+      ? `${command.type}:${"terminalId" in command ? command.terminalId : "workspaceId" in command ? command.workspaceId : "agentId" in command ? command.agentId : ""}`
+      : undefined;
+    if (rename && "name" in command) {
+      if (renameKey && this.inFlightTargets.has(renameKey)) return;
       const name = command.name.trim();
-      if (!name || /[\p{Cc}\p{Cs}]/u.test(name)) return;
-      const agentId = command.agentId;
-      const target = this.#state.directory.agents.find((agent) => agent.id === agentId);
-      if (!target) return;
-      if (name === target.title) {
-        if (origin.type === "rename" && origin.agentId === command.agentId)
-          this.apply({ type: "close-modal" });
+      const capturedCommand = command;
+      const target =
+        capturedCommand.type === "rename-agent"
+          ? this.#state.directory.agents.find(
+              (item) => item.id === capturedCommand.agentId && !item.archived,
+            )
+          : capturedCommand.type === "rename-terminal"
+            ? this.#state.workspaceTerminals?.[capturedCommand.workspaceId]?.find(
+                (item) => item.id === capturedCommand.terminalId,
+              )
+            : this.#state.directory.workspaces.find(
+                (item) => item.id === capturedCommand.workspaceId && !item.archived,
+              );
+      const error =
+        !name ||
+        /[\p{Cc}\p{Cs}]/u.test(name) ||
+        (command.type === "rename-terminal" && name.length > 200)
+          ? "Enter a nonempty valid name."
+          : resourceActionUnavailable(this.#state, command.type, command);
+      if (error) {
+        if (renameDialog) this.apply({ type: "open-modal", modal: { ...renameDialog, error } });
+        return;
+      }
+      const oldName = target && ("name" in target ? terminalDisplayName(target) : target.title);
+      if (name === oldName) {
+        if (renameDialog) this.apply({ type: "close-modal" });
         return;
       }
       command = { ...command, name };
+      if (renameKey) this.inFlightTargets.add(renameKey);
+      if (renameDialog)
+        this.apply({ type: "open-modal", modal: { ...renameDialog, busy: true, error: "" } });
     }
     const confirmation =
-      origin.type === "confirm" && "agentId" in command && origin.agentId === command.agentId
+      origin.type === "confirm" &&
+      (("agentId" in command && origin.agentId === command.agentId) ||
+        (command.type === "archive-workspace" && origin.workspaceId === command.workspaceId))
         ? origin
         : undefined;
     const token = confirmation?.id;
-    const targetKey = confirmation ? `${command.type}:${confirmation.agentId}` : undefined;
+    const targetKey = ["archive-workspace", "stop-agent", "archive-agent", "detach-agent"].includes(
+      command.type,
+    )
+      ? `${command.type}:${"agentId" in command ? command.agentId : "workspaceId" in command ? command.workspaceId : ""}`
+      : undefined;
+    if (targetKey && this.inFlightTargets.has(targetKey)) return;
     if (token !== undefined && confirmation) {
-      if (targetKey && this.inFlightTargets.has(targetKey)) {
-        this.apply({
-          type: "open-modal",
-          modal: {
-            ...confirmation,
-            unavailableReason: "Request already in progress for this captured session.",
-          },
-        });
-        return;
-      }
       if (this.inFlightConfirmations.has(token) || confirmation?.unavailableReason) return;
-      if (
-        this.#state.connection !== "connected" ||
-        !this.#state.directory.agents.some(
-          (agent) => agent.id === confirmation.agentId && !agent.archived,
-        )
-      ) {
-        this.apply({
-          type: "open-modal",
-          modal: { ...confirmation, unavailableReason: "Captured session is no longer available." },
-        });
+      const unavailableReason = resourceActionUnavailable(this.#state, command.type, confirmation);
+      if (unavailableReason) {
+        this.apply({ type: "open-modal", modal: { ...confirmation, unavailableReason } });
         return;
       }
       this.inFlightConfirmations.add(token);
-      if (targetKey) this.inFlightTargets.add(targetKey);
       this.apply({ type: "open-modal", modal: { ...confirmation, busy: true } });
     }
+    if (targetKey) this.inFlightTargets.add(targetKey);
+    let refreshFailed = false;
     try {
       const result = await this.gateway.execute(command);
+      if (command.type === "rename-terminal") {
+        try {
+          await this.discoverTerminals(command.workspaceId);
+        } catch (error) {
+          refreshFailed = true;
+          this.reportError(
+            "Terminal renamed; refreshing its confirmed display failed.",
+            error,
+            this.registerRetry({ type: "refresh" }),
+            "command",
+          );
+        }
+      }
+      if (
+        [
+          "rename-workspace",
+          "archive-workspace",
+          "rename-agent",
+          "archive-agent",
+          "stop-agent",
+        ].includes(command.type)
+      ) {
+        try {
+          const snapshot = await this.gateway.getDirectorySnapshot();
+          this.apply({ type: "directory", update: { type: "snapshot", snapshot } });
+        } catch (error) {
+          refreshFailed = true;
+          this.reportError(
+            "Action completed; refreshing confirmed resources failed.",
+            error,
+            this.registerRetry({ type: "refresh" }),
+            "command",
+          );
+        }
+      }
       if (command.type === "detach-agent")
         this.apply({ type: "composer-detached", agentId: command.agentId });
       if (
         token === undefined
-          ? this.#state.modal === origin
+          ? renameDialog
+            ? this.#state.modal.type === "rename" && this.#state.modal.id === renameDialog.id
+            : this.#state.modal === origin
           : this.#state.modal.type === "confirm" && this.#state.modal.id === token
       )
         this.apply({ type: "close-modal" });
-      this.apply({
-        type: "notify",
-        message:
-          result.type === "agent-created" ? `Created agent ${shortId(result.agentId)}.` : "Done.",
-      });
+      if (!refreshFailed)
+        this.apply({
+          type: "notify",
+          message:
+            result.type === "agent-created" ? `Created agent ${shortId(result.agentId)}.` : "Done.",
+        });
     } catch (error) {
       if (
         token !== undefined &&
@@ -1957,6 +2099,27 @@ export class ApplicationController {
         this.#state.modal.id === token
       )
         this.apply({ type: "open-modal", modal: { ...this.#state.modal, busy: false } });
+      if (rename) {
+        try {
+          if (command.type === "rename-terminal") await this.discoverTerminals(command.workspaceId);
+          else
+            this.apply({
+              type: "directory",
+              update: { type: "snapshot", snapshot: await this.gateway.getDirectorySnapshot() },
+            });
+        } catch {
+          /* Keep the entered name; the request may have applied before refresh failed. */
+        }
+      }
+      if (
+        renameDialog &&
+        this.#state.modal.type === "rename" &&
+        this.#state.modal.id === renameDialog.id
+      )
+        this.apply({
+          type: "open-modal",
+          modal: { ...this.#state.modal, busy: false, error: errorMessage(error) },
+        });
       this.reportError(
         "The Paseo command failed.",
         error,
@@ -1966,6 +2129,7 @@ export class ApplicationController {
     } finally {
       if (token !== undefined) this.inFlightConfirmations.delete(token);
       if (targetKey) this.inFlightTargets.delete(targetKey);
+      if (renameKey) this.inFlightTargets.delete(renameKey);
     }
   }
 
@@ -2347,6 +2511,12 @@ export class ApplicationController {
     entry.running = true;
     try {
       switch (entry.operation.type) {
+        case "terminal-kill":
+          await this.handleIntent({
+            type: "kill-terminal-confirmed",
+            terminalId: entry.operation.terminalId,
+          });
+          return;
         case "command":
           await this.runCommand(entry.operation.command);
           return;

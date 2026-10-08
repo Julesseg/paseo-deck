@@ -100,6 +100,35 @@ export class FakePaseoGateway implements PaseoGateway {
   public async execute(command: AgentCommand): Promise<CommandResult> {
     this.assertConnected();
     this.commands.push(command);
+    if (command.type === "rename-terminal")
+      this.terminals = this.terminals.map((item) =>
+        item.id === command.terminalId ? { ...item, title: command.name } : item,
+      );
+    if (command.type === "rename-workspace" || command.type === "archive-workspace") {
+      this.snapshot = {
+        ...this.snapshot,
+        workspaces: this.snapshot.workspaces.map((item) =>
+          item.id !== command.workspaceId
+            ? item
+            : {
+                ...item,
+                ...(command.type === "rename-workspace"
+                  ? { title: command.name }
+                  : { archived: true }),
+              },
+        ),
+      };
+      this.emitDirectory({ type: "snapshot", snapshot: this.snapshot });
+    }
+    if (command.type === "rename-agent") {
+      this.snapshot = {
+        ...this.snapshot,
+        agents: this.snapshot.agents.map((item) =>
+          item.id === command.agentId ? { ...item, title: command.name } : item,
+        ),
+      };
+      this.emitDirectory({ type: "snapshot", snapshot: this.snapshot });
+    }
     if (
       command.type === "set-agent-model" ||
       command.type === "set-agent-mode" ||

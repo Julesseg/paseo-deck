@@ -78,7 +78,14 @@ export type ModalState =
     }
   | {
       type: "confirm";
-      action: "stop" | "archive" | "detach" | "kill-terminal" | "discard-draft" | "quit";
+      action:
+        | "archive-workspace"
+        | "stop"
+        | "archive"
+        | "detach"
+        | "kill-terminal"
+        | "discard-draft"
+        | "quit";
       agentId?: string;
       workspaceId?: string;
       terminalId?: string;
@@ -109,7 +116,17 @@ export type ModalState =
       error?: string;
       submitting?: boolean;
     }
-  | { type: "rename"; agentId: string; value: string }
+  | {
+      type: "rename";
+      agentId: string;
+      workspaceId?: string;
+      terminalId?: string;
+      value: string;
+      label?: string;
+      id?: number;
+      busy?: boolean;
+      error?: string;
+    }
   | {
       type: "session-setting";
       agentId: string;
