@@ -4213,13 +4213,20 @@ export class DeckTui {
       };
     } else if (modal.type === "new-workspace-placement" || modal.type === "new-workspace-base") {
       const placement = modal.type === "new-workspace-placement";
+      const localAvailable = Boolean(
+        this.state.directory.projects.find(
+          (project) => project.id === this.state.newWorkspace?.projectId,
+        )?.path,
+      );
       const choices = placement
         ? [
             {
               value: "local",
               label: "Local",
-              description: "Use the original checkout",
-              disabled: false,
+              description: localAvailable
+                ? "Use the original checkout"
+                : "Original checkout unavailable",
+              disabled: !localAvailable,
             },
             {
               value: "worktree",
