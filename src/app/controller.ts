@@ -741,7 +741,7 @@ export class ApplicationController {
         else {
           const wasActive =
             this.#state.activeTabIds[intent.workspaceId] === `draft:${intent.workspaceId}`;
-          this.discardDraft(intent.workspaceId);
+          await this.discardDraft(intent.workspaceId);
           if (wasActive) await this.showActiveResource();
         }
         return;
@@ -749,29 +749,40 @@ export class ApplicationController {
       case "discard-session-draft-confirmed": {
         const wasActive =
           this.#state.activeTabIds[intent.workspaceId] === `draft:${intent.workspaceId}`;
-        this.discardDraft(intent.workspaceId);
+        await this.discardDraft(intent.workspaceId);
         this.apply({ type: "close-modal" });
         if (wasActive) await this.showActiveResource();
         return;
       }
       case "open-new-workspace": {
-        if (
-          this.#state.focus !== "tree" ||
-          this.#state.modal.type !== "none" ||
-          this.#state.newWorkspace
-        )
+        if (this.#state.modal.type !== "none") return;
+        if (this.#state.newWorkspace) {
+          this.apply({ type: "set-focus", focus: "composer" });
           return;
-        const selection = this.#state.sidebarSelection;
+        }
+        const selection = this.#state.focus === "tree" ? this.#state.sidebarSelection : undefined;
         const projectId =
           selection?.kind === "project"
             ? selection.id
-            : this.#state.directory.workspaces.find((workspace) => workspace.id === selection?.id)
-                ?.projectId;
+            : (this.#state.directory.workspaces.find((workspace) => workspace.id === selection?.id)
+                ?.projectId ??
+              this.#state.directory.workspaces.find(
+                (workspace) => workspace.id === this.#state.selectedWorkspaceId,
+              )?.projectId);
         this.apply({
           type: "set-new-workspace",
           draft: {
             projectId,
-            placement: "local",
+            generation: ++this.newWorkspaceDraftGeneration,
+            previousView: {
+              workspaceId: this.#state.selectedWorkspaceId,
+              tabId: this.#state.selectedWorkspaceId
+                ? this.#state.activeTabIds[this.#state.selectedWorkspaceId]
+                : undefined,
+              focus: this.#state.focus,
+              composerMode: this.#state.composerMode,
+            },
+            placement: "worktree",
             title: "",
             launch: launchDraft(this.#state, NEW_WORKSPACE_DRAFT_ID),
           },
@@ -788,11 +799,14 @@ export class ApplicationController {
           !draft ||
           draft.launch.submitting ||
           draft.placementLoading ||
-          !draft.placementOptions?.supportsWorktree ||
           this.#state.modal.type !== "none"
         )
           return;
-        if (intent.type === "open-new-workspace-base" && draft.placement !== "worktree") return;
+        if (
+          intent.type === "open-new-workspace-base" &&
+          (draft.placement !== "worktree" || !draft.placementOptions?.supportsWorktree)
+        )
+          return;
         this.apply({
           type: "open-modal",
           modal: {
@@ -817,7 +831,11 @@ export class ApplicationController {
             draft: {
               ...draft,
               placement: intent.placement,
-              launch: { ...draft.launch, error: undefined },
+              launch: {
+                ...draft.launch,
+                settingsDirty: draft.launch.settingsDirty || draft.placement !== intent.placement,
+                error: undefined,
+              },
             },
           });
         this.apply({ type: "close-modal" });
@@ -832,7 +850,15 @@ export class ApplicationController {
         )
           this.apply({
             type: "set-new-workspace",
-            draft: { ...draft, baseRef: intent.ref, launch: { ...draft.launch, error: undefined } },
+            draft: {
+              ...draft,
+              baseRef: intent.ref,
+              launch: {
+                ...draft.launch,
+                settingsDirty: draft.launch.settingsDirty || draft.baseRef !== intent.ref,
+                error: undefined,
+              },
+            },
           });
         this.apply({ type: "close-modal" });
         return;
@@ -855,6 +881,10 @@ export class ApplicationController {
           });
         return;
       case "new-workspace-project-choice":
+        if (this.#state.newWorkspace?.projectId === intent.projectId) {
+          this.apply({ type: "close-modal" });
+          return;
+        }
         if (
           this.#state.newWorkspace &&
           !this.#state.newWorkspace.launch.submitting &&
@@ -865,7 +895,7 @@ export class ApplicationController {
             draft: {
               ...this.#state.newWorkspace,
               projectId: intent.projectId,
-              launch: { ...this.#state.newWorkspace.launch, error: undefined },
+              launch: { ...this.#state.newWorkspace.launch, settingsDirty: true, error: undefined },
             },
           });
           this.apply({ type: "close-modal" });
@@ -1315,9 +1345,27 @@ export class ApplicationController {
     }
   }
 
-  private discardDraft(workspaceId: string): void {
+  private async discardDraft(workspaceId: string): Promise<void> {
     if (workspaceId === NEW_WORKSPACE_DRAFT_ID) {
+      const previous = this.#state.newWorkspace?.previousView;
+      this.workspacePlacementGeneration++;
       this.apply({ type: "set-new-workspace", draft: undefined });
+      if (previous?.workspaceId)
+        this.apply({ type: "activate-workspace", workspaceId: previous.workspaceId });
+      if (previous?.tabId?.startsWith("session:"))
+        this.apply({
+          type: "open-session-tab",
+          agentId: previous.tabId.slice(8),
+          preserveSidebar: true,
+        });
+      else if (previous?.tabId?.startsWith("terminal:"))
+        this.apply({ type: "open-terminal-tab", terminalId: previous.tabId.slice(9) });
+      else if (previous?.tabId?.startsWith("draft:") && previous.workspaceId)
+        this.apply({ type: "open-session-draft", workspaceId: previous.workspaceId });
+      await this.showActiveResource();
+      if (previous?.composerMode)
+        this.apply({ type: "set-composer-mode", mode: previous.composerMode });
+      this.apply({ type: "set-focus", focus: previous?.focus ?? "tree" });
     } else if (this.#state.sessionDrafts[workspaceId]) {
       this.apply({ type: "discard-session-draft", workspaceId });
     } else {
@@ -1398,6 +1446,7 @@ export class ApplicationController {
       await Promise.all(
         snapshot.workspaces.map((workspace) => this.discoverTerminals(workspace.id)),
       );
+      if (this.#state.newWorkspace) await this.loadWorkspacePlacement(true);
       this.apply({ type: "notify", message: "Directory refreshed." });
     } catch (error) {
       this.reportError(
@@ -1414,8 +1463,9 @@ export class ApplicationController {
   }
 
   private workspacePlacementGeneration = 0;
+  private newWorkspaceDraftGeneration = 0;
 
-  private async loadWorkspacePlacement(): Promise<void> {
+  private async loadWorkspacePlacement(preserveBase = false): Promise<void> {
     const generation = ++this.workspacePlacementGeneration;
     const draft = this.#state.newWorkspace;
     if (!draft) return;
@@ -1424,14 +1474,24 @@ export class ApplicationController {
       type: "set-new-workspace",
       draft: {
         ...draft,
-        placement: "local",
         placementOptions: { supportsWorktree: false, refs: [] },
-        baseRef: undefined,
+        baseRef: preserveBase ? draft.baseRef : undefined,
         placementError: undefined,
         placementLoading: Boolean(project?.path),
       },
     });
-    if (!project?.path) return;
+    if (!project?.path) {
+      this.apply({
+        type: "set-new-workspace",
+        draft: {
+          ...draft,
+          placementOptions: { supportsWorktree: false, refs: [] },
+          baseRef: undefined,
+          placementError: "Choose a Project with an original checkout directory.",
+        },
+      });
+      return;
+    }
     try {
       const options = await this.gateway.getWorkspacePlacement(project.path);
       const current = this.#state.newWorkspace;
@@ -1440,9 +1500,14 @@ export class ApplicationController {
         type: "set-new-workspace",
         draft: {
           ...current,
-          placement: options.supportsWorktree ? "worktree" : "local",
+          placementError: options.supportsWorktree
+            ? undefined
+            : "Worktree is unavailable for this Project.",
           placementOptions: options,
-          baseRef: options.defaultRef,
+          baseRef:
+            preserveBase && options.refs.some((ref) => ref.ref === draft.baseRef)
+              ? draft.baseRef
+              : options.defaultRef,
           placementLoading: false,
         },
       });
@@ -1465,19 +1530,15 @@ export class ApplicationController {
   }
 
   private async submitNewWorkspace(prompt: string): Promise<void> {
-    let draft = this.#state.newWorkspace;
+    const draft = this.#state.newWorkspace;
     if (!draft || draft.launch.submitting || draft.placementLoading) return;
-    if (draft.placementError) {
+    if (draft.placement === "worktree" && draft.placementError) {
       this.apply({
         type: "set-launch-draft",
         workspaceId: NEW_WORKSPACE_DRAFT_ID,
-        changes: { [draft.launch.kind === "session" ? "prompt" : "command"]: prompt },
+        changes: { prompt, error: draft.placementError },
       });
-      const generation = this.workspacePlacementGeneration + 1;
-      await this.loadWorkspacePlacement();
-      draft = this.#state.newWorkspace;
-      if (!draft || draft.placementError || generation !== this.workspacePlacementGeneration)
-        return;
+      return;
     }
     const project = this.#state.directory.projects.find((item) => item.id === draft.projectId);
     const provider = this.#state.directory.providers.find(

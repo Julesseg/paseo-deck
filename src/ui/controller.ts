@@ -452,7 +452,7 @@ export class DeckController {
     }
     const normalBuffer =
       state.modal.type === "none" &&
-      !state.activeTerminalId &&
+      (!state.activeTerminalId || Boolean(state.newWorkspace)) &&
       ((state.focus === "composer" && state.composerMode === "normal") ||
         (state.focus === "timeline" && (state.timelineMode ?? "normal") === "normal"));
     if (normalBuffer && ["\u0014", "\u0018", "\u0001"].includes(data)) {
@@ -462,6 +462,11 @@ export class DeckController {
     if (!normalBuffer) this.#settingsPrefix = false;
     if (normalBuffer && this.#settingsPrefix) {
       this.#settingsPrefix = false;
+      if (state.newWorkspace && state.focus === "composer") {
+        if (data === "d") return this.send({ type: "open-new-workspace-project" });
+        if (data === "w") return this.send({ type: "open-new-workspace-placement" });
+        if (data === "b") return this.send({ type: "open-new-workspace-base" });
+      }
       const setting = ({ p: "provider", m: "model", t: "thinking", o: "mode" } as const)[
         data as "p"
       ];
@@ -527,7 +532,7 @@ export class DeckController {
         if (state.composerMode === undefined)
           return this.send({ type: "set-focus", focus: "tree" });
         if (mode !== "normal") return this.send({ type: "set-composer-mode", mode: "normal" });
-        if (state.newWorkspace) return this.send({ type: "cancel-new-workspace" });
+
         return true;
       }
       if (global?.id === "command-palette") return this.send(global.intent(state));

@@ -3962,10 +3962,10 @@ describe("New workspace composer", () => {
       await terminal.waitForRender();
       let screen = terminal.viewport().join("\n");
       expect(screen).toContain("New workspace");
-      expect(screen).toContain("Local");
-      expect(screen).toContain("/original");
+      expect(screen).toContain("Worktree");
+      expect(screen).toContain("unavailable");
       expect(screen).toContain("Project");
-      expect(screen).toContain("Title");
+      expect(screen).toContain("[md]");
       expect(screen).not.toContain("Hostname");
       await app.handleIntent({ type: "open-new-workspace-title" });
       await terminal.waitForRender();
@@ -4044,6 +4044,13 @@ describe("New workspace over an active terminal", () => {
       terminal.sendInput("\u001b");
       await terminal.waitForRender();
       await terminal.waitForRender();
+      expect(app.state.newWorkspace).toBeDefined();
+      await app.handleIntent({ type: "discard-session-draft", workspaceId: "new-workspace-draft" });
+      await app.handleIntent({
+        type: "discard-session-draft-confirmed",
+        workspaceId: "new-workspace-draft",
+      });
+      await terminal.waitForRender();
       expect(terminal.viewport().join("\n")).toContain("old-shell");
       expect(app.state.activeTerminalId).toBe("terminal");
     } finally {
@@ -4069,7 +4076,7 @@ describe("Worktree workspace controls", () => {
       defaultRef: "refs/remotes/origin/main",
       refs: [
         { label: "main", ref: "refs/remotes/origin/main", remote: true },
-        { label: "main (local)", ref: "refs/heads/main", remote: false },
+        { label: "refs/heads/main (local)", ref: "refs/heads/main", remote: false },
       ],
     };
     const app = new ApplicationController(gateway);
@@ -4084,13 +4091,13 @@ describe("Worktree workspace controls", () => {
       await terminal.waitForRender();
       let screen = terminal.viewport().join("\n");
       expect(screen).toContain("Worktree");
-      expect(screen).toContain("Base ref · main");
+      expect(screen).toContain("Base ref · refs/remotes/origin/main");
       expect(screen).not.toContain("Branch name");
       await app.handleIntent({ type: "open-new-workspace-base" });
       await terminal.waitForRender();
       screen = terminal.viewport().join("\n");
-      expect(screen).toContain("main (local)");
-      expect(screen).toContain("Refresh origin/main");
+      expect(screen).toContain("refs/heads/main (local)");
+      expect(screen).toContain("Refresh refs/remotes/origin/");
       terminal.sendInput("\u001b[B");
       terminal.sendInput("\r");
       await terminal.waitForRender();
@@ -4099,7 +4106,7 @@ describe("Worktree workspace controls", () => {
       await terminal.waitForRender();
       screen = terminal.viewport().join("\n");
       expect(screen).toContain("Terminal");
-      expect(screen).toContain("Base ref · main (local)");
+      expect(screen).toContain("Base ref · refs/heads/main");
       await app.handleIntent({ type: "open-new-workspace-placement" });
       await terminal.waitForRender();
       expect(terminal.viewport().join("\n")).toContain("Workspace placement");

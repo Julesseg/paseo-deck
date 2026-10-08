@@ -37,6 +37,13 @@ export interface LaunchDraft extends SessionDraft {
 }
 
 export interface NewWorkspaceDraft {
+  generation?: number;
+  previousView?: {
+    workspaceId?: string | undefined;
+    tabId?: TabId | undefined;
+    focus: FocusArea;
+    composerMode?: ComposerMode | undefined;
+  };
   placement?: "local" | "worktree";
   placementOptions?: WorkspacePlacement;
   placementLoading?: boolean;

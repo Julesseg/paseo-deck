@@ -113,7 +113,8 @@ export class ProductionPaseoGateway implements PaseoGateway {
             throw error;
           });
       }
-      return await workspacePlacement(await this.metadata, directory);
+      const metadata = await this.metadata;
+      return await workspacePlacement(metadata, directory, () => this.verifyLocalFetchTarget());
     } catch (error) {
       throw paseoFailure(error, "protocol");
     }
@@ -590,7 +591,7 @@ export class ProductionPaseoGateway implements PaseoGateway {
   private async verifyLocalFetchTarget(): Promise<void> {
     const unsupported = () =>
       new PaseoGatewayError(
-        "Remote Base ref refresh is unsupported for remote daemons. Choose a local Base ref, or connect to a verified local daemon without --host.",
+        "Advertised origin default and remote Base ref refresh are unsupported for remote daemons. Connect to a verified local daemon without --host.",
       );
     if (this.options.host !== undefined || process.env.PASEO_HOST) throw unsupported();
     const status = await this.daemonStatus();

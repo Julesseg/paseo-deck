@@ -1759,7 +1759,7 @@ class ComposerView implements Component, Focusable {
     if (state.composerMode === "visual") this.vim = { ...this.vim, anchor: this.vim.cursor };
   }
   private keyFor(state: AppState): string {
-    if (state.newWorkspace) return "new-workspace";
+    if (state.newWorkspace) return `new-workspace:${state.newWorkspace.generation ?? 0}`;
     const draft = activeSessionDraftWorkspaceId(state);
     if (draft) return `draft:${draft}`;
     const launch = activeLaunchWorkspaceId(state);
@@ -1872,18 +1872,6 @@ class ComposerView implements Component, Focusable {
         this.focused ? "focus" : "muted",
         ` ${this.theme.clipRendered(heading, Math.max(1, innerWidth - 1))}`,
       ),
-      ...(this.state.newWorkspace
-        ? [
-            ` ${this.theme.clipOwnedLabel(`Project · ${this.state.directory.projects.find((project) => project.id === this.state.newWorkspace?.projectId)?.name ?? "Choose project"}`, Math.max(1, innerWidth - 1))}`,
-            ` ${this.theme.clipOwnedLabel(this.state.newWorkspace.placementLoading ? "Loading workspace placement…" : this.state.newWorkspace.placementError ? "Workspace placement unavailable · Retry through palette" : `${this.state.newWorkspace.placementOptions?.supportsWorktree ? "" : ""}${this.state.newWorkspace.placement === "worktree" ? "Worktree" : "Local"} · ${this.state.directory.projects.find((project) => project.id === this.state.newWorkspace?.projectId)?.path ?? "Original checkout unavailable"}`, Math.max(1, innerWidth - 1))}`,
-            ...(this.state.newWorkspace.placement === "worktree"
-              ? [
-                  ` ${this.theme.clipOwnedLabel(`Base ref · ${this.state.newWorkspace.placementOptions?.refs.find((ref) => ref.ref === this.state.newWorkspace?.baseRef)?.label ?? "Choose base"}`, Math.max(1, innerWidth - 1))}`,
-                ]
-              : []),
-            ` ${this.theme.clipOwnedLabel(`Title · ${this.state.newWorkspace.title || "Optional"}`, Math.max(1, innerWidth - 1))}`,
-          ]
-        : []),
       ...body,
       ` ${this.theme.clipRendered(controls, Math.max(1, innerWidth - 1))}`,
     ];
@@ -2109,7 +2097,7 @@ class ComposerView implements Component, Focusable {
 
   private clipboardResource(): string {
     return this.state.newWorkspace
-      ? "new-workspace"
+      ? `new-workspace:${this.state.newWorkspace.generation ?? 0}`
       : `${this.state.selectedWorkspaceId ?? ""}:${this.state.activeTerminalId ?? ""}:${this.selectedAgentId ?? this.draftWorkspaceId ?? activeLaunchWorkspaceId(this.state) ?? ""}`;
   }
 
@@ -2143,13 +2131,35 @@ class ComposerView implements Component, Focusable {
   }
 }
 
+/** Workspace placement stays above the Composer regardless of its first Tab type. */
+function workspaceControlRows(state: AppState, theme: DeckTheme, width: number): string[] {
+  const draft = state.newWorkspace;
+  if (!draft) return [];
+  const project = state.directory.projects.find((item) => item.id === draft.projectId);
+  const firstTab = `[Ctrl-T] ${draft.launch.kind === "session" ? "Session" : "Terminal"}`;
+  const left = `[md] ${project?.name ?? "Project unset"}  [mw] ${draft.placement === "worktree" ? "Worktree" : "Local"}`;
+  const leftWidth = Math.max(1, width - terminalDisplayWidth(firstTab) - 2);
+  const clipped = theme.clipOwnedLabel(left, leftWidth);
+  const row = `${clipped}${" ".repeat(Math.max(1, width - terminalDisplayWidth(clipped) - terminalDisplayWidth(firstTab)))}${firstTab}`;
+  return [
+    row,
+    ...(draft.placement === "worktree" ? [`[mb] Base ref · ${draft.baseRef ?? "unset"}`] : []),
+    ...(draft.placementLoading
+      ? ["Resolving advertised origin default…"]
+      : draft.placementError
+        ? [draft.placementError]
+        : []),
+  ].map((line) => theme.clipOwnedLabel(line, width));
+}
+
 /** The existing session's controls use the command inventory for their cues and availability. */
 export function composerControlRow(state: AppState, theme: DeckTheme, width: number): string {
   const launchId = activeLaunchWorkspaceId(state);
   const launch = launchId ? launchDraft(state, launchId) : undefined;
-  const kindControl = launch
-    ? `${theme.style("muted", "Resource")} ${launch.kind === "session" ? "Session" : "Terminal"}  `
-    : "";
+  const kindControl =
+    launch && !state.newWorkspace
+      ? `${theme.style("muted", "Resource")} ${launch.kind === "session" ? "Session" : "Terminal"}  `
+      : "";
   if (launch?.kind === "terminal") {
     const profile = launch.profiles?.find((item) => item.id === launch.profileId);
     return theme.clipRendered(
@@ -3078,6 +3088,16 @@ export class DeckTui {
                           (!this.state.activeTerminalId || Boolean(this.state.newWorkspace)),
                       },
                       {
+                        component: {
+                          render: (width: number) =>
+                            workspaceControlRows(this.state, this.theme, width),
+                          invalidate() {},
+                        },
+                        basis: "auto",
+                        minSize: 0,
+                        visible: () => Boolean(this.state.newWorkspace),
+                      },
+                      {
                         component: this.composer,
                         basis: "auto",
                         minSize: 4,
@@ -3677,6 +3697,13 @@ export class DeckTui {
             : []),
           ...(context === "composer"
             ? [
+                ...(this.state.newWorkspace
+                  ? [
+                      "New workspace: md Project; mw Local/Worktree; mb full Base ref (Worktree).",
+                      "Worktree defaults to origin advertised HEAD; unresolved Base blocks creation.",
+                      "Idle Normal Enter creates; Escape retains draft; palette Discard restores previous view.",
+                    ]
+                  : []),
                 "Normal Enter sends; Insert Enter/Alt-Enter adds a newline.",
                 "Pending-command and Visual Enter never send.",
                 "Normal: h/l j/k w/W b/B e/E ge/gE; 0 ^/_ $; g0/g^/g$/gj/gk/g_.",
@@ -4012,6 +4039,13 @@ export class DeckTui {
           `Paseo Deck keys · ${this.state.focus}`,
           ...(this.state.focus === "composer"
             ? [
+                ...(this.state.newWorkspace
+                  ? [
+                      "New workspace: md Project; mw Local/Worktree; mb full Base ref (Worktree).",
+                      "Worktree defaults to origin advertised HEAD; unresolved Base blocks creation.",
+                      "Idle Normal Enter creates; Escape retains draft; palette Discard restores previous view.",
+                    ]
+                  : []),
                 "Normal Enter sends; Insert Enter/Alt-Enter adds a newline.",
                 "Pending-command and Visual Enter never send.",
                 "Normal: h/l j/k w/W b/B e/E ge/gE; 0 ^/_ $; g0/g^/g$/gj/gk/g_.",
@@ -4114,16 +4148,19 @@ export class DeckTui {
             {
               value: "worktree",
               label: "Worktree",
-              description: "Create a Paseo-managed worktree",
-              disabled: false,
+              description: this.state.newWorkspace?.placementOptions?.supportsWorktree
+                ? "Create a Paseo-managed worktree"
+                : (this.state.newWorkspace?.placementError ??
+                  "Worktree is unavailable for this Project"),
+              disabled: !this.state.newWorkspace?.placementOptions?.supportsWorktree,
             },
           ]
         : (this.state.newWorkspace?.placementOptions?.refs ?? []).map((ref) => ({
             value: ref.ref,
-            label: ref.label,
+            label: `${ref.ref} (${ref.remote ? "remote" : "local"})`,
             disabled: false,
             description: ref.remote
-              ? `Refresh origin/${ref.label} before creating`
+              ? `Refresh ${ref.ref} from origin before creating`
               : "Use on-disk branch without fetching",
           }));
       const title = placement ? "Workspace placement" : "Base ref";

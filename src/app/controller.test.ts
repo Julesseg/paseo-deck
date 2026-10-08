@@ -1739,6 +1739,7 @@ describe("Local workspace creation", () => {
     await app.start();
     await app.handleIntent({ type: "set-focus", focus: "tree" });
     await app.handleIntent({ type: "open-new-workspace" });
+    await app.handleIntent({ type: "new-workspace-placement-choice", placement: "local" });
     await app.handleIntent({ type: "set-new-workspace-title", title: "Feature" });
     await app.handleIntent({
       type: "submit-launch",
@@ -1756,6 +1757,7 @@ describe("Local workspace creation", () => {
     expect(app.state.newWorkspace).toBeUndefined();
     await app.handleIntent({ type: "set-focus", focus: "tree" });
     await app.handleIntent({ type: "open-new-workspace" });
+    await app.handleIntent({ type: "new-workspace-placement-choice", placement: "local" });
     await app.handleIntent({ type: "toggle-launch-kind" });
     await app.handleIntent({
       type: "submit-launch",
@@ -1784,6 +1786,7 @@ describe("New workspace validation", () => {
     await app.start();
     await app.handleIntent({ type: "set-focus", focus: "tree" });
     await app.handleIntent({ type: "open-new-workspace" });
+    await app.handleIntent({ type: "new-workspace-placement-choice", placement: "local" });
     await app.handleIntent({
       type: "submit-launch",
       workspaceId: "new-workspace-draft",
@@ -1792,6 +1795,7 @@ describe("New workspace validation", () => {
     expect(app.state.newWorkspace?.launch.error).toContain("original checkout");
     expect(gateway.createdWorkspaces).toHaveLength(0);
     await app.handleIntent({ type: "new-workspace-project-choice", projectId: "project-2" });
+    await app.handleIntent({ type: "new-workspace-placement-choice", placement: "local" });
     await app.handleIntent({
       type: "submit-launch",
       workspaceId: "new-workspace-draft",
@@ -1827,6 +1831,7 @@ describe("New workspace recovery", () => {
     await app.start();
     await app.handleIntent({ type: "set-focus", focus: "tree" });
     await app.handleIntent({ type: "open-new-workspace" });
+    await app.handleIntent({ type: "new-workspace-placement-choice", placement: "local" });
     await app.handleIntent({ type: "toggle-launch-kind" });
     await app.handleIntent({
       type: "submit-launch",
@@ -1870,6 +1875,7 @@ describe("New workspace retained state", () => {
     await app.handleIntent({ type: "select-boundary", boundary: "start" });
     expect(app.state.sidebarSelection).toEqual({ kind: "project", id: "project-1" });
     await app.handleIntent({ type: "open-new-workspace" });
+    await app.handleIntent({ type: "new-workspace-placement-choice", placement: "local" });
     await app.handleIntent({ type: "set-new-workspace-title", title: "Feature" });
     await app.handleIntent({ type: "open-draft-setting", setting: "mode" });
     expect(app.state.modal).toMatchObject({ type: "draft-setting" });
@@ -2035,6 +2041,7 @@ describe("Workspace placement discovery recovery", () => {
     expect(gateway.createdWorkspaces).toHaveLength(0);
     expect(app.state.newWorkspace?.launch.error).toContain("metadata unavailable");
     gateway.fail = false;
+    await app.handleIntent({ type: "refresh" });
     await app.handleIntent({
       type: "submit-launch",
       workspaceId: "new-workspace-draft",
@@ -2046,6 +2053,10 @@ describe("Workspace placement discovery recovery", () => {
 
 describe("Workspace placement async ownership", () => {
   it("does not submit a replacement draft when a canceled discovery retry completes late", async () => {
+    let started!: () => void;
+    const requested = new Promise<void>((resolve) => {
+      started = resolve;
+    });
     let complete!: () => void;
     const pending = new Promise<void>((resolve) => {
       complete = resolve;
@@ -2055,7 +2066,10 @@ describe("Workspace placement async ownership", () => {
       override async getWorkspacePlacement(directory: string) {
         this.requests += 1;
         if (this.requests === 1) throw new Error("unavailable");
-        if (this.requests === 2) await pending;
+        if (this.requests === 2) {
+          started();
+          await pending;
+        }
         return super.getWorkspacePlacement(directory);
       }
     }
@@ -2067,11 +2081,8 @@ describe("Workspace placement async ownership", () => {
     await app.start();
     await app.handleIntent({ type: "set-focus", focus: "tree" });
     await app.handleIntent({ type: "open-new-workspace" });
-    const retry = app.handleIntent({
-      type: "submit-launch",
-      workspaceId: "new-workspace-draft",
-      prompt: "Old prompt",
-    });
+    const retry = app.handleIntent({ type: "refresh" });
+    await requested;
     await app.handleIntent({ type: "cancel-new-workspace" });
     await app.handleIntent({ type: "open-new-workspace" });
     complete();

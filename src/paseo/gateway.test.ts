@@ -919,7 +919,7 @@ describe("Local workspace gateway", () => {
 });
 
 describe("Worktree workspace metadata", () => {
-  it("offers exact remote and local refs and defaults to the repository base instead of the current branch", async () => {
+  it("blocks local Git lookup for explicit host targets even with plausible cached metadata", async () => {
     const fixture = testClient();
     const metadata = {
       connect: vi.fn(async () => {}),
@@ -945,15 +945,9 @@ describe("Worktree workspace metadata", () => {
     });
     await gateway.connect();
     expect(metadata.connect).not.toHaveBeenCalled();
-    expect(await gateway.getWorkspacePlacement("/repo")).toEqual({
-      supportsWorktree: true,
-      defaultRef: "refs/remotes/origin/main",
-      refs: [
-        { label: "feature (local)", ref: "refs/heads/feature", remote: false },
-        { label: "main", ref: "refs/remotes/origin/main", remote: true },
-        { label: "main (local)", ref: "refs/heads/main", remote: false },
-      ],
-    });
+    await expect(gateway.getWorkspacePlacement("/repo")).rejects.toThrow(
+      "unsupported for remote daemons",
+    );
     await gateway.close();
     expect(metadata.close).toHaveBeenCalledOnce();
   });
@@ -1040,10 +1034,9 @@ describe("Unsupported Worktree projects", () => {
       refs: [],
     });
     metadata.getCheckoutStatus.mockResolvedValueOnce({ isGit: true, error: null } as never);
-    expect(await gateway.getWorkspacePlacement("/unborn")).toEqual({
-      supportsWorktree: false,
-      refs: [],
-    });
+    await expect(gateway.getWorkspacePlacement("/unborn")).rejects.toThrow(
+      "unsupported for remote daemons",
+    );
     await gateway.close();
   });
 });
@@ -1148,15 +1141,15 @@ describe("Workspace metadata lifecycle", () => {
       kind: "daemon-unavailable",
     });
     expect(metadata.close).toHaveBeenCalledOnce();
-    expect(await gateway.getWorkspacePlacement("/repo")).toMatchObject({
-      defaultRef: "refs/heads/main",
-    });
+    await expect(gateway.getWorkspacePlacement("/repo")).rejects.toThrow(
+      "unsupported for remote daemons",
+    );
     expect(fixture.client.connect).toHaveBeenCalledOnce();
     await gateway.close();
     expect(metadata.close).toHaveBeenCalledTimes(2);
   });
 
-  it("uses the main repository default when the selected project root is an owned worktree", async () => {
+  it("does not use main repository cached defaults for a remote owned worktree", async () => {
     const fixture = testClient();
     const metadata = {
       connect: vi.fn(async () => {}),
@@ -1179,9 +1172,9 @@ describe("Workspace metadata lifecycle", () => {
       createMetadataClient: () => metadata,
     });
     await gateway.connect();
-    expect(await gateway.getWorkspacePlacement("/worktree")).toMatchObject({
-      defaultRef: "refs/remotes/origin/main",
-    });
+    await expect(gateway.getWorkspacePlacement("/worktree")).rejects.toThrow(
+      "unsupported for remote daemons",
+    );
     await gateway.close();
   });
 
@@ -1303,7 +1296,7 @@ describe("Local daemon verification", () => {
 });
 
 describe("Pinned Git metadata protocol", () => {
-  it("uses supported suggestion limits and includes the repository default beyond the first page", async () => {
+  it("never falls back to branch suggestions for an unverified host", async () => {
     const { BranchSuggestionsRequestSchema } = await import("@getpaseo/protocol/messages");
     const fixture = testClient();
     const metadata = {
@@ -1332,13 +1325,10 @@ describe("Pinned Git metadata protocol", () => {
       createMetadataClient: () => metadata,
     });
     await gateway.connect();
-    expect(await gateway.getWorkspacePlacement("/repo")).toMatchObject({
-      supportsWorktree: true,
-      defaultRef: "refs/remotes/origin/main",
-      refs: expect.arrayContaining([
-        { label: "main", ref: "refs/remotes/origin/main", remote: true },
-      ]),
-    });
+    await expect(gateway.getWorkspacePlacement("/repo")).rejects.toThrow(
+      "unsupported for remote daemons",
+    );
+    expect(metadata.getBranchSuggestions).not.toHaveBeenCalled();
     await gateway.close();
   });
 });

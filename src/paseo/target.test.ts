@@ -3,10 +3,10 @@ import { PaseoGatewayError } from "./errors.js";
 import { targetFromDaemonStatus, websocketUrlForTcpTarget } from "./target.js";
 
 describe("Paseo target resolution", () => {
-  it("maps a daemon listen address to a websocket endpoint and keeps home for CLI fallback", () => {
+  it("maps a daemon listen address to a websocket endpoint and pins CLI fallback to its resolved host", () => {
     expect(targetFromDaemonStatus({ home: "/tmp/paseo" }, { listen: "127.0.0.1:6767" })).toEqual({
       websocketUrl: "ws://127.0.0.1:6767/ws",
-      cliArguments: ["--home", "/tmp/paseo"],
+      cliArguments: ["--host", "127.0.0.1:6767"],
       originalTarget: "/tmp/paseo",
     });
   });
