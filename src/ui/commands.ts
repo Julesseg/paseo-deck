@@ -88,7 +88,15 @@ const requireNormalBuffer = (state: AppState): string | undefined =>
     : "Available in Composer or Timeline Normal only";
 
 export function newTabUnavailableReason(state: AppState): string | undefined {
-  if (state.newWorkspace) return "Finish or cancel the New workspace composer first";
+  if (state.newWorkspace)
+    return state.focus === "composer" &&
+      state.composerMode === "normal" &&
+      state.modal.type === "none" &&
+      !state.newWorkspace.launch.submitting &&
+      !state.newWorkspace.launch.createdTerminal &&
+      !state.newWorkspace.launch.createdAgentId
+      ? undefined
+      : "Choose the first Tab from New workspace Normal";
   const workspace = requireWorkspace(state);
   if (workspace) return workspace;
   if (state.modal.type !== "none") return "Close the dialog first";

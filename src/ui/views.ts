@@ -73,6 +73,7 @@ import {
   sanitizeTerminalText,
   terminalDisplayWidth,
   wrapTerminalProse,
+  wrapTerminalText,
 } from "./text-safety.js";
 import { type BackgroundTone, DeckTheme } from "./theme.js";
 import {
@@ -1826,10 +1827,10 @@ class ComposerView implements Component, Focusable {
     const destination = launch
       ? this.theme.label(
           this.state.newWorkspace
-            ? `New workspace · ${launch.kind === "session" ? "First message" : "First command"}`
+            ? `New workspace · ${launch.kind === "session" ? "First message" : "Terminal"}`
             : launch.kind === "session"
               ? "Launch Session · First message"
-              : "Launch Terminal · First command",
+              : "Launch Terminal · Enter to create",
         )
       : this.draftWorkspaceId
         ? this.theme.label("First message → New session")
@@ -2137,20 +2138,32 @@ function workspaceControlRows(state: AppState, theme: DeckTheme, width: number):
   const draft = state.newWorkspace;
   if (!draft) return [];
   const project = state.directory.projects.find((item) => item.id === draft.projectId);
-  const firstTab = `[Ctrl-T] ${draft.launch.kind === "session" ? "Session" : "Terminal"}`;
-  const left = `[md] ${project?.name ?? "Project unset"}  [mw] ${draft.placement === "worktree" ? "Worktree" : "Local"}`;
+  const profile = draft.launch.profiles?.find((item) => item.id === draft.launch.profileId);
+  const firstTab = `[Ctrl-T] ${draft.launch.kind === "session" ? "Session" : (profile?.name ?? "Terminal")}`;
+  const common = `[md] ${project?.name ?? "Project unset"}  [mw] ${draft.placement === "worktree" ? "Worktree" : "Local"}`;
+  const base = draft.placement === "worktree" ? `[mb] ${draft.baseRef ?? "Base ref unset"}` : "";
   const leftWidth = Math.max(1, width - terminalDisplayWidth(firstTab) - 2);
-  const clipped = theme.clipOwnedLabel(left, leftWidth);
-  const row = `${clipped}${" ".repeat(Math.max(1, width - terminalDisplayWidth(clipped) - terminalDisplayWidth(firstTab)))}${firstTab}`;
-  return [
-    row,
-    ...(draft.placement === "worktree" ? [`[mb] Base ref · ${draft.baseRef ?? "unset"}`] : []),
-    ...(draft.placementLoading
-      ? ["Resolving advertised origin default…"]
-      : draft.placementError
-        ? [draft.placementError]
-        : []),
-  ].map((line) => theme.clipOwnedLabel(line, width));
+  const all = common + (base ? `  ${base}` : "");
+  const fits = terminalDisplayWidth(all) <= leftWidth;
+  const left = theme.clipOwnedLabel(fits ? all : common, leftWidth);
+  const row = `${left}${" ".repeat(Math.max(1, width - terminalDisplayWidth(left) - terminalDisplayWidth(firstTab)))}${firstTab}`;
+  const baseRows =
+    fits || !base
+      ? []
+      : terminalDisplayWidth(base) <= width
+        ? [base]
+        : ["[mb] Base ref", ...wrapTerminalText(draft.baseRef ?? "unset", width)];
+  const placementStatus =
+    draft.placement === "worktree"
+      ? draft.placementLoading
+        ? ["Resolving advertised origin default…"]
+        : draft.placementError
+          ? [draft.placementError]
+          : []
+      : !project?.path
+        ? ["Choose a Project with an original checkout directory."]
+        : [];
+  return [row, ...baseRows, ...placementStatus].map((line) => theme.clipOwnedLabel(line, width));
 }
 
 /** The existing session's controls use the command inventory for their cues and availability. */
@@ -3752,6 +3765,8 @@ export class DeckTui {
                 ...(this.state.newWorkspace
                   ? [
                       "New workspace: md Project; mw Local/Worktree; mb full Base ref (Worktree).",
+                      "Ctrl-T chooses Session/Terminal/profile without creating; Session input/settings stay retained.",
+                      "Terminal-first Enter creates without a prompt and never sends retained Session text.",
                       "Worktree defaults to origin advertised HEAD; unresolved Base blocks creation.",
                       "Idle Normal Enter creates; Escape retains draft; palette Discard restores previous view.",
                     ]
@@ -4111,6 +4126,8 @@ export class DeckTui {
                 ...(this.state.newWorkspace
                   ? [
                       "New workspace: md Project; mw Local/Worktree; mb full Base ref (Worktree).",
+                      "Ctrl-T chooses Session/Terminal/profile without creating; Session input/settings stay retained.",
+                      "Terminal-first Enter creates without a prompt and never sends retained Session text.",
                       "Worktree defaults to origin advertised HEAD; unresolved Base blocks creation.",
                       "Idle Normal Enter creates; Escape retains draft; palette Discard restores previous view.",
                     ]
@@ -4192,21 +4209,27 @@ export class DeckTui {
           category: "Terminal profiles",
         })),
       ];
+      const firstTabDraft = modal.firstTab ? this.state.newWorkspace?.launch : undefined;
+      const title = modal.firstTab ? "Choose first Tab" : "New Tab";
       component = new SearchableChoiceDialog(
-        "New Tab",
+        title,
         choices,
         (value) => {
           const selected = choices.find((item) => item.value === value);
           if (selected) this.emit({ type: "new-tab-choice", choice: selected.choice });
         },
         close,
-        "session",
+        firstTabDraft?.kind === "terminal"
+          ? firstTabDraft.profileId
+            ? `profile:${firstTabDraft.profileId}`
+            : "terminal"
+          : "session",
         Math.max(1, this.choicePickerMaxVisible(true) - 2),
         this.theme,
         true,
       );
       overlayOptions = {
-        width: centeredChoicePickerWidth(this.terminal.columns, "New Tab", choices),
+        width: centeredChoicePickerWidth(this.terminal.columns, title, choices),
         maxHeight: Math.max(1, this.terminal.rows - 2),
         margin: 1,
         visible: (columns, rows) => shellLayout(columns, rows, this.treeWidth).supported,
