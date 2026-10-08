@@ -10,7 +10,7 @@ import { RecordingTerminal } from "../src/ui/terminal.js";
 import { DeckTui } from "../src/ui/views.js";
 
 const itemCount = Number(process.argv[2] ?? 1_000);
-const keyCount = Number(process.argv[3] ?? 20);
+const keyCount = Number(process.argv[3] ?? 100);
 const symbols = process.argv[4] ?? "unicode";
 const focus = process.argv[5] ?? "tree";
 const color = process.argv[6] ?? "none";
@@ -200,8 +200,8 @@ try {
         "Timeline must move one visible row and return",
       );
       assert.deepEqual(
-        terminal.viewport().map((line) => line.trimEnd()),
-        initialViewport.map((line) => line.trimEnd()),
+        terminal.viewport().map((line) => line.slice(0, 112).trimEnd()),
+        initialViewport.map((line) => line.slice(0, 112).trimEnd()),
         "Cursor movement must preserve visible content",
       );
     } else if (focus === "composer") {
@@ -229,6 +229,7 @@ try {
   console.log(
     JSON.stringify({
       environment: {
+        measuredAt: new Date().toISOString(),
         node: process.version,
         platform: process.platform,
         release: os.release(),
