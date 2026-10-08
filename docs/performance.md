@@ -65,3 +65,36 @@ No concurrent test/build/benchmark or isolated daemon jobs ran during the reserv
 RecordingTerminal uses a headless xterm emulator. These timings do not measure physical terminal paint, keyboard delivery, display refresh, the production daemon, provider execution or live-network latency. Cold display is not process launch. One cold/replacement observation per process does not establish a percentile or service-level target. A finite synthetic fixture cannot establish responsiveness for every message type, history size, terminal width, runtime pause or machine load. Supported color/symbol modes are measured with explicitly injected appearance; this does not verify capability detection in a physical terminal.
 
 The September measurements recorded before spec #72 used different implementations, sample counts and in some cases different fixtures. They remain historical ADR context and are not evidence for these results.
+
+## Final #93 integration rerun
+
+The declared 24-process sequential sweep was repeated after the final Composer cursor/selection repaint fix (base `63593ad` plus #93). All 24 processes passed visible outcome assertions and idle p95 <50 ms. Raw external evidence: `/tmp/paseo-spec-72/bench-93-final.jsonl`. Each used the unchanged 1,000-item/30-Workspace/90-Session/120x35 fixture, 10 excluded warmups and 100 measured keys. The earlier pre-fix sweep is retained separately as `bench-93-before-repaint.jsonl`; its values are not mixed into this table.
+
+| Symbols | Color | Context | Idle median ms | Idle p95 ms | Cold single observation ms | Replacement single observation ms |
+| --- | --- | --- | --- | --- | --- | --- |
+| unicode | none | composer | 14.935457999999926 | 16.871583999999984 | 317.57108299999993 | 271.8811249999999 |
+| unicode | none | tree | 14.960375000000113 | 17.907042000000274 | 332.456917 | 341.47733299999993 |
+| unicode | none | timeline | 14.858957999999802 | 16.63779199999999 | 315.697125 | 300.8463750000001 |
+| unicode | ansi16 | composer | 14.964958000000024 | 16.391166999999996 | 308.010167 | 283.05329200000006 |
+| unicode | ansi16 | tree | 14.585250000000087 | 17.522917000000234 | 343.261709 | 327.4928749999999 |
+| unicode | ansi16 | timeline | 14.448707999999897 | 18.96804199999997 | 449.550042 | 320.79287499999987 |
+| unicode | ansi256 | composer | 14.745916000000307 | 18.467415999999957 | 352.531583 | 360.4458340000001 |
+| unicode | ansi256 | tree | 14.750708000000031 | 16.363459000000148 | 366.96091700000005 | 312.3104169999999 |
+| unicode | ansi256 | timeline | 14.60458299999982 | 15.638374999999996 | 407.32766699999996 | 277.455458 |
+| unicode | truecolor | composer | 14.744333000000097 | 15.971708999999919 | 325.847542 | 388.545875 |
+| unicode | truecolor | tree | 14.686584000000039 | 16.342291999999816 | 329.730875 | 326.757208 |
+| unicode | truecolor | timeline | 14.78970900000013 | 21.009040999999797 | 310.67975 | 280.365458 |
+| ascii | none | composer | 15.151375000000144 | 16.637916000000132 | 290.874834 | 261.4827909999999 |
+| ascii | none | tree | 15.01545800000008 | 16.227750000000015 | 321.97716699999995 | 265.05725000000007 |
+| ascii | none | timeline | 16.11658299999999 | 38.15929099999994 | 293.352541 | 389.575334 |
+| ascii | ansi16 | composer | 14.880750000000262 | 17.43466699999999 | 422.116 | 299.2696669999999 |
+| ascii | ansi16 | tree | 14.978582999999617 | 17.38149999999996 | 332.80054199999995 | 345.8341670000001 |
+| ascii | ansi16 | timeline | 14.970749999999953 | 16.24504100000013 | 311.58579199999997 | 255.643959 |
+| ascii | ansi256 | composer | 14.966875000000073 | 18.57400000000007 | 305.884334 | 317.9492909999999 |
+| ascii | ansi256 | tree | 15.240166999999929 | 17.219750000000204 | 383.801458 | 307.2885 |
+| ascii | ansi256 | timeline | 14.814542000000074 | 17.247542000000067 | 390.14104199999997 | 286.20170799999994 |
+| ascii | truecolor | composer | 15.051124999999956 | 26.20404099999996 | 317.64379199999996 | 329.2618749999999 |
+| ascii | truecolor | tree | 15.289209000000028 | 17.11245800000006 | 319.00095799999997 | 266.906833 |
+| ascii | truecolor | timeline | 14.978542000000289 | 17.69404099999997 | 338.36354100000005 | 257.954834 |
+
+Environment: {"measuredAt": "2026-10-08T13:13:02.536Z", "node": "v26.10.0", "platform": "darwin", "release": "27.0.0", "arch": "arm64", "cpu": "Apple M2 Pro"}. Native daemons were stopped and there were no concurrent tests/builds/captures/probes during this reserved sweep. Headless first-write, cold/replacement and physical-host limits above still apply.

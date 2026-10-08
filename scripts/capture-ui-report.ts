@@ -1,6 +1,9 @@
-import { mkdir, writeFile } from "node:fs/promises";
+import { execFileSync } from "node:child_process";
+import { access, mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { ApplicationController } from "../src/app/controller.js";
 import type { AppState, SessionDraft } from "../src/contracts/app-state.js";
+import { FakePaseoGateway } from "../src/paseo/fake-gateway.js";
 import type { TerminalAppearance } from "../src/ui/capabilities.js";
 import { NARROW_SIDEBAR_BREAKPOINT } from "../src/ui/layout.js";
 import { RecordingTerminal } from "../src/ui/terminal.js";
@@ -8,7 +11,8 @@ import { terminalDisplayWidth } from "../src/ui/text-safety.js";
 import { DeckTui } from "../src/ui/views.js";
 
 const outputDirectory = process.argv[2];
-if (!outputDirectory) throw new Error("Usage: tsx scripts/capture-ui-report.ts <output-directory>");
+if (!outputDirectory)
+  throw new Error("Usage: tsx scripts/capture-ui-report.ts <output-directory> [shot-name ...]");
 
 const baseState = syntheticState();
 const { selectedAgentId: _selectedAgentId, ...terminalBaseState } = baseState;
@@ -65,6 +69,7 @@ const newWorkspaceState = {
   newWorkspace: {
     projectId: "live-project",
     title: "",
+    placement: "local",
     launch: { ...draftFixture, kind: "session", command: "" },
   },
 } satisfies AppState;
@@ -119,7 +124,7 @@ const shots: Array<{
     columns: 100,
     rows: 28,
     state: baseState,
-    input: ["\u000b", "toggle"],
+    input: ["\u0010", "toggle"],
   },
   {
     name: "new-tab-picker",
@@ -234,7 +239,7 @@ const shots: Array<{
           kind: "session",
           command: "",
           prompt: "Improve sidebar navigation",
-          error: "Remote base refresh failed: origin unreachable. Press \\s to retry.",
+          error: "Remote base refresh failed: origin unreachable. Press Enter in Normal to retry.",
         },
       },
     },
@@ -254,7 +259,7 @@ const shots: Array<{
           command: "",
           prompt: "Improve sidebar navigation",
           error:
-            "Could not create workspace: Remote Base ref refresh is unsupported for remote daemons. Choose a local Base ref, or connect to a verified local daemon without --host.. Press \\s to retry.",
+            "Could not create workspace: Remote Base ref refresh is unsupported for remote daemons. Choose a local Base ref, or connect to a verified local daemon without --host.. Press Enter in Normal to retry.",
         },
       },
     },
@@ -269,6 +274,7 @@ const shots: Array<{
       ...newWorkspaceState,
       newWorkspace: {
         projectId: "live-project",
+        placement: "local",
         title: "Dev server",
         launch: { ...draftFixture, kind: "terminal", command: "npm run dev" },
       },
@@ -282,6 +288,7 @@ const shots: Array<{
       ...newWorkspaceState,
       newWorkspace: {
         projectId: "live-project",
+        placement: "local",
         title: "Feature",
         launch: {
           ...draftFixture,
@@ -301,13 +308,14 @@ const shots: Array<{
       ...newWorkspaceState,
       newWorkspace: {
         projectId: "live-project",
+        placement: "local",
         title: "Feature",
         launch: {
           ...draftFixture,
           kind: "session",
           command: "",
           prompt: "Build the Local workspace flow",
-          error: "Could not create workspace: disconnected. Press \\s to retry.",
+          error: "Could not create workspace: disconnected. Press Enter in Normal to retry.",
         },
       },
     },
@@ -317,12 +325,6 @@ const shots: Array<{
     columns: 100,
     rows: 28,
     state: { ...newWorkspaceState, modal: { type: "new-workspace-project" } },
-  },
-  {
-    name: "new-workspace-title",
-    columns: 100,
-    rows: 28,
-    state: { ...newWorkspaceState, modal: { type: "new-workspace-title" } },
   },
   { name: "launch-session", columns: 100, rows: 28, state: launchState },
   { name: "launch-session-narrow", columns: 52, rows: 18, state: launchState },
@@ -371,7 +373,8 @@ const shots: Array<{
           ...draftFixture,
           kind: "terminal",
           command: "npm run dev",
-          error: "Could not launch terminal: connection interrupted. Press \\s to retry.",
+          error:
+            "Could not launch terminal: connection interrupted. Press Enter in Normal to retry.",
         },
       },
     },
@@ -388,7 +391,8 @@ const shots: Array<{
           kind: "session",
           command: "",
           prompt: "Build the workspace launch flow",
-          error: "Could not launch session: connection interrupted. Press \\s to retry.",
+          error:
+            "Could not launch session: connection interrupted. Press Enter in Normal to retry.",
         },
       },
     },
@@ -681,7 +685,7 @@ const shots: Array<{
     },
   },
   {
-    name: "terminal-normal",
+    name: "terminal-direct-input",
     columns: 100,
     rows: 28,
     state: {
@@ -710,7 +714,7 @@ const shots: Array<{
     },
   },
   {
-    name: "terminal-insert",
+    name: "terminal-direct-empty",
     columns: 100,
     rows: 28,
     state: {
@@ -783,19 +787,19 @@ const shots: Array<{
     },
   },
   {
-    name: "composer-visual",
+    name: "composer-visual-character",
     columns: 100,
     rows: 28,
     state: {
       ...baseState,
       focus: "composer",
-      composerMode: "visual",
+      composerMode: "normal",
       composer: {
         ...baseState.composer,
         drafts: { "agent-atlas-1234": "Read the release notes before sending." },
       },
     },
-    input: ["0"],
+    input: ["g", "g", "0", "v", "l", "l", "l", "l", "l"],
   },
   {
     name: "composer-sending",
@@ -976,7 +980,7 @@ const shots: Array<{
     input: ["g", "g", "j", "V", "j", "j"],
   },
   {
-    name: "timeline-buffer-visual-block",
+    name: "timeline-buffer-visual-character",
     columns: 100,
     rows: 28,
     state: withTimeline(baseState, "timeline-buffer", [
@@ -992,7 +996,7 @@ const shots: Array<{
         text: "The release is ready.\nReview the notes and publish.",
       },
     ]),
-    input: ["g", "g", "j", "\u0016", "j", "l", "l", "l", "l", "l"],
+    input: ["g", "g", "j", "v", "l", "l", "l", "l", "l"],
   },
   {
     name: "active-turn",
@@ -1135,8 +1139,8 @@ const shots: Array<{
     columns: 100,
     rows: 28,
     state: {
-      ...baseState,
-      modal: { type: "create-agent", workspaceId: "workspace-main", step: "provider" },
+      ...draftState,
+      modal: { type: "draft-setting", workspaceId: "workspace-main", setting: "provider" },
     },
   },
   {
@@ -1144,8 +1148,8 @@ const shots: Array<{
     columns: 100,
     rows: 28,
     state: {
-      ...baseState,
-      modal: { type: "create-agent", workspaceId: "workspace-main", step: "provider" },
+      ...draftState,
+      modal: { type: "draft-setting", workspaceId: "workspace-main", setting: "provider" },
     },
     appearance: { ...sampledTerminalAppearance, background: [240, 230, 220] },
   },
@@ -1154,12 +1158,11 @@ const shots: Array<{
     columns: 100,
     rows: 28,
     state: {
-      ...baseState,
+      ...draftState,
       modal: {
-        type: "create-agent",
+        type: "draft-setting",
         workspaceId: "workspace-main",
-        step: "model",
-        providerId: "codex",
+        setting: "model",
       },
     },
   },
@@ -1168,13 +1171,11 @@ const shots: Array<{
     columns: 100,
     rows: 28,
     state: {
-      ...baseState,
+      ...draftState,
       modal: {
-        type: "create-agent",
+        type: "draft-setting",
         workspaceId: "workspace-main",
-        step: "mode",
-        providerId: "codex",
-        modelId: "gpt-5.6-terra",
+        setting: "mode",
       },
     },
   },
@@ -1183,13 +1184,11 @@ const shots: Array<{
     columns: 100,
     rows: 28,
     state: {
-      ...baseState,
+      ...draftState,
       modal: {
-        type: "create-agent",
+        type: "draft-setting",
         workspaceId: "workspace-main",
-        step: "thinking",
-        providerId: "codex",
-        modelId: "gpt-5.6-terra",
+        setting: "thinking",
       },
     },
   },
@@ -1263,8 +1262,8 @@ const shots: Array<{
     columns: 52,
     rows: 12,
     state: {
-      ...baseState,
-      modal: { type: "create-agent", workspaceId: "workspace-main", step: "provider" },
+      ...draftState,
+      modal: { type: "draft-setting", workspaceId: "workspace-main", setting: "provider" },
     },
   },
   {
@@ -1320,7 +1319,7 @@ const shots: Array<{
     state: {
       ...baseState,
       focus: "tree",
-      modal: { type: "create-agent", workspaceId: "workspace-main", step: "provider" },
+      modal: { type: "draft-setting", workspaceId: "workspace-main", setting: "provider" },
     },
     appearance: { color: "ansi16", unicode: false, theme: "ember", symbols: "ascii" },
   },
@@ -1355,37 +1354,284 @@ const shots: Array<{
   },
 ];
 
-await mkdir(outputDirectory, { recursive: true });
-for (const shot of shots) {
-  const terminal = new RecordingTerminal(shot.columns, shot.rows);
-  const deck = new DeckTui(terminal, shot.state, () => undefined, {
-    appearance: shot.appearance ?? sampledTerminalAppearance,
-    renderClock: {
-      now: () => 12_000,
-      setTimeout: () => 0,
-      clearTimeout: () => undefined,
+// Required final integration capture inventory. All input-driven shots use the assembled controller below.
+shots.push(
+  ...[100, 64, 52].flatMap((columns) =>
+    ["character", "line"].map((kind) => ({
+      name: `composer-visual-${kind}-wrapped-${columns}`,
+      columns,
+      rows: 28,
+      state: {
+        ...baseState,
+        focus: "composer" as const,
+        composerMode: "normal" as const,
+        composer: {
+          ...baseState.composer,
+          drafts: {
+            "agent-atlas-1234":
+              "First logical line wraps through the reading column with alpha beta gamma delta epsilon zeta eta theta.\n  Second logical line keeps indentation.\nThird line.",
+          },
+        },
+      },
+      input: ["g", "g", "0", kind === "line" ? "V" : "v", "j", "l", "l"],
+    })),
+  ),
+  ...["offscreen", "background", "refocus"].map((phase) => ({
+    name: `timeline-visual-${phase}`,
+    columns: 100,
+    rows: 28,
+    state: withTimeline(baseState, "scroll", [
+      {
+        id: "scroll",
+        type: "user-message",
+        text: Array.from(
+          { length: 70 },
+          (_, i) => `Reference line ${i + 1}: preserve this content anchor.`,
+        ).join("\n\n"),
+      },
+    ]),
+    input: [
+      "g",
+      "g",
+      "j",
+      "^",
+      "v",
+      "l",
+      "l",
+      "\u0004",
+      ...(phase === "offscreen" ? [] : ["\u0013", "\u0004"]),
+      ...(phase === "refocus" ? ["\u000b"] : []),
+    ],
+  })),
+  {
+    name: "sidebar-combined-filters",
+    columns: 100,
+    rows: 28,
+    state: { ...baseState, focus: "tree", filter: "Main", showArchived: true, attentionOnly: true },
+  },
+  { name: "picker-filtered", columns: 100, rows: 28, state: draftState, input: ["m", "m", "Sol"] },
+  {
+    name: "picker-empty",
+    columns: 100,
+    rows: 28,
+    state: draftState,
+    input: ["m", "m", "no-such-model"],
+  },
+  {
+    name: "rename-session",
+    columns: 100,
+    rows: 28,
+    state: {
+      ...baseState,
+      focus: "composer",
+      modal: { type: "rename", agentId: "agent-atlas-1234", value: "Atlas" },
+    },
+    input: ["Review "],
+  },
+  {
+    name: "notifications",
+    columns: 100,
+    rows: 28,
+    state: {
+      ...baseState,
+      notifications: [
+        {
+          id: 1,
+          kind: "error",
+          message: "Could not send prompt",
+          detail: "Transport disconnected; draft and Session identity retained.",
+        },
+      ],
+      modal: { type: "notifications", index: 0, noticeId: 1 },
+    },
+  },
+  {
+    name: "error-details",
+    columns: 100,
+    rows: 28,
+    state: {
+      ...baseState,
+      modal: {
+        type: "error-details",
+        message: "Send failed",
+        detail:
+          "Transport disconnected.\nThe created Session remains available.\nRetry sends only the retained prompt.",
+      },
+    },
+  },
+  {
+    name: "help",
+    columns: 100,
+    rows: 28,
+    state: { ...baseState, focus: "composer" },
+    input: ["g", "?"],
+  },
+  {
+    name: "new-workspace-first-tab-profile",
+    columns: 100,
+    rows: 28,
+    state: {
+      ...worktreeWorkspaceState,
+      modal: {
+        type: "new-tab",
+        firstTab: true,
+        workspaceId: "new-workspace-draft",
+        profiles: [{ id: "tools", name: "Tools", command: "zsh" }],
+      },
+    },
+  },
+);
+
+for (const [placement, state] of [
+  ["local", newWorkspaceState],
+  ["worktree", worktreeWorkspaceState],
+] as const) {
+  shots.push({
+    name: `new-workspace-${placement}-profile`,
+    columns: 100,
+    rows: 28,
+    state: {
+      ...state,
+      newWorkspace: {
+        ...state.newWorkspace,
+        launch: {
+          ...draftFixture,
+          kind: "terminal",
+          command: "",
+          prompt: "Retained Session prompt; never sent to Terminal",
+          profileId: "tools",
+          profiles: [{ id: "tools", name: "Tools", command: "zsh" }],
+        },
+      },
     },
   });
-  deck.update(shot.state);
+}
+
+// Populate interactive Composer selections through actual editing so cursor history is reproducible.
+for (const shot of shots) {
+  if (!shot.name.startsWith("composer-visual")) continue;
+  const text = shot.state.composer.drafts["agent-atlas-1234"] ?? "";
+  shot.state = { ...shot.state, composer: { ...shot.state.composer, drafts: {} } };
+  shot.input = ["i", text, "\u001b", ...(shot.input ?? [])];
+}
+
+const sourceRevision = execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim();
+const workingTreeDirty =
+  execFileSync("git", ["status", "--porcelain"], { encoding: "utf8" }).trim().length > 0;
+const manifest: unknown[] = [];
+await mkdir(outputDirectory, { recursive: true });
+for (const shot of shots.filter(
+  (shot) => process.argv.length < 4 || process.argv.slice(3).includes(shot.name),
+)) {
+  const terminal = new RecordingTerminal(shot.columns, shot.rows);
+  const gateway = new FakePaseoGateway(shot.state.directory);
+  gateway.terminals = Object.values(shot.state.workspaceTerminals ?? {}).flat();
+  await gateway.connect();
+  const app = new ApplicationController(gateway, { initialState: shot.state });
+  const pending = new Set<Promise<void>>();
+  let clockMilliseconds = 12_000;
+  let timerId = 0;
+  const timers = new Map<number, () => void>();
+  const advanceFrame = () => {
+    clockMilliseconds += 20;
+    const callbacks = [...timers.values()];
+    timers.clear();
+    for (const callback of callbacks) callback();
+  };
+  const deck = new DeckTui(
+    terminal,
+    app.state,
+    (intent) => {
+      const effect = app.handleIntent(intent);
+      pending.add(effect);
+      void effect.finally(() => pending.delete(effect));
+    },
+    {
+      appearance: shot.appearance ?? sampledTerminalAppearance,
+      renderClock: {
+        now: () => clockMilliseconds,
+        setTimeout: (callback) => {
+          const id = ++timerId;
+          timers.set(id, callback);
+          return id;
+        },
+        clearTimeout: (id) => {
+          timers.delete(id as number);
+        },
+      },
+    },
+  );
+  const unsubscribe = app.subscribe((state) => deck.update(state));
   deck.start();
   await terminal.waitForRender();
   for (const input of shot.input ?? []) {
     terminal.sendInput(input);
+    await Promise.all(pending);
+    advanceFrame();
     await terminal.waitForRender();
   }
   await terminal.waitForRender();
   const viewport = terminal.viewport();
   const backgrounds = terminal.viewportBackgrounds();
-  const inputRow = shot.name.startsWith("new-tab-")
-    ? viewport.findIndex((line) => line.includes("New Tab")) + 1
-    : -1;
-  const cursorColumn = inputRow > 0 ? terminal.viewportInverseCells()[inputRow]?.indexOf(true) : -1;
-  const timelineCursor = shot.name.startsWith("timeline-buffer-")
-    ? terminal.viewportCursor()
-    : undefined;
-  if (inputRow > 0 && (cursorColumn === undefined || cursorColumn < 0)) {
-    throw new Error(`No visible New Tab input cursor in ${shot.name}`);
-  }
+  const emittedCursor = terminal.viewportCursor();
+  const cursor =
+    emittedCursor.row >= 0 &&
+    emittedCursor.row < shot.rows &&
+    emittedCursor.column >= 0 &&
+    emittedCursor.column < shot.columns
+      ? emittedCursor
+      : undefined;
+  const renamedBaseline: Record<string, string> = {
+    "composer-visual-character": "composer-visual",
+    "terminal-direct-input": "terminal-normal",
+    "terminal-direct-empty": "terminal-insert",
+  };
+  const baselineName = renamedBaseline[shot.name] ?? shot.name;
+  const beforePath = join("/tmp/paseo-spec-72/before-png", `${baselineName}.png`);
+  const hasBefore = await access(beforePath).then(
+    () => true,
+    () => false,
+  );
+  const metadata = {
+    name: shot.name,
+    caption: `After: ${shot.name.replaceAll("-", " ")}. ${shot.input?.length ? "Input-driven assembled application state." : "Static rendered fixture."}`,
+    requirements: captureRequirements(shot.name),
+    before: hasBefore
+      ? {
+          path: beforePath,
+          sourceRevision: "6591925",
+          limitation:
+            "Pinned old fixtures and old controls; compare geometry/behavior with the recorded input differences, not equivalent input sequences.",
+        }
+      : null,
+    missingBefore: hasBefore
+      ? null
+      : "No corresponding pinned baseline fixture; surrounding existing layouts have before/after pairs.",
+    sourceRevision,
+    workingTreeDirty,
+    columns: shot.columns,
+    rows: shot.rows,
+    appearance: shot.appearance ?? sampledTerminalAppearance,
+    input: shot.input ?? [],
+    method: shot.input?.length
+      ? "RecordingTerminal → DeckTui → ApplicationController/store; FakePaseoGateway effects"
+      : "Static AppState fixture rendered by DeckTui",
+    focus: app.state.focus,
+    composerMode: app.state.composerMode ?? "normal",
+    timelineMode: app.state.timelineMode ?? "normal",
+    emittedCursor,
+    cursor: cursor ?? null,
+    limitations:
+      "Synthetic terminal cells. SVG cursor is a rectangle at emitted position, not proof of physical cursor shape, keyboard delivery, clipboard or daemon support.",
+  };
+  manifest.push(metadata);
+  await writeFile(
+    join(outputDirectory, `${shot.name}.cells.json`),
+    JSON.stringify({ ...metadata, viewport, backgrounds }, null, 2),
+  );
+  unsubscribe();
+  await app.releaseObservations();
+  await gateway.close();
   await deck.stop();
   await writeFile(
     join(outputDirectory, `${shot.name}.svg`),
@@ -1398,12 +1644,30 @@ for (const shot of shots) {
       shot.columns >= NARROW_SIDEBAR_BREAKPOINT && (shot.appearance?.theme ?? "ember") === "ember"
         ? { columns: 34, color: "#1f1d1b" }
         : undefined,
-      inputRow > 0 && cursorColumn !== undefined && cursorColumn >= 0
-        ? { row: inputRow, column: cursorColumn }
-        : timelineCursor,
+      cursor,
     ),
     "utf8",
   );
+}
+
+await writeFile(join(outputDirectory, "manifest.json"), JSON.stringify(manifest, null, 2));
+
+function captureRequirements(name: string): string {
+  if (name.includes("search")) return "#72 appendix 2/14; bottom Main query and retained settings";
+  if (name.includes("new-workspace") || name.startsWith("launch"))
+    return "#72 appendix 19; Project/placement/Base/first Tab and partial-success states";
+  if (name.includes("composer") || name.includes("session-draft"))
+    return "#72 appendix 4-8; Composer modes, editing and selection";
+  if (name.includes("timeline") || name.includes("turn") || name.includes("tool"))
+    return "#72 appendix 2/3/7/10; Timeline geometry, selection and scrolling";
+  if (name.includes("terminal"))
+    return "#72 appendix 12/18/20; direct Terminal and captured utilities";
+  if (name.includes("permission")) return "#72 appendix 17; explicit permission decisions";
+  if (name.includes("notification") || name.includes("error") || name.includes("help"))
+    return "#72 appendix 15/16; diagnostic read-only views";
+  if (name.includes("picker") || name.includes("palette") || name.includes("rename"))
+    return "#72 appendix 5/9/13/14; searchable choice and rename fields";
+  return "#72 appendix 11; Sidebar hierarchy, activity, filtering and layout integration";
 }
 
 function syntheticState(): AppState {

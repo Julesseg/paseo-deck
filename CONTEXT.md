@@ -104,9 +104,6 @@ _Avoid_: Pane focus, focus area
 **Normal mode**:
 The default Vim mode for the Composer or Timeline. Composer Normal mode is the application's resting state; Timeline Normal mode navigates its read-only buffer. Terminals receive direct program input without a Deck Vim mode.
 
-**Application leader**:
-The backslash key (`\\`) followed by a mnemonic key in composer or timeline Normal and Visual modes. It opens a Deck action without taking a Vim buffer key. Sidebar, dialogs, and terminals retain their own bindings.
-
 **Buffer cursor**:
 The position in rendered timeline text or editable composer text that Vim motions move. Timeline text is read-only; composer operators may change it.
 
@@ -114,14 +111,14 @@ The position in rendered timeline text or editable composer text that Vim motion
 The Vim mode for entering prompt text in the Composer. Pressing Escape returns it to Normal mode.
 
 **Visual mode**:
-The Vim mode for selecting text in the composer or read-only timeline. Timeline Visual mode supports character, line, and rectangular block selections. Pressing Escape clears the selection and returns that region to normal mode.
+The Vim mode for selecting text in the composer or read-only timeline. Composer Visual selects characters or logical lines; Timeline Visual selects characters or displayed rows. Pressing Escape clears the selection and returns that region to normal mode.
 
 **Sidebar navigation**:
-The temporary active region for moving the Sidebar selection and activating Workspaces. Pressing Escape returns to composer normal mode.
+The temporary active region for moving the Sidebar selection and activating Workspaces. Pressing Escape returns to the saved Composer state or active Terminal.
 _Avoid_: Sidebar mode, tree focus
 
 **Timeline navigation**:
-The temporary active region that presents the rendered timeline as a read-only Vim buffer. Its cursor moves through rendered text; the current line is highlighted. Escape from timeline normal mode returns to composer normal mode.
+The temporary active region that presents the rendered timeline as a read-only Vim buffer. Its cursor moves through rendered text; the current line is highlighted. Escape first cancels pending input; otherwise it returns to the saved Composer mode and cursor.
 _Avoid_: Cursor mode, timeline mode, timeline selection
 
 **Activity indicator**:
