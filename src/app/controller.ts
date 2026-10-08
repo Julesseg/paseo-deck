@@ -1677,7 +1677,10 @@ export class ApplicationController {
       this.apply({
         type: "set-launch-draft",
         workspaceId: NEW_WORKSPACE_DRAFT_ID,
-        changes: { prompt, error: draft.placementError },
+        changes: {
+          [draft.launch.kind === "session" ? "prompt" : "command"]: prompt,
+          error: draft.placementError,
+        },
       });
       return;
     }

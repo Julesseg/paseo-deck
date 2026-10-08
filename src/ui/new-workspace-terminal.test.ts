@@ -322,3 +322,24 @@ it("clips a long profile name while retaining common Workspace controls", async 
     await f.stop();
   }
 });
+
+it("unavailable Worktree blocks Terminal creation without replacing the retained Session prompt", async () => {
+  const f = await fixture();
+  try {
+    f.gateway.workspacePlacement = { supportsWorktree: false, refs: [] };
+    await f.key("\u0013");
+    await f.key("n");
+    f.app.setComposerText("preserved Session prompt");
+    await f.key("\u0014");
+    await f.key("Terminal");
+    await f.key("\r");
+    await f.key("\r");
+    expect(f.gateway.createdWorkspaces).toEqual([]);
+    await f.key("\u0014");
+    await f.key("Session");
+    await f.key("\r");
+    expect(f.terminal.viewport().join("\n")).toContain("preserved Session prompt");
+  } finally {
+    await f.stop();
+  }
+});
