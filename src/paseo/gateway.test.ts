@@ -1,4 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
+import { ApplicationController } from "../app/controller.js";
+import { RecordingTerminal } from "../ui/terminal.js";
+import { DeckTui } from "../ui/views.js";
 import type { PaseoGatewayError } from "./errors.js";
 import { ProductionPaseoGateway } from "./gateway.js";
 
@@ -1378,6 +1381,7 @@ it("changes existing model through the isolated SDK lifecycle and preserves part
   const settings = {
     connect: vi.fn(async () => {}),
     close: vi.fn(async () => {}),
+    listTerminals: vi.fn(async () => ({ requestId: "list", terminals: [] })),
     renameTerminal: vi.fn(async () => ({ success: true, error: null })),
     setAgentModel: vi.fn(async () => {}),
     setAgentThinkingOption: vi.fn(async () => {
@@ -1430,6 +1434,7 @@ it("reuses the settings connection, exposes provider notices and closes it once"
   const settings = {
     connect: vi.fn(async () => {}),
     close: vi.fn(async () => {}),
+    listTerminals: vi.fn(async () => ({ requestId: "list", terminals: [] })),
     renameTerminal: vi.fn(async () => ({ success: true, error: null })),
     setAgentModel: vi.fn(async () => {}),
     setAgentThinkingOption: vi.fn(async () => ({
@@ -1488,6 +1493,7 @@ it("renames a Terminal through the owned SDK, rejects false success, and never r
     close: vi.fn(async () => {}),
     setAgentModel: vi.fn(async () => {}),
     setAgentThinkingOption: vi.fn(async () => null),
+    listTerminals: vi.fn(async () => ({ requestId: "list", terminals: [] })),
     renameTerminal: vi.fn(
       async (): Promise<{ success: boolean; error: string | null }> => ({
         success: false,
@@ -1545,4 +1551,162 @@ it("creates an existing Workspace Session without an initial prompt, then sends 
   expect(fixture.client.agents.ref).toHaveBeenLastCalledWith("new-agent");
   expect(fixture.agent.send).toHaveBeenCalledWith("initial message");
   await gateway.close();
+});
+
+it("retains authoritative Terminal display metadata across rename and repeated reads despite the public SDK projection", async () => {
+  const fixture = testClient();
+  let terminal = {
+    id: "term",
+    workspaceId: "workspace-1",
+    cwd: "/repo",
+    name: "Shell",
+    title: "Original title",
+    activity: { state: "working" as const, changedAt: 1 },
+  };
+  // SDK 0.8 TerminalSchema strips title/activity from list(), even when the daemon returns them.
+  const projectedList = vi.fn(async () => ({
+    entries: [
+      {
+        id: terminal.id,
+        workspaceId: terminal.workspaceId,
+        cwd: terminal.cwd,
+        name: terminal.name,
+      },
+    ],
+  }));
+  const client = {
+    ...fixture.client,
+    workspaces: {
+      ...fixture.client.workspaces,
+      ref: () => ({ terminals: { list: projectedList } }),
+    },
+  };
+  const settings = {
+    connect: vi.fn(async () => {}),
+    close: vi.fn(async () => {}),
+    setAgentModel: vi.fn(async () => {}),
+    setAgentThinkingOption: vi.fn(async () => null),
+    listTerminals: vi.fn(async () => ({ requestId: "list", terminals: [terminal] })),
+    renameTerminal: vi.fn(async ({ title }: { terminalId: string; title: string }) => {
+      terminal = { ...terminal, title };
+      return { success: true, error: null };
+    }),
+  };
+  const gateway = new ProductionPaseoGateway({
+    host: "127.0.0.1:6767",
+    createClient: () => client as never,
+    createSettingsClient: () => settings,
+  });
+  await gateway.connect();
+  try {
+    expect(await gateway.listTerminals("workspace-1")).toEqual([
+      {
+        id: "term",
+        workspaceId: "workspace-1",
+        cwd: "/repo",
+        name: "Shell",
+        title: "Original title",
+        activity: "working",
+      },
+    ]);
+    await gateway.execute({
+      type: "rename-terminal",
+      terminalId: "term",
+      workspaceId: "workspace-1",
+      name: "Renamed title",
+    });
+    for (let i = 0; i < 2; i++)
+      expect(await gateway.listTerminals("workspace-1")).toEqual([
+        {
+          id: "term",
+          workspaceId: "workspace-1",
+          cwd: "/repo",
+          name: "Shell",
+          title: "Renamed title",
+          activity: "working",
+        },
+      ]);
+    expect(settings.listTerminals).toHaveBeenLastCalledWith(undefined, undefined, {
+      workspaceId: "workspace-1",
+    });
+  } finally {
+    await gateway.close();
+  }
+  expect(settings.connect).toHaveBeenCalledOnce();
+  expect(settings.close).toHaveBeenCalledOnce();
+});
+
+it("shows a renamed Terminal title through the assembled app after later directory refreshes with SDK-projected public records", async () => {
+  const fixture = testClient();
+  let title = "Shell";
+  const projected = { id: "term", workspaceId: "workspace-1", cwd: "/repo", name: "Shell" };
+  const client = {
+    ...fixture.client,
+    workspaces: {
+      ...fixture.client.workspaces,
+      ref: () => ({ terminals: { list: async () => ({ entries: [projected] }) } }),
+    },
+    terminals: {
+      ref: () => ({
+        capture: async () => ({ lines: ["persistent shell output"], totalLines: 1 }),
+        write: () => {},
+      }),
+    },
+  };
+  const settings = {
+    connect: vi.fn(async () => {}),
+    close: vi.fn(async () => {}),
+    setAgentModel: vi.fn(async () => {}),
+    setAgentThinkingOption: vi.fn(async () => null),
+    listTerminals: vi.fn(async () => ({ requestId: "list", terminals: [{ ...projected, title }] })),
+    renameTerminal: vi.fn(async (input: { terminalId: string; title: string }) => {
+      title = input.title;
+      return { success: true, error: null };
+    }),
+  };
+  const gateway = new ProductionPaseoGateway({
+    host: "127.0.0.1:6767",
+    createClient: () => client as never,
+    createSettingsClient: () => settings,
+  });
+  const app = new ApplicationController(gateway);
+  await app.start();
+  const terminal = new RecordingTerminal(120, 35);
+  const deck = new DeckTui(terminal, app.state, (intent) => {
+    void app.handleIntent(intent);
+  });
+  const unsubscribe = app.subscribe((state) => deck.update(state));
+  await deck.start();
+  try {
+    await app.handleIntent({ type: "open-terminal", terminalId: "term" });
+    terminal.sendInput("\u0013");
+    terminal.sendInput("\u0010");
+    terminal.sendInput("Rename active terminal");
+    terminal.sendInput("\r");
+    await terminal.waitForRender();
+    terminal.sendInput("\u0005");
+    terminal.sendInput(" renamed");
+    terminal.sendInput("\r");
+    await terminal.waitForRender();
+    expect(app.state.modal.type).toBe("none");
+    expect(terminal.viewport().join("\n")).toContain("Shell renamed");
+    for (let i = 0; i < 2; i++) {
+      await app.handleIntent({ type: "refresh" });
+      await terminal.waitForRender();
+      expect(terminal.viewport().join("\n")).toContain("Shell renamed");
+      expect(app.state.workspaceTerminals?.["workspace-1"]).toEqual([
+        { ...projected, title: "Shell renamed" },
+      ]);
+    }
+    expect(app.state.activeTerminalId).toBe("term");
+    expect(settings.renameTerminal).toHaveBeenCalledExactlyOnceWith({
+      terminalId: "term",
+      title: "Shell renamed",
+    });
+  } finally {
+    unsubscribe();
+    await deck.stop();
+    await app.releaseObservations();
+    await gateway.close();
+  }
 });

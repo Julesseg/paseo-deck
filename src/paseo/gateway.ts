@@ -222,8 +222,14 @@ export class ProductionPaseoGateway implements PaseoGateway {
 
   public async listTerminals(workspaceId: string): Promise<readonly TerminalRecord[]> {
     try {
-      const entries = await this.requireClient().workspaces.ref(workspaceId).terminals.list();
-      return entries.entries.map(toTerminalRecord);
+      // SDK 0.8's public TerminalSchema strips title/activity. Keep the exception
+      // on the same owned internal connection as rename; never cache a guessed title.
+      const entries = await (await this.mutationClient()).listTerminals(undefined, undefined, {
+        workspaceId,
+      });
+      return entries.terminals
+        .filter((terminal) => terminal.workspaceId === workspaceId)
+        .map(toTerminalRecord);
     } catch (error) {
       throw paseoFailure(error, "protocol");
     }
@@ -1451,11 +1457,11 @@ function asRecord(value: unknown): UnknownRecord | undefined {
 
 function toTerminalRecord(value: {
   id: string;
-  workspaceId?: string;
-  cwd?: string;
+  workspaceId?: string | undefined;
+  cwd?: string | undefined;
   name: string;
-  title?: string;
-  activity?: { state: "idle" | "working" | "attention" } | null;
+  title?: string | undefined;
+  activity?: { state: "idle" | "working" | "attention" } | null | undefined;
 }): TerminalRecord {
   return {
     id: value.id,
