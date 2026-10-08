@@ -1,4 +1,9 @@
-import { isKeyRelease, matchesKey, type Terminal } from "@earendil-works/pi-tui";
+import {
+  isKeyRelease,
+  matchesKey,
+  parseOsc11BackgroundColor,
+  type Terminal,
+} from "@earendil-works/pi-tui";
 
 // Only exact Ctrl-letter chords collapse to their legacy bytes. Shift/Alt chords
 // (including distinct Ctrl-Shift-Z redo) retain their enhanced identity.
@@ -44,12 +49,22 @@ export function ownedInputTerminal(
 ): Terminal {
   let pending = "";
   let timer: ReturnType<typeof setTimeout> | undefined;
+  let replyTimer: ReturnType<typeof setTimeout> | undefined;
+  let reply = "";
+  let replyChunks: string[] = [];
+  let pasteActive = false;
+  let pasteTail = "";
   return new Proxy(terminal, {
     get(target, property) {
       if (property === "stop")
         return () => {
           clearTimeout(timer);
+          clearTimeout(replyTimer);
           pending = "";
+          reply = "";
+          replyChunks = [];
+          pasteActive = false;
+          pasteTail = "";
           target.stop();
         };
       if (property === "start")
@@ -95,7 +110,12 @@ export function ownedInputTerminal(
               }
             }
           };
-          target.start((data) => {
+          const deliver = (data: string) => {
+            const stream = pasteTail + data;
+            // biome-ignore lint/suspicious/noControlCharactersInRegex: bracketed paste uses ESC protocol markers.
+            const markers = stream.matchAll(/\u001b\[20([01])~/g);
+            for (const marker of markers) pasteActive = marker[1] === "0";
+            pasteTail = stream.slice(-5);
             if (direct()) {
               input(data);
               return;
@@ -107,7 +127,62 @@ export function ownedInputTerminal(
             clearTimeout(timer);
             pending += data;
             drain();
-          }, resize);
+          };
+          const clearReply = () => {
+            clearTimeout(replyTimer);
+            replyTimer = undefined;
+            reply = "";
+            replyChunks = [];
+          };
+          const flushReply = () => {
+            const chunks = replyChunks;
+            clearReply();
+            // An incomplete/invalid candidate must not trap later program or editor input.
+            if (chunks.length === 1 && chunks[0] === "\u001b") input("\u001b");
+            else for (const chunk of chunks) deliver(chunk);
+          };
+          const receive = (data: string) => {
+            const prefix = "\u001b]11;";
+            if (!reply && (pasteActive || (!prefix.startsWith(data) && !data.startsWith(prefix)))) {
+              deliver(data);
+              return;
+            }
+            reply += data;
+            replyChunks.push(data);
+            if (!prefix.startsWith(reply) && !reply.startsWith(prefix)) {
+              flushReply();
+              return;
+            }
+            // Escape alone retains ordinary key framing; recognized OSC gets a finite deadline.
+            if (reply === "\u001b") replyTimer = setTimeout(flushReply, 10);
+            else if (
+              replyChunks.length === 1 ||
+              (replyChunks[0] === "\u001b" && replyChunks.length === 2)
+            ) {
+              clearTimeout(replyTimer);
+              replyTimer = setTimeout(flushReply, 120);
+            }
+            if (reply.length > 4096) {
+              flushReply();
+              return;
+            }
+            const bell = reply.indexOf("\u0007", prefix.length);
+            const st = reply.indexOf("\u001b\\", prefix.length);
+            const endIndex = bell < 0 ? st : st < 0 ? bell : Math.min(bell, st);
+            if (endIndex < 0) return;
+            const end = endIndex + (endIndex === bell ? 1 : 2);
+            const response = reply.slice(0, end);
+            if (!parseOsc11BackgroundColor(response)) {
+              flushReply();
+              return;
+            }
+            const remainder = reply.slice(end);
+            clearReply();
+            // Protocol replies go directly to pi-tui's pending query, before Deck ownership.
+            inheritedInput(response);
+            if (remainder) receive(remainder);
+          };
+          target.start(receive, resize);
         };
       const value = Reflect.get(target, property, target);
       return typeof value === "function" ? value.bind(target) : value;
