@@ -786,15 +786,19 @@ describe("DeckController keyboard seam", () => {
       (intent) => {
         intents.push(intent);
         if (intent.type === "move-notification")
-          current = { ...current, activeNotificationId: intent.direction > 0 ? 2 : 1 };
+          current = {
+            ...current,
+            activeNotificationId: intent.direction > 0 ? 2 : 1,
+            modal: { type: "notifications", index: intent.direction > 0 ? 1 : 0 },
+          };
       },
     );
 
     controller.handleKey("j");
-    controller.handleKey("R");
+    controller.handleKey("r");
     controller.handleKey("\r");
     current = { ...current, activeNotificationId: 1, modal: { type: "notifications", index: 0 } };
-    controller.handleKey("E");
+    controller.invokeCommand("error-details");
 
     expect(intents).toContainEqual({ type: "move-notification", direction: 1 });
     expect(intents).toContainEqual({ type: "retry-notification", id: 2 });

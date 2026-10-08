@@ -301,7 +301,7 @@ describe("command registry", () => {
       ],
       activeNotificationId: 7,
     };
-    expectRegistryInputs(current, ["j", "\u001b[B", "k", "\u001b[A", "\r", "E", "R", "\u001b"]);
+    expectRegistryInputs(current, ["j", "\u001b[B", "k", "\u001b[A", "\r", "r", "\u001b"]);
   });
 });
 

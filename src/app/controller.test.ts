@@ -399,7 +399,7 @@ describe("ApplicationController", () => {
     expect(app.state.selectedAgentId).toBe("agent-1");
     expect(app.state.modal).toMatchObject({ requestId: "p1", queueIndex: 0 });
     await app.handleIntent({ type: "move-permission", direction: 1 });
-    expect(app.state.selectedAgentId).toBe("agent-2");
+    expect(app.state.selectedAgentId).toBe("agent-1");
     expect(app.state.modal).toMatchObject({ requestId: "p2", queueIndex: 1 });
 
     await app.handleIntent({
@@ -411,14 +411,9 @@ describe("ApplicationController", () => {
     expect(app.state.modal).toMatchObject({ submitting: true, requestId: "p2" });
     expect(app.state.directory.agents[1]?.pendingPermissions).toEqual([second]);
 
-    gateway.emitTimeline("agent-2", {
-      type: "event",
-      agentId: "agent-2",
-      event: {
-        epoch: "epoch-1",
-        sequence: 1,
-        item: { id: "permission:p2", type: "permission", request: second, resolved: true },
-      },
+    gateway.emitDirectory({
+      type: "agent-upserted",
+      agent: { ...secondAgent, pendingPermissions: [] },
     });
     await Promise.resolve();
     expect(app.state.directory.agents[1]?.pendingPermissions).toEqual([]);
