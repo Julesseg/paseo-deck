@@ -3907,7 +3907,7 @@ describe("Launch composer", () => {
       await terminal.waitForRender();
       const screen = terminal.viewport().join("\n");
       expect(screen).toContain("Launch Terminal");
-      expect(screen).toContain("First command");
+      expect(screen).toContain("Enter to create");
       expect(screen).toContain("Profile");
       for (const absent of [
         "[\\m]",
@@ -3931,7 +3931,7 @@ describe("Launch composer", () => {
       await terminal.waitForRender();
       terminal.sendInput("\r");
       await terminal.waitForRender();
-      expect(gateway.terminalInput).toEqual([{ terminalId: "fake-terminal-1", data: "pwd\r" }]);
+      expect(gateway.terminalInput).toEqual([]);
       expect(terminal.viewport().join("\n")).not.toContain("Launch Terminal");
       expect(terminal.viewport().join("\n")).toContain("Terminal");
     } finally {
@@ -4095,7 +4095,7 @@ describe("Worktree workspace controls", () => {
       await terminal.waitForRender();
       let screen = terminal.viewport().join("\n");
       expect(screen).toContain("Worktree");
-      expect(screen).toContain("Base ref · refs/remotes/origin/main");
+      expect(screen).toContain("[mb] refs/remotes/origin/main");
       expect(screen).not.toContain("Branch name");
       await app.handleIntent({ type: "open-new-workspace-base" });
       await terminal.waitForRender();
@@ -4110,7 +4110,7 @@ describe("Worktree workspace controls", () => {
       await terminal.waitForRender();
       screen = terminal.viewport().join("\n");
       expect(screen).toContain("Terminal");
-      expect(screen).toContain("Base ref · refs/heads/main");
+      expect(screen).toContain("[mb] refs/heads/main");
       await app.handleIntent({ type: "open-new-workspace-placement" });
       await terminal.waitForRender();
       expect(terminal.viewport().join("\n")).toContain("Workspace placement");

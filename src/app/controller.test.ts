@@ -1531,7 +1531,7 @@ describe("Launch recovery", () => {
 });
 
 describe("Terminal Launch", () => {
-  it("retains separate messages across mode switches and launches the chosen profile with the first command", async () => {
+  it("retains separate buffers across mode switches and launches the chosen profile without sending text", async () => {
     const gateway = new FakePaseoGateway({ ...snapshot, agents: [] });
     gateway.terminalProfiles = [{ id: "tools", name: "Tools", command: "zsh" }];
     const app = new ApplicationController(gateway);
@@ -1547,7 +1547,7 @@ describe("Terminal Launch", () => {
     expect(selectedComposerDraft(app.state)).toBe("pwd");
     await app.handleIntent({ type: "submit-launch", workspaceId: "workspace-1", prompt: "pwd" });
     expect(gateway.createdTerminals[0]?.options).toMatchObject({ command: "zsh" });
-    expect(gateway.terminalInput).toEqual([{ terminalId: "fake-terminal-1", data: "pwd\r" }]);
+    expect(gateway.terminalInput).toEqual([]);
     expect(app.state.activeTerminalId).toBe("fake-terminal-1");
     expect(app.state.launchDrafts?.["workspace-1"]).toBeUndefined();
   });
@@ -1600,12 +1600,12 @@ describe("Launch availability", () => {
 });
 
 describe("Terminal Launch failures", () => {
-  it("retains a created terminal after input fails and retries without creating a duplicate", async () => {
+  it("retains a created terminal after attachment fails and retries without creating a duplicate", async () => {
     class FailedInput extends FakePaseoGateway {
       fail = true;
-      override sendTerminalInput(id: string, data: string) {
+      override async captureTerminal(id: string) {
         if (this.fail) throw new Error("transport offline");
-        super.sendTerminalInput(id, data);
+        return super.captureTerminal(id);
       }
     }
     const gateway = new FailedInput({ ...snapshot, agents: [] });
@@ -1634,14 +1634,12 @@ describe("Terminal Launch failures", () => {
       prompt: "printf hello",
     });
     expect(gateway.createdTerminals).toHaveLength(1);
-    expect(gateway.terminalInput).toEqual([
-      { terminalId: "fake-terminal-1", data: "printf hello\r" },
-    ]);
+    expect(gateway.terminalInput).toEqual([]);
     expect(app.state.activeTerminalId).toBe("fake-terminal-1");
   });
 
   it.each(["pwd\nrm -rf .", "pwd\r", "\u001b[31m", "\u0000", " "])(
-    "rejects an unsafe first command %j before terminal creation",
+    "ignores retained text %j when creating a Terminal",
     async (command) => {
       const gateway = new FakePaseoGateway({ ...snapshot, agents: [] });
       const app = new ApplicationController(gateway);
@@ -1653,9 +1651,9 @@ describe("Terminal Launch failures", () => {
         workspaceId: "workspace-1",
         prompt: command,
       });
-      expect(gateway.createdTerminals).toEqual([]);
-      expect(selectedComposerDraft(app.state)).toBe(command);
-      expect(app.state.launchDrafts?.["workspace-1"]?.error).toContain("one command");
+      expect(gateway.createdTerminals).toHaveLength(1);
+      expect(gateway.terminalInput).toEqual([]);
+      expect(app.state.activeTerminalId).toBe("fake-terminal-1");
     },
   );
 });
@@ -1763,7 +1761,7 @@ describe("Local workspace creation", () => {
     expect(
       app.state.directory.workspaces.filter((workspace) => workspace.directory === "/original"),
     ).toHaveLength(2);
-    expect(gateway.terminalInput).toEqual([{ terminalId: "fake-terminal-1", data: "pwd\r" }]);
+    expect(gateway.terminalInput).toEqual([]);
     expect(app.state.activeTerminalId).toBe("fake-terminal-1");
   });
 });
@@ -1803,9 +1801,9 @@ describe("New workspace validation", () => {
       workspaceId: "new-workspace-draft",
       prompt: "pwd\nwhoami",
     });
-    expect(app.state.newWorkspace?.launch.error).toContain("one command");
-    expect(app.state.newWorkspace?.launch.command).toBe("pwd\nwhoami");
-    expect(gateway.createdWorkspaces).toHaveLength(0);
+    expect(gateway.createdWorkspaces).toHaveLength(1);
+    expect(gateway.terminalInput).toEqual([]);
+    expect(app.state.activeTerminalId).toBe("fake-terminal-1");
   });
 });
 

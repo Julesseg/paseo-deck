@@ -543,6 +543,39 @@ export class ApplicationController {
           this.openWorkspaceSessionDraft(intent.workspaceId);
         return;
       case "open-new-tab":
+        if (this.#state.newWorkspace && this.#state.modal.type === "none") {
+          const draft = this.#state.newWorkspace;
+          if (
+            draft.launch.submitting ||
+            draft.launch.createdTerminal ||
+            draft.launch.createdAgentId
+          )
+            return;
+          const opened: Extract<ModalState, { type: "new-tab" }> = {
+            type: "new-tab",
+            workspaceId: NEW_WORKSPACE_DRAFT_ID,
+            firstTab: true,
+            profiles: draft.launch.profiles ?? [],
+          };
+          this.apply({ type: "open-modal", modal: opened });
+          try {
+            const profiles = await this.gateway.listTerminalProfiles();
+            if (
+              (this.#state.modal as ModalState) === opened &&
+              this.#state.newWorkspace === draft
+            ) {
+              this.apply({
+                type: "set-launch-draft",
+                workspaceId: NEW_WORKSPACE_DRAFT_ID,
+                changes: { profiles },
+              });
+              this.apply({ type: "open-modal", modal: { ...opened, profiles } });
+            }
+          } catch (error) {
+            this.reportError("Could not load terminal profiles.", error);
+          }
+          return;
+        }
         if (
           !this.#state.newWorkspace &&
           this.activeWorkspace(intent.workspaceId) &&
@@ -573,6 +606,27 @@ export class ApplicationController {
         const modal = this.#state.modal;
         if (modal.type !== "new-tab" || this.inFlightTargets.has(`new-tab:${modal.workspaceId}`))
           return;
+        if (modal.firstTab) {
+          const draft = this.#state.newWorkspace?.launch;
+          if (!draft || draft.submitting || draft.createdTerminal || draft.createdAgentId) return;
+          const profileId = intent.choice.kind === "profile" ? intent.choice.profileId : undefined;
+          if (profileId && !modal.profiles?.some((profile) => profile.id === profileId)) return;
+          const kind = intent.choice.kind === "session" ? "session" : "terminal";
+          this.apply({
+            type: "set-launch-draft",
+            workspaceId: NEW_WORKSPACE_DRAFT_ID,
+            changes: {
+              kind,
+              profileId,
+              profiles: modal.profiles ?? [],
+              error: "",
+              settingsDirty:
+                draft.settingsDirty || kind !== draft.kind || profileId !== draft.profileId,
+            },
+          });
+          this.apply({ type: "close-modal" });
+          return;
+        }
         if (modal.createdTerminalId) {
           await this.handleIntent({ type: "open-terminal", terminalId: modal.createdTerminalId });
           if (this.#terminalObservations.has(modal.createdTerminalId))
@@ -1634,7 +1688,10 @@ export class ApplicationController {
       this.apply({
         type: "set-launch-draft",
         workspaceId: NEW_WORKSPACE_DRAFT_ID,
-        changes: { prompt, error: draft.placementError },
+        changes: {
+          [draft.launch.kind === "session" ? "prompt" : "command"]: prompt,
+          error: draft.placementError,
+        },
       });
       return;
     }
@@ -1645,7 +1702,7 @@ export class ApplicationController {
     const model = provider?.models.find(
       (item) => item.id === draft.launch.modelId && item.selectable,
     );
-    const terminalInput = validateTerminalLaunchInput(draft.launch, prompt);
+    const terminalInput = validateTerminalLaunchInput(draft.launch);
     const error = !project?.path
       ? "Choose a project with an original checkout directory."
       : draft.placement === "worktree" &&
@@ -1659,11 +1716,9 @@ export class ApplicationController {
               : !provider || !model
                 ? "Choose an available provider and model."
                 : undefined
-            : terminalInput.error === "command"
-              ? "Enter one command without control characters or line breaks, then retry."
-              : terminalInput.error === "profile"
-                ? "Choose an available terminal profile."
-                : undefined;
+            : terminalInput.error === "profile"
+              ? "Choose an available terminal profile."
+              : undefined;
     if (error || !project?.path) {
       this.apply({
         type: "set-launch-draft",
@@ -1743,13 +1798,9 @@ export class ApplicationController {
       this.apply({ type: "set-launch-draft", workspaceId, changes });
     };
     if (draft.kind === "terminal") {
-      const terminalInput = validateTerminalLaunchInput(draft, prompt);
-      if (!this.isConnected() || terminalInput.error === "command") {
-        update({
-          error: !this.isConnected()
-            ? "Reconnect to Paseo, then press \\s to retry."
-            : "Enter one command without control characters or line breaks, then retry.",
-        });
+      const terminalInput = validateTerminalLaunchInput(draft);
+      if (!this.isConnected()) {
+        update({ error: "Reconnect to Paseo, then press Enter to retry." });
         return;
       }
       update({ submitting: true, command: prompt, error: "" });
@@ -1764,7 +1815,6 @@ export class ApplicationController {
             : await this.gateway.createTerminal(workspaceId);
           update({ createdTerminal: terminal });
         }
-        this.gateway.sendTerminalInput(terminal.id, `${prompt}\r`);
         const keepFocus = activeLaunchWorkspaceId(this.#state) === workspaceId;
         this.apply({
           type: "set-terminals",
@@ -1776,13 +1826,19 @@ export class ApplicationController {
             terminal,
           ],
         });
+        if (keepFocus) {
+          await this.handleIntent({ type: "open-terminal", terminalId: terminal.id });
+          if (!this.#terminalObservations.has(terminal.id))
+            throw new Error(`Terminal ${shortId(terminal.id)} was created; could not attach`);
+        }
         this.apply({ type: "complete-launch", workspaceId });
-        if (keepFocus) await this.handleIntent({ type: "open-terminal", terminalId: terminal.id });
       } catch (error) {
         update({
           submitting: false,
           error: `Could not launch terminal: ${errorDetail(error)}. Press Enter to retry.`,
         });
+        if (activeLaunchWorkspaceId(this.#state) === workspaceId)
+          this.apply({ type: "set-focus", focus: "composer" });
       }
       return;
     }
@@ -2638,21 +2694,12 @@ export class ApplicationController {
   }
 }
 
-function validateTerminalLaunchInput(
-  draft: LaunchDraft,
-  command: string,
-): { profile: TerminalProfile | undefined; error: "command" | "profile" | undefined } {
+function validateTerminalLaunchInput(draft: LaunchDraft): {
+  profile: TerminalProfile | undefined;
+  error: "profile" | undefined;
+} {
   const profile = draft.profiles?.find((item) => item.id === draft.profileId);
-  const invalidCommand =
-    !command.trim() ||
-    Array.from(command).some((character) => {
-      const code = character.charCodeAt(0);
-      return code < 32 || (code >= 127 && code <= 159);
-    });
-  return {
-    profile,
-    error: invalidCommand ? "command" : draft.profileId && !profile ? "profile" : undefined,
-  };
+  return { profile, error: draft.profileId && !profile ? "profile" : undefined };
 }
 
 function availabilityMessage(

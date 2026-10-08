@@ -67,6 +67,7 @@ export type ModalState =
   | { type: "create-terminal"; workspaceId: string; name: string; error?: string }
   | {
       type: "new-tab";
+      firstTab?: boolean;
       workspaceId: string;
       profiles?: readonly TerminalProfile[];
       createdTerminalId?: string;
