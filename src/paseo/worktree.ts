@@ -38,6 +38,7 @@ export function createWorkspaceMetadataClient(target: PaseoTarget): WorkspaceMet
 export async function workspacePlacement(
   metadata: WorkspaceMetadataClient,
   directory: string,
+  verifyLocal: () => Promise<void> = async () => {},
 ): Promise<WorkspacePlacement> {
   let status = await metadata.getCheckoutStatus(directory);
   if (
@@ -52,37 +53,41 @@ export async function workspacePlacement(
     if (status.error)
       throw new Error(typeof status.error === "string" ? status.error : status.error.message);
   }
-  const base = status.baseRef
-    ?.replace(/^refs\/remotes\/origin\//, "")
-    .replace(/^refs\/heads\//, "")
-    .replace(/^origin\//, "");
-  const branches = await metadata.getBranchSuggestions({ cwd: directory, limit: 200 });
-  if (branches.error)
-    throw new Error(typeof branches.error === "string" ? branches.error : branches.error.message);
-  const details = [...(branches.branchDetails ?? [])];
-  if (base && !details.some((branch) => branch.name === base)) {
-    const defaults = await metadata.getBranchSuggestions({
-      cwd: directory,
-      query: base,
-      limit: 200,
-    });
-    if (defaults.error)
-      throw new Error(typeof defaults.error === "string" ? defaults.error : defaults.error.message);
-    details.push(...(defaults.branchDetails ?? []).filter((branch) => branch.name === base));
+  await verifyLocal();
+  try {
+    const run = async (args: string[]) =>
+      (
+        await promisify(execFile)("git", ["-C", directory, ...args], {
+          timeout: 15_000,
+          env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
+          maxBuffer: 1024 * 1024,
+        })
+      ).stdout;
+    const advertisement = await run(["ls-remote", "--symref", "origin", "HEAD"]);
+    const targets = advertisement.split("\n").filter((line) => line.startsWith("ref: "));
+    const match =
+      targets.length === 1 ? /^ref: (refs\/heads\/[^\s]+)\tHEAD$/u.exec(targets[0] ?? "") : null;
+    if (!match) throw new Error("Origin did not advertise one symbolic HEAD");
+    const defaultRef = `refs/remotes/origin/${match[1]?.slice("refs/heads/".length)}`;
+    const names = (
+      await run(["for-each-ref", "--format=%(refname)", "refs/heads", "refs/remotes/origin"])
+    )
+      .trim()
+      .split("\n")
+      .filter((ref) => ref && ref !== "refs/remotes/origin/HEAD");
+    if (!names.includes(defaultRef)) names.unshift(defaultRef);
+    const refs = names.map((ref) => ({
+      label: `${ref} (${ref.startsWith("refs/remotes/") ? "remote" : "local"})`,
+      ref,
+      remote: ref.startsWith("refs/remotes/"),
+    }));
+    return { supportsWorktree: true, refs, defaultRef };
+  } catch {
+    // Git errors can contain authenticated origin URLs; never surface their raw stderr.
+    throw new Error(
+      "Could not resolve origin default from its current advertisement. Check origin availability and retry.",
+    );
   }
-  const refs = details.flatMap((branch) => [
-    ...(branch.hasRemote
-      ? [{ label: branch.name, ref: `refs/remotes/origin/${branch.name}`, remote: true }]
-      : []),
-    ...(branch.hasLocal
-      ? [{ label: `${branch.name} (local)`, ref: `refs/heads/${branch.name}`, remote: false }]
-      : []),
-  ]);
-  const defaultRef =
-    refs.find((ref) => ref.ref === `refs/remotes/origin/${base}`)?.ref ??
-    refs.find((ref) => ref.ref === `refs/heads/${base}`)?.ref ??
-    refs[0]?.ref;
-  return { supportsWorktree: refs.length > 0, refs, ...(defaultRef ? { defaultRef } : {}) };
 }
 
 /** Refresh only the requested remote ref: a deleted branch must fail, not use stale tracking state. */

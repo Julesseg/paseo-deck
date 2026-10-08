@@ -748,9 +748,7 @@ export const deckCommands: readonly DeckCommand[] = [
     label: "New workspace",
     group: "Workspaces",
     shortcuts: ["n"],
-    contexts: ["tree"],
-    disabledReason: (state) =>
-      state.newWorkspace ? "Finish or cancel the New workspace composer first" : undefined,
+    contexts: ["tree", "composer", "timeline"],
     intent: () => ({ type: "open-new-workspace" }),
   },
   {
@@ -977,9 +975,12 @@ export function resolvedCommands(
       const buffer =
         (context === "timeline" && !state.activeTerminalId) ||
         (context === "composer" && state.composerMode !== "insert");
-      let shortcuts = buffer
-        ? (bufferShortcuts[command.id] ?? command.shortcuts)
-        : command.shortcuts;
+      let shortcuts =
+        command.id === "new-workspace" && context !== "tree"
+          ? []
+          : buffer
+            ? (bufferShortcuts[command.id] ?? command.shortcuts)
+            : command.shortcuts;
       if (
         ["new-tab", "tab-next", "tab-previous", "stop-agent", "archive-agent"].includes(
           command.id,
