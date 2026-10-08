@@ -8,6 +8,14 @@ import { DeckTui } from "./views.js";
 class LaunchGateway extends FakePaseoGateway {
   failSend = false;
   failCreate = false;
+  failProfiles = false;
+  override async listTerminalProfiles() {
+    if (this.failProfiles) {
+      this.failProfiles = false;
+      throw new Error("profiles unavailable");
+    }
+    return super.listTerminalProfiles();
+  }
   override async execute(command: AgentCommand) {
     if (command.type === "create-agent" && this.failCreate) {
       this.failCreate = false;
@@ -21,7 +29,7 @@ class LaunchGateway extends FakePaseoGateway {
     return super.execute(command);
   }
 }
-async function fixture(empty = false) {
+async function fixture(empty = false, settings = false) {
   const gateway = new LaunchGateway({
     projects: [{ id: "p", name: "Project" }],
     providers: [
@@ -29,8 +37,17 @@ async function fixture(empty = false) {
         id: "provider",
         name: "Provider",
         ready: true,
-        modeIds: [],
-        models: [{ id: "model", name: "Model", selectable: true, thinkingLevels: [] }],
+        modeIds: settings ? ["plan"] : [],
+        ...(settings ? { defaultModeId: "plan" } : {}),
+        models: [
+          {
+            id: "model",
+            name: "Model",
+            selectable: true,
+            thinkingLevels: settings ? ["high"] : [],
+            ...(settings ? { defaultThinkingLevel: "high" } : {}),
+          },
+        ],
       },
     ],
     workspaces: [
@@ -343,3 +360,83 @@ it("Sidebar c resumes a partially created empty-Workspace launch without replaci
     await f.stop();
   }
 });
+
+it("profile discovery failure offers the available Ctrl-T workflow and retry succeeds", async () => {
+  const f = await fixture(true);
+  try {
+    await f.app.handleIntent({ type: "toggle-launch-kind" });
+    f.gateway.failProfiles = true;
+    await f.app.handleIntent({ type: "open-launch-profile" });
+    await f.terminal.waitForRender();
+    expect(f.terminal.viewport().join("\n")).toContain("Ctrl-T");
+    expect(f.app.state.launchDrafts?.w?.error).toContain("Ctrl-T");
+    await f.key("\u0014");
+    expect(f.app.state.modal.type).toBe("new-tab");
+    expect(f.gateway.commands).toEqual([]);
+  } finally {
+    await f.stop();
+  }
+});
+
+it("disconnected empty-Workspace Session launch retains input and directs reconnect then Normal Enter", async () => {
+  const f = await fixture(true);
+  try {
+    f.app.setComposerText("retained launch");
+    f.gateway.emitDirectory({ type: "connection-changed", state: "disconnected" });
+    await f.app.handleIntent({
+      type: "submit-launch",
+      workspaceId: "w",
+      prompt: "retained launch",
+    });
+    await f.terminal.waitForRender();
+    expect(f.app.state.launchDrafts?.w?.error).toBe(
+      "Reconnect to Paseo, then press Enter in Normal to retry.",
+    );
+    expect(f.app.state.launchDrafts?.w?.prompt).toBe("retained launch");
+    expect(f.gateway.commands).toEqual([]);
+  } finally {
+    await f.stop();
+  }
+});
+
+it.each([false, true])(
+  "first Session retains settings and successful identity through send failure (empty Workspace: %s)",
+  async (empty) => {
+    const f = await fixture(empty, true);
+    try {
+      if (!empty) {
+        await f.key("\u0014");
+        await f.key("\r");
+      }
+      f.app.setComposerText("one first message");
+      f.gateway.failSend = true;
+      await f.key("\r");
+      expect(f.terminal.viewport().join("\n")).toContain("send unavailable");
+      expect(
+        f.app.state.directory.agents.find((agent) => agent.id === "fake-agent-1"),
+      ).toMatchObject({
+        modeId: "plan",
+        thinkingLevel: "high",
+        providerId: "provider",
+        modelId: "model",
+      });
+      await f.key("\r");
+      expect(f.gateway.commands).toEqual([
+        {
+          type: "create-agent",
+          workspaceId: "w",
+          providerId: "provider",
+          modelId: "model",
+          prompt: "",
+          modeId: "plan",
+          thinkingLevel: "high",
+        },
+        { type: "send-prompt", agentId: "fake-agent-1", prompt: "one first message" },
+        { type: "send-prompt", agentId: "fake-agent-1", prompt: "one first message" },
+      ]);
+      expect(f.app.state.activeTabIds.w).toBe("session:fake-agent-1");
+    } finally {
+      await f.stop();
+    }
+  },
+);

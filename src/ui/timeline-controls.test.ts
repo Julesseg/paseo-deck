@@ -359,19 +359,33 @@ it("failed counted finds and missing objects preserve cursor, selection, mode an
     await f.close();
   }
 });
-it("unsupported counted half-pages cancel instead of falling back to uncounted scrolling", async () => {
-  const f = await fixture(Array.from({ length: 40 }, (_, i) => `count ${i}`).join("\n\n"));
+it.each([
+  ["2", "\u0004", "\u0015"],
+  ["g", "\u001b[100;5u", "\u001b[117;5u"],
+  ["y", "\u001b[27;5;100~", "\u001b[27;5;117~"],
+])("global half-page consumes pending %s and scrolls exactly once", async (prefix, down, up) => {
+  const text = Array.from({ length: 40 }, (_, i) => `count ${i}`).join("\n\n");
+  const baseline = await fixture(text);
+  const pending = await fixture(text);
   try {
-    await f.keys("\u000b", "g", "g", "j", "^");
-    const before = f.terminal.viewport();
-    await f.keys("2", "\u0004");
-    expect(f.terminal.viewport()).toEqual(before);
-    await f.keys("l", "v", "y");
-    expect(f.clipboard()).toBe("o");
+    await baseline.keys("\u000b", "g", "g", "j", "^");
+    await pending.keys("\u000b", "g", "g", "j", "^");
+    const before = baseline.terminal.viewport();
+    await baseline.keys("\u0004");
+    await pending.keys(prefix, down);
+    expect(baseline.terminal.viewport()).not.toEqual(before);
+    expect(pending.terminal.viewport()).toEqual(baseline.terminal.viewport());
+    await baseline.keys("\u0015");
+    await pending.keys(prefix, up);
+    expect(pending.terminal.viewport()).toEqual(baseline.terminal.viewport());
+    await pending.keys("l", "v", "y");
+    expect(pending.clipboard()).toBe("o");
   } finally {
-    await f.close();
+    await baseline.close();
+    await pending.close();
   }
 });
+
 it("inclusive row-end yanks copy the final character while empty backward ranges preserve clipboard", async () => {
   const f = await fixture("last");
   try {
@@ -419,6 +433,58 @@ it("pending find and yank commands own mnemonic letters before application prefi
     await f.keys("2", "m", "p");
     expect(f.app.state.modal.type).toBe("none");
     expect(f.clipboard()).toBe("alpha ");
+  } finally {
+    await f.close();
+  }
+});
+
+it("Sidebar ignores removed page and modified-arrow aliases while Timeline retains page scrolling", async () => {
+  const f = await fixture(Array.from({ length: 60 }, (_, i) => `page ${i}`).join("\n\n"));
+  try {
+    await f.keys("\u000b");
+    await f.keys("g", "g");
+    await f.keys("\u0004");
+    await f.keys("\u0013");
+    await f.terminal.waitForRender();
+    const before = f.terminal.viewport();
+    for (const key of [
+      "\u001b[5~",
+      "\u001b[6~",
+      "\u001b[1;5A",
+      "\u001b[1;5B",
+      "\u001b[1;6A",
+      "\u001b[1;6B",
+    ]) {
+      await f.keys(key);
+      expect(f.terminal.viewport(), `removed ${JSON.stringify(key)}`).toEqual(before);
+      expect(f.app.state.focus).toBe("tree");
+    }
+    await f.keys("\u000b");
+    const timelineBefore = f.terminal.viewport();
+    await f.keys("\u001b[6~");
+    expect(f.terminal.viewport()).not.toEqual(timelineBefore);
+    await f.keys("\u001b[5~");
+    expect(f.terminal.viewport()).toEqual(timelineBefore);
+  } finally {
+    await f.close();
+  }
+});
+
+it.each([
+  ["\u0006", "\u0002"],
+  ["\u001b[102;5u", "\u001b[98;5u"],
+  ["\u001b[27;5;102~", "\u001b[27;5;98~"],
+])("Timeline page controls %j preserve read-only navigation", async (forward, backward) => {
+  const f = await fixture(Array.from({ length: 60 }, (_, i) => `page ${i}`).join("\n\n"));
+  try {
+    await f.keys("\u000b", "g", "g");
+    await f.terminal.waitForRender();
+    const before = f.terminal.viewport();
+    await f.keys(forward);
+    expect(f.terminal.viewport()).not.toEqual(before);
+    await f.keys(backward);
+    expect(f.terminal.viewport()).toEqual(before);
+    expect(f.gateway.commands).toEqual([]);
   } finally {
     await f.close();
   }

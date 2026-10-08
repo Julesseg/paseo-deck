@@ -434,13 +434,24 @@ export class DeckController {
       return true;
     }
     if ((data === "\u0015" || data === "\u0004") && !state.activeTerminalId) {
-      if (state.focus === "timeline" && (this.#timelinePrefix || this.#timelineCount)) {
-        this.cancelPendingInput();
-        return true;
-      }
+      this.cancelPendingInput();
       return this.send({ type: "scroll-timeline", direction: data === "\u0015" ? -1 : 1 });
     }
     if (state.focus === "tree" && state.modal.type === "none") {
+      // Consume removed aliases before inherited fullscreen scrolling can act.
+      if (
+        (
+          [
+            "pageUp",
+            "pageDown",
+            "ctrl+up",
+            "ctrl+down",
+            "ctrl+shift+up",
+            "ctrl+shift+down",
+          ] as const
+        ).some((key) => matchesKey(data, key))
+      )
+        return true;
       if (this.#tabPrefix === "g") {
         this.#tabPrefix = "";
         if (data === "g") return this.send({ type: "select-boundary", boundary: "start" });
@@ -595,13 +606,6 @@ export class DeckController {
         return this.send({ type: "open-create-terminal", workspaceId: state.selectedWorkspaceId });
       return true;
     }
-    if (data === "\u0015" || data === "\u0004" || data === "\u001b[5~" || data === "\u001b[6~")
-      return this.send({
-        type: "scroll-timeline",
-        direction: data === "\u0004" || data === "\u001b[6~" ? 1 : -1,
-      });
-    if (data === "\u001b[1;5A" || data === "\u001b[1;5B")
-      return this.send({ type: "scroll-timeline", direction: data === "\u001b[1;5A" ? -1 : 1 });
     if (state.focus === "timeline" && state.timelineMode !== undefined && data === "v")
       return this.send({ type: "timeline-visual", selection: "character" });
     if (global) {

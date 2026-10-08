@@ -1622,7 +1622,7 @@ for (const shot of shots.filter(
     emittedCursor,
     cursor: cursor ?? null,
     limitations:
-      "Synthetic terminal cells. SVG cursor is a rectangle at emitted position, not proof of physical cursor shape, keyboard delivery, clipboard or daemon support.",
+      "Synthetic terminal cells/backgrounds only; foreground colors are not recorded and SVG root/text colors are fixed, so injected light-background shots do not establish foreground contrast. SVG cursor is a rectangle at emitted position, not proof of physical cursor shape, keyboard delivery, clipboard or daemon support.",
   };
   manifest.push(metadata);
   await writeFile(

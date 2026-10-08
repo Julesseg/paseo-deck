@@ -3,6 +3,7 @@ import type {
   LaunchDraft,
   ModalState,
   PaseoFailureKind,
+  SessionDraft,
 } from "../contracts/app-state.js";
 import type { AgentCommand } from "../contracts/commands.js";
 import type { DirectoryUpdate, ProviderOption } from "../contracts/domain.js";
@@ -1005,7 +1006,7 @@ export class ApplicationController {
             type: "set-launch-draft",
             workspaceId: id,
             changes: {
-              error: `Could not load terminal profiles: ${errorDetail(error)}. Press \\p to retry.`,
+              error: `Could not load terminal profiles: ${errorDetail(error)}. Press Ctrl-T in Normal to retry profile discovery.`,
             },
           });
         }
@@ -1852,49 +1853,17 @@ export class ApplicationController {
           ? "Write a first message before launching."
           : !provider || !model
             ? "Choose an available provider and model."
-            : "Reconnect to Paseo, then press \\s to retry.",
+            : "Reconnect to Paseo, then press Enter in Normal to retry.",
       });
       return;
     }
     update({ submitting: true, prompt, error: "" });
     try {
-      let agentId = draft.createdAgentId;
-      if (!agentId) {
-        const result = await this.gateway.execute({
-          type: "create-agent",
-          workspaceId,
-          providerId: provider.id,
-          modelId: model.id,
-          prompt: "",
-          ...(draft.modeId ? { modeId: draft.modeId } : {}),
-          ...(draft.thinkingLevel ? { thinkingLevel: draft.thinkingLevel } : {}),
-        });
-        if (result.type !== "agent-created")
-          throw new Error("Paseo did not return the created session.");
-        agentId = result.agentId;
-        update({ createdAgentId: agentId });
-      }
-      if (!this.#state.directory.agents.some((agent) => agent.id === agentId))
-        this.apply({
-          type: "directory",
-          update: {
-            type: "agent-upserted",
-            agent: {
-              id: agentId,
-              workspaceId,
-              title: "New session",
-              status: "starting",
-              providerId: provider.id,
-              modelId: model.id,
-              availableModeIds: [],
-              availableThinkingLevels: [],
-              pendingPermissions: [],
-              needsAttention: false,
-              archived: false,
-            },
-          },
-        });
-      await this.gateway.execute({ type: "send-prompt", agentId, prompt });
+      const agentId = await this.createAndSendFirstSession(
+        workspaceId,
+        { ...draft, providerId: provider.id, modelId: model.id, prompt },
+        (createdAgentId) => update({ createdAgentId }),
+      );
       const keepFocus = activeLaunchWorkspaceId(this.#state) === workspaceId;
       this.apply({ type: "complete-launch", workspaceId });
       this.apply({
@@ -1944,49 +1913,16 @@ export class ApplicationController {
       changes: { submitting: true, error: "", prompt, dirty: true },
     });
     try {
-      let agentId = draft.createdAgentId;
-      if (!agentId) {
-        const result = await this.gateway.execute({
-          type: "create-agent",
-          workspaceId,
-          providerId: provider.id,
-          modelId: model.id,
-          prompt: "",
-          ...(draft.modeId ? { modeId: draft.modeId } : {}),
-          ...(draft.thinkingLevel ? { thinkingLevel: draft.thinkingLevel } : {}),
-        });
-        if (result.type !== "agent-created")
-          throw new Error("Paseo did not return the created session.");
-        agentId = result.agentId;
-        this.apply({
-          type: "set-session-draft",
-          workspaceId,
-          changes: { createdAgentId: agentId },
-        });
-      }
-      if (!this.#state.directory.agents.some((agent) => agent.id === agentId))
-        this.apply({
-          type: "directory",
-          update: {
-            type: "agent-upserted",
-            agent: {
-              id: agentId,
-              workspaceId,
-              title: "New session",
-              status: "starting",
-              providerId: provider.id,
-              modelId: model.id,
-              ...(draft.modeId ? { modeId: draft.modeId } : {}),
-              ...(draft.thinkingLevel ? { thinkingLevel: draft.thinkingLevel } : {}),
-              availableModeIds: [],
-              availableThinkingLevels: [],
-              pendingPermissions: [],
-              needsAttention: false,
-              archived: false,
-            },
-          },
-        });
-      await this.gateway.execute({ type: "send-prompt", agentId, prompt });
+      const agentId = await this.createAndSendFirstSession(
+        workspaceId,
+        { ...draft, providerId: provider.id, modelId: model.id, prompt },
+        (createdAgentId) =>
+          this.apply({
+            type: "set-session-draft",
+            workspaceId,
+            changes: { createdAgentId },
+          }),
+      );
       const keepFocus = activeSessionDraftWorkspaceId(this.#state) === workspaceId;
       this.apply({ type: "complete-session-draft", workspaceId, agentId: agentId });
       this.apply({
@@ -2012,6 +1948,54 @@ export class ApplicationController {
         },
       });
     }
+  }
+
+  private async createAndSendFirstSession(
+    workspaceId: string,
+    draft: SessionDraft & { providerId: string; modelId: string },
+    rememberCreated: (agentId: string) => void,
+  ): Promise<string> {
+    const settings = {
+      providerId: draft.providerId,
+      modelId: draft.modelId,
+      ...(draft.modeId ? { modeId: draft.modeId } : {}),
+      ...(draft.thinkingLevel ? { thinkingLevel: draft.thinkingLevel } : {}),
+    };
+    let agentId = draft.createdAgentId;
+    if (!agentId) {
+      const result = await this.gateway.execute({
+        type: "create-agent",
+        workspaceId,
+        ...settings,
+        prompt: "",
+      });
+      if (result.type !== "agent-created")
+        throw new Error("Paseo did not return the created session.");
+      agentId = result.agentId;
+      // Persist identity before sending: an explicit retry must never recreate it.
+      rememberCreated(agentId);
+    }
+    if (!this.#state.directory.agents.some((agent) => agent.id === agentId))
+      this.apply({
+        type: "directory",
+        update: {
+          type: "agent-upserted",
+          agent: {
+            id: agentId,
+            workspaceId,
+            title: "New session",
+            status: "starting",
+            ...settings,
+            availableModeIds: [],
+            availableThinkingLevels: [],
+            pendingPermissions: [],
+            needsAttention: false,
+            archived: false,
+          },
+        },
+      });
+    await this.gateway.execute({ type: "send-prompt", agentId, prompt: draft.prompt });
+    return agentId;
   }
 
   private async submitPrompt(agentId: string, prompt: string): Promise<void> {
