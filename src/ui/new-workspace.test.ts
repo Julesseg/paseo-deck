@@ -507,3 +507,35 @@ it("changing Project while Local preserves Session choices and returning Worktre
     await f.stop();
   }
 });
+
+it("Local remains usable when the new Project cannot resolve Worktree placement", async () => {
+  const f = await fixture();
+  try {
+    await f.key("\u0013");
+    await f.key("n");
+    await f.key("m");
+    await f.key("w");
+    await f.key("Local");
+    await f.key("\r");
+    f.app.setComposerText("Local does not need Git resolution");
+    f.gateway.getWorkspacePlacement = async () => {
+      throw new Error("origin unavailable");
+    };
+    await f.key("m");
+    await f.key("d");
+    await f.key("Other");
+    await f.key("\r");
+    expect(f.app.state.newWorkspace?.launch.error).toBe("");
+    await f.key("\r");
+    expect(f.gateway.createdWorkspaces).toEqual([{ projectId: "p2", directory: "/other" }]);
+    expect(f.gateway.commands.filter((command) => command.type === "send-prompt")).toEqual([
+      {
+        type: "send-prompt",
+        agentId: "fake-agent-1",
+        prompt: "Local does not need Git resolution",
+      },
+    ]);
+  } finally {
+    await f.stop();
+  }
+});

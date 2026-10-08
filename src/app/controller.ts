@@ -1617,7 +1617,10 @@ export class ApplicationController {
           placementError: errorDetail(error),
           launch: {
             ...current.launch,
-            error: `Could not load workspace placement: ${errorDetail(error)}`,
+            error:
+              current.placement === "worktree"
+                ? `Could not load workspace placement: ${errorDetail(error)}`
+                : current.launch.error,
           },
         },
       });
