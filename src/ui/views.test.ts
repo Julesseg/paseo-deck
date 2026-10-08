@@ -825,7 +825,7 @@ describe("composer controls", () => {
     await terminal.waitForRender();
     await deck.stop();
 
-    expect(terminal.viewport().join("\n")).toContain("E details");
+    expect(terminal.viewport().join("\n")).toContain("Enter details");
     expect(terminal.viewport().join("\n")).not.toMatch(/j\/k browse|Enter select|Esc close/);
   });
 
@@ -1483,7 +1483,7 @@ describe("terminal appearance", () => {
     const rendered = terminal.viewport().join("\n");
     await deck.stop();
 
-    expect(rendered).toContain("Press r to refresh");
+    expect(rendered).toContain("Palette: Refresh");
     expect(rendered).toContain("Choose a session tab");
     expect(rendered).not.toContain("avai\nlable");
     expect(rendered).not.toContain("ti\nmeline");
@@ -1798,8 +1798,8 @@ describe("DeckTui viewport and focus", () => {
 
     expect(terminal.viewport().join("\n")).toContain("Notifications 2/2");
     expect(terminal.viewport().join("\n")).toContain("error/command: Send failed");
-    expect(terminal.viewport().join("\n")).toContain("E details");
-    expect(terminal.viewport().join("\n")).toContain("R retry");
+    expect(terminal.viewport().join("\n")).toContain("Enter details");
+    expect(terminal.viewport().join("\n")).toContain("r retry");
   });
 
   it("renders its buffer query outside the Composer", async () => {
@@ -3535,6 +3535,9 @@ describe("DeckTui viewport and focus", () => {
     deck.update({ ...state(), modal: { type: "help" } });
     await terminal.waitForRender();
     expect(terminal.viewport().join("\n")).not.toContain("Tab  Focus next pane");
+    terminal.sendInput("G");
+    terminal.sendInput("k");
+    await terminal.waitForRender();
     expect(terminal.viewport().join("\n")).toContain("h / Left  Collapse selected branch");
     await deck.stop();
   });
@@ -3545,6 +3548,8 @@ describe("DeckTui viewport and focus", () => {
 
     deck.start();
     deck.update({ ...state(), modal: { type: "help" } });
+    await terminal.waitForRender();
+    terminal.sendInput("G");
     await terminal.waitForRender();
     expect(terminal.viewport().join("\n")).toContain("[  Narrow Sidebar");
     expect(terminal.viewport().join("\n")).toContain("]  Widen Sidebar");

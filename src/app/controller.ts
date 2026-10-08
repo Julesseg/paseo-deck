@@ -54,6 +54,10 @@ type RetryOperation =
 export class ApplicationController {
   #state: AppState;
   private confirmationSequence = 0;
+  private readonly permissionDecisions = new Map<
+    string,
+    { lastDecision: "allow" | "deny"; error?: string; submitting: boolean }
+  >();
   private quitting = false;
   private readonly inFlightConfirmations = new Set<number>();
   private readonly inFlightTargets = new Set<string>();
@@ -63,7 +67,6 @@ export class ApplicationController {
   #timelineObservation: Observation | undefined;
   #observedAgentId: string | undefined;
   #focusGeneration = 0;
-  #permissionFocusGeneration = 0;
   #creationGeneration = 0;
   #recoveryGeneration = 0;
   #nextRetryToken = 0;
@@ -1037,6 +1040,7 @@ export class ApplicationController {
           modal: {
             type: "notifications",
             index: selected ? this.#state.notifications.indexOf(selected) : 0,
+            ...(selected ? { noticeId: selected.id } : {}),
           },
         });
         return;
@@ -1046,18 +1050,40 @@ export class ApplicationController {
         if (modal.type !== "notifications" || this.#state.notifications.length === 0) return;
         const index = Math.max(
           0,
-          Math.min(this.#state.notifications.length - 1, modal.index + intent.direction),
+          Math.min(
+            this.#state.notifications.length - 1,
+            (this.#state.notifications.findIndex((item) => item.id === modal.noticeId) >= 0
+              ? this.#state.notifications.findIndex((item) => item.id === modal.noticeId)
+              : modal.index) + intent.direction,
+          ),
         );
         const notification = this.#state.notifications[index];
         if (!notification) return;
         this.apply({ type: "select-notification", id: notification.id });
-        this.apply({ type: "open-modal", modal: { type: "notifications", index } });
+        this.apply({
+          type: "open-modal",
+          modal: { type: "notifications", index, noticeId: notification.id },
+        });
         return;
       }
-      case "select-notification":
-        this.apply({ type: "select-notification", id: intent.id });
-        this.apply({ type: "close-modal" });
+      case "select-notification": {
+        const modal = this.#state.modal;
+        const notice = this.#state.notifications.find((item) => item.id === intent.id);
+        if (!notice) return;
+        this.apply({ type: "select-notification", id: notice.id });
+        this.apply({
+          type: "open-modal",
+          modal: {
+            type: "error-details",
+            message: notice.message,
+            detail: notice.detail ?? "",
+            ...(modal.type === "notifications"
+              ? { origin: { ...modal, noticeId: notice.id } }
+              : {}),
+          },
+        });
         return;
+      }
       case "open-permissions": {
         const request = pendingPermissions(this.#state)[0];
         if (request) {
@@ -1095,6 +1121,10 @@ export class ApplicationController {
         await this.options.onQuit?.();
         return;
       case "close-modal":
+        if (this.#state.modal.type === "error-details" && this.#state.modal.origin) {
+          this.apply({ type: "open-modal", modal: this.#state.modal.origin });
+          return;
+        }
         if (
           this.#state.modal.type === "confirm" &&
           this.#state.modal.action === "quit" &&
@@ -1227,7 +1257,6 @@ export class ApplicationController {
       action.modal.id === undefined
     )
       action = { ...action, modal: { ...action.modal, id: ++this.confirmationSequence } };
-    const previousModal = this.#state.modal;
     this.#state = reduceApp(this.#state, action);
     const captured = this.#state.modal;
     if (
@@ -1248,13 +1277,6 @@ export class ApplicationController {
     }
     this.pruneRetries();
     for (const listener of this.#listeners) listener(this.#state);
-    const modal = this.#state.modal;
-    if (
-      previousModal.type === "permission" &&
-      modal.type === "permission" &&
-      (previousModal.requestId !== modal.requestId || previousModal.agentId !== modal.agentId)
-    )
-      void this.focusPermissionModal(modal);
   }
 
   private async openPermission(
@@ -1269,17 +1291,9 @@ export class ApplicationController {
         requestId: request.id,
         queueIndex,
         submitting: false,
+        ...this.permissionDecisions.get(`${request.agentId}:${request.id}`),
       },
     });
-    await this.focusPermissionModal(this.#state.modal);
-  }
-
-  private async focusPermissionModal(modal: AppState["modal"]): Promise<void> {
-    if (modal.type !== "permission" || !modal.agentId || !modal.requestId) return;
-    const generation = ++this.#permissionFocusGeneration;
-    await this.selectAgent(modal.agentId);
-    if (generation !== this.#permissionFocusGeneration) return;
-    this.apply({ type: "set-focus", focus: "timeline" });
   }
 
   private async moveSelection(direction: -1 | 1): Promise<void> {
@@ -2077,6 +2091,20 @@ export class ApplicationController {
     requestId: string,
     allow: boolean,
   ): Promise<void> {
+    const target = `permission:${agentId}:${requestId}`;
+    if (
+      this.inFlightTargets.has(target) ||
+      !pendingPermissions(this.#state).some(
+        (item) => item.agentId === agentId && item.id === requestId,
+      )
+    )
+      return;
+    this.inFlightTargets.add(target);
+    const decision = {
+      lastDecision: allow ? ("allow" as const) : ("deny" as const),
+      submitting: true,
+    };
+    this.permissionDecisions.set(`${agentId}:${requestId}`, decision);
     this.apply({
       type: "permission-submitting",
       agentId,
@@ -2086,7 +2114,14 @@ export class ApplicationController {
     try {
       await this.gateway.execute({ type: "respond-permission", agentId, requestId, allow });
     } catch (error) {
+      this.permissionDecisions.set(`${agentId}:${requestId}`, {
+        ...decision,
+        submitting: false,
+        error: errorDetail(error),
+      });
       this.apply({ type: "permission-failed", agentId, requestId, error: errorDetail(error) });
+    } finally {
+      this.inFlightTargets.delete(target);
     }
   }
 
@@ -2448,6 +2483,7 @@ export class ApplicationController {
     const entry = this.#retryOperations.get(retry.token);
     if (!entry || entry.running || entry.completed) return;
     entry.running = true;
+    const retryGeneration = this.#nextRetryToken;
     try {
       switch (entry.operation.type) {
         case "terminal-kill":
@@ -2483,8 +2519,16 @@ export class ApplicationController {
       }
     } finally {
       entry.running = false;
-      entry.completed = true;
-      this.#retryOperations.delete(retry.token);
+      const failed = [...this.#retryOperations.entries()].some(
+        ([token, next]) =>
+          token > retryGeneration &&
+          JSON.stringify(next.operation) === JSON.stringify(entry.operation),
+      );
+      entry.completed = !failed;
+      if (!failed) {
+        this.#retryOperations.delete(retry.token);
+        this.apply({ type: "notification-retry-completed", token: retry.token });
+      }
     }
   }
 

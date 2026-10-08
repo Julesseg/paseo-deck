@@ -506,7 +506,10 @@ export const deckCommands: readonly DeckCommand[] = [
     disabledReason: (state) => (activeNotification(state) ? undefined : "No notification selected"),
     intent: (state) => ({
       type: "select-notification",
-      id: activeNotification(state)?.id ?? -1,
+      id:
+        state.modal.type === "notifications"
+          ? (state.modal.noticeId ?? state.notifications[state.modal.index]?.id ?? -1)
+          : -1,
     }),
   },
   {
@@ -682,14 +685,14 @@ export const deckCommands: readonly DeckCommand[] = [
     id: "refresh",
     label: "Refresh directory",
     group: "Application",
-    shortcuts: ["r"],
+    shortcuts: [],
     intent: () => ({ type: "refresh" }),
   },
   {
     id: "notifications",
     label: "Open notification history",
     group: "Application",
-    shortcuts: ["N"],
+    shortcuts: [],
     disabledReason: (state) => (state.notifications.length ? undefined : "No notifications"),
     intent: () => ({ type: "open-notifications" }),
   },
@@ -697,7 +700,7 @@ export const deckCommands: readonly DeckCommand[] = [
     id: "retry",
     label: "Retry selected failure",
     group: "Application",
-    shortcuts: ["R"],
+    shortcuts: [],
     disabledReason: (state) => {
       const retry = activeNotification(state)?.retry;
       if (!retry) return "No retryable failure selected";
@@ -709,7 +712,7 @@ export const deckCommands: readonly DeckCommand[] = [
     id: "error-details",
     label: "Show selected error details",
     group: "Application",
-    shortcuts: ["E"],
+    shortcuts: [],
     disabledReason: (state) =>
       activeNotification(state)?.detail ? undefined : "No error details available",
     intent: (state) => {
@@ -995,6 +998,7 @@ export function resolvedCommands(
         ["refresh", "notifications", "retry", "error-details", "terminal-kill"].includes(command.id)
       )
         shortcuts = [];
+      if (context === "notifications" && command.id === "retry") shortcuts = ["r"];
       const terminal = ["terminal-rename", "terminal-reconnect", "terminal-kill"].includes(
         command.id,
       )
