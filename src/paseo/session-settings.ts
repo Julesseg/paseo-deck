@@ -2,8 +2,11 @@ import { randomUUID } from "node:crypto";
 import { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import type { PaseoTarget } from "./target.js";
 
-/** SDK 0.8 public API/CLI omit model changes and Terminal rename. Own one isolated client. */
-export interface SessionSettingsClient {
+/**
+ * Owned SDK 0.8 exception: model mutation, Terminal rename, and Terminal metadata reads.
+ * Public TerminalSchema projects away title/activity; read the daemon payload to retain them.
+ */
+export interface SessionSettingsClient extends Pick<DaemonClient, "listTerminals"> {
   renameTerminal(input: {
     terminalId: string;
     title: string;
