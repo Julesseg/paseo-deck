@@ -878,7 +878,11 @@ export class ApplicationController {
           draft &&
           !draft.launch.submitting &&
           !draft.placementLoading &&
-          (intent.placement === "local" || draft.placementOptions?.supportsWorktree)
+          (intent.placement === "local"
+            ? this.#state.directory.projects.some(
+                (project) => project.id === draft.projectId && Boolean(project.path),
+              )
+            : draft.placementOptions?.supportsWorktree)
         )
           this.apply({
             type: "set-new-workspace",
@@ -893,6 +897,8 @@ export class ApplicationController {
             },
           });
         this.apply({ type: "close-modal" });
+        if (draft?.placement === "local" && this.#state.newWorkspace?.placement === "worktree")
+          await this.loadWorkspacePlacement(true);
         return;
       }
       case "new-workspace-base-choice": {
@@ -900,6 +906,8 @@ export class ApplicationController {
         if (
           draft &&
           !draft.launch.submitting &&
+          draft.placement === "worktree" &&
+          !draft.placementLoading &&
           draft.placementOptions?.refs.some((ref) => ref.ref === intent.ref)
         )
           this.apply({
@@ -1663,7 +1671,10 @@ export class ApplicationController {
           placementError: errorDetail(error),
           launch: {
             ...current.launch,
-            error: `Could not load workspace placement: ${errorDetail(error)}`,
+            error:
+              current.placement === "worktree"
+                ? `Could not load workspace placement: ${errorDetail(error)}`
+                : current.launch.error,
           },
         },
       });
