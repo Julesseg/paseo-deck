@@ -343,3 +343,29 @@ it("unavailable Worktree blocks Terminal creation without replacing the retained
     await f.stop();
   }
 });
+
+it("uses common Local placement for a configured first Terminal without sending retained text", async () => {
+  const f = await fixture();
+  try {
+    f.gateway.terminalProfiles = [{ id: "tools", name: "Tools", command: "htop" }];
+    await f.key("\u0013");
+    await f.key("n");
+    f.app.setComposerText("retained Session text");
+    await f.key("m");
+    await f.key("w");
+    await f.key("Local");
+    await f.key("\r");
+    await f.key("\u0014");
+    await f.key("Tools");
+    await f.key("\r");
+    expect(f.terminal.viewport().join("\n")).not.toContain("[mb]");
+    expect(f.gateway.createdWorkspaces).toEqual([]);
+    await f.key("\r");
+    expect(f.gateway.createdWorkspaces).toEqual([{ projectId: "p", directory: "/repo" }]);
+    expect(f.gateway.createdTerminals[0]?.options).toMatchObject({ command: "htop" });
+    expect(f.gateway.terminalInput).toEqual([]);
+    expect(f.app.state.activeTerminalId).toBe("fake-terminal-1");
+  } finally {
+    await f.stop();
+  }
+});
