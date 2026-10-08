@@ -3061,6 +3061,8 @@ export class DeckTui {
           )
             return { consume: true };
           this.composer.handleInput(data);
+          // Cursor and selection motions can change presentation without a store event.
+          this.renderScheduler.requestImmediate();
           return { consume: true };
         }
       }

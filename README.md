@@ -58,7 +58,7 @@ CI enforces one required `check` result backed by:
 
 ## Keymap
 
-Composer and timeline Normal and Visual modes use Vim buffer keys. Press `\` followed by a mnemonic key for Deck actions that would conflict with those motions. For example, `\n` enters the sidebar, `\t` enters the timeline, `\s` sends the composer prompt, and `\?` opens help. `Ctrl-K` or `Cmd-P` opens the command palette from any region.
+Composer Normal/Insert/Visual and Timeline Normal/Visual share the reviewed Vim motions. Only Composer edits text. `Ctrl-S` focuses Sidebar, `Ctrl-K` focuses Timeline, `Ctrl-P` opens the palette and `g?` opens Help in navigation/selection contexts. Searchable pickers use `Ctrl-K` for previous result. `Ctrl-U`/`Ctrl-D` scroll Timeline in the background. Idle Composer Normal `Enter` sends; Insert `Enter`/`Alt-Enter` insert newlines. `Ctrl-C` quits with dirty-draft protection.
 
 The [complete keymap](docs/keymap.md) lists every buffer motion, edit command, Deck action, terminal control, and dialog key by context.
 
@@ -103,9 +103,9 @@ Preferences never contain prompts, prompt history, timeline content, agent or pr
 
 ## Known limitations
 
-- v0.1 does not include embedded PTYs, diffs, browser panes, schedules, mobile relay pairing, SSH transport, or live model switching.
-- Stop, rename, thinking, and mode changes use documented `paseo --json` commands because the public SDK does not expose them. All other operations use the public SDK.
-- The stable 0.8.0 client reports a directory subscription ID but does not expose a public per-observation release handle, connection-state stream, or guaranteed directory-demand restoration after reconnect. Paseo Deck releases all local listeners immediately and releases server demand when the client closes; press `r` to reconnect and refresh the directory explicitly after a transport interruption. Focused timeline demand is restored by the SDK, and a replacement event triggers a fresh projected-history fetch.
+- v0.1 does not include embedded PTYs, browser panes, schedules, mobile relay pairing, or SSH transport.
+- Most operations use the public SDK. Stop, Session rename, standalone thinking-level changes and operational mode use documented shell-free CLI commands. Narrow owned package-exported internal SDK adapters handle Git metadata, supported Session model/dependent-thinking changes and Terminal rename/metadata reads; see [architecture](docs/architecture.md).
+- The stable 0.8.0 client reports a directory subscription ID but does not expose a public per-observation release handle, connection-state stream, or guaranteed directory-demand restoration after reconnect. Paseo Deck releases all local listeners immediately and releases server demand when the client closes; use palette **Refresh directory / reconnect** to reconnect and refresh the directory explicitly after a transport interruption. Focused timeline demand is restored by the SDK, and a replacement event triggers a fresh projected-history fetch.
 - Markdown rendering and fenced-code highlighting are intentionally compact for terminal use.
 - SSH targets and relay pairing offers are rejected with an actionable error; use a local or direct TCP target.
 - Preference writes assume one Paseo Deck process at a time. Concurrent processes share the same file, so the last process to save can replace presentation changes made by another running process.
@@ -124,6 +124,6 @@ The implementation uses Paseo packages and keeps SDK, CLI fallback, state, and t
 
 MIT. See [LICENSE](LICENSE).
 
-Create a workspace with sidebar `c`: choose a project with `\j`, optionally name it with `\n`, and use `\c` to choose Session or Terminal. Git projects default to Worktree placement; use `\w` to choose Local (the project's original checkout) or Worktree, and `\b` to select its Base ref. `main` refreshes `origin/main` before creation; `main (local)` uses the on-disk branch without fetching. Non-Git and unborn projects offer Local only. Remote-base refresh currently requires a verified local daemon connection without `--host`; explicit remote targets can use local base refs. A failed refresh preserves the draft and never falls back to Local. Paseo generates the worktree branch name from the session prompt or optional workspace title. Submit the first message or command with `\s`; failed initial launches keep the new workspace and inputs ready for retry.
+Create a Workspace with Sidebar `n`. In its Normal composer, `md` chooses Project, `mw` chooses Local/Worktree and `mb` chooses Worktree Base ref. Worktree is the default, using origin's actually advertised default branch. `Ctrl-T` chooses Session, Terminal or profile without creating anything. Idle Normal `Enter` creates the configured resources; Session requires a nonempty prompt, Terminal does not send the retained Session prompt. Sidebar `c` instead opens/reuses a Session draft in an existing Workspace. Failures retain successful resource identities for explicit retry.
 
-See [workspace placement compatibility](docs/workspace-placement.md) for the narrow Git metadata API exception and remote fetch constraints.
+See [workspace placement compatibility](docs/workspace-placement.md) for Git metadata and remote-fetch constraints, and [acceptance evidence](docs/acceptance-72.md) for verified scope and remaining hands-on checks.
