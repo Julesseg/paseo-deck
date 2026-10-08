@@ -2139,7 +2139,10 @@ function workspaceControlRows(state: AppState, theme: DeckTheme, width: number):
   if (!draft) return [];
   const project = state.directory.projects.find((item) => item.id === draft.projectId);
   const profile = draft.launch.profiles?.find((item) => item.id === draft.launch.profileId);
-  const firstTab = `[Ctrl-T] ${draft.launch.kind === "session" ? "Session" : (profile?.name ?? "Terminal")}`;
+  const firstTab = theme.clipOwnedLabel(
+    `[Ctrl-T] ${draft.launch.kind === "session" ? "Session" : (profile?.name ?? "Terminal")}`,
+    Math.max(1, Math.floor(width / 2)),
+  );
   const common = `[md] ${project?.name ?? "Project unset"}  [mw] ${draft.placement === "worktree" ? "Worktree" : "Local"}`;
   const base = draft.placement === "worktree" ? `[mb] ${draft.baseRef ?? "Base ref unset"}` : "";
   const leftWidth = Math.max(1, width - terminalDisplayWidth(firstTab) - 2);

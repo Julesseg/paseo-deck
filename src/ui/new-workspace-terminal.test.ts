@@ -301,3 +301,24 @@ it("Terminal-first creation still requires idle Normal and Escape preserves its 
     await f.stop();
   }
 });
+
+it("clips a long profile name while retaining common Workspace controls", async () => {
+  const f = await fixture();
+  try {
+    f.gateway.terminalProfiles = [
+      { id: "long", name: `Tools ${"長".repeat(80)}`, command: "htop" },
+    ];
+    await f.key("\u0013");
+    await f.key("n");
+    await f.key("\u0014");
+    await f.key("Tools");
+    await f.key("\r");
+    const screen = f.terminal.viewport().join("\n");
+    expect(screen).toContain("[Ctrl-T] Tools");
+    expect(screen).toContain("[md]");
+    expect(screen).toContain("[mw]");
+    expect(screen).toContain("refs/remotes/origin/advertised-default");
+  } finally {
+    await f.stop();
+  }
+});
