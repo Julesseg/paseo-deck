@@ -2908,6 +2908,7 @@ export class DeckTui {
           this.state.focus === "timeline" &&
           this.state.modal.type === "none" &&
           !this.localOverlayKey,
+        (data) => this.handleOwnedInput(data)?.consume ?? false,
       ),
       undefined,
       undefined,
@@ -2957,138 +2958,146 @@ export class DeckTui {
       () => this.timeline.takeRemappedViewport(),
     );
     this.setShellLayout();
-    this.tui.addInputListener((data) => {
-      const terminalOwns =
-        Boolean(this.state.activeTerminalId) &&
-        this.state.focus === "timeline" &&
-        this.state.modal.type === "none" &&
-        !this.localOverlayKey;
+  }
+
+  private handleOwnedInput(data: string): { consume: true } | undefined {
+    const terminalOwns =
+      Boolean(this.state.activeTerminalId) &&
+      this.state.focus === "timeline" &&
+      this.state.modal.type === "none" &&
+      !this.localOverlayKey;
+    if (
+      this.bufferQuery &&
+      !["\u0013", "\u000b", "\u0010", "\u0015", "\u0004", "\u0003"].includes(data)
+    ) {
+      if (matchesKey(data, "escape")) this.finishBufferQuery(false);
+      else this.bufferQuery.field.handleInput(data);
+      this.renderScheduler.requestImmediate();
+      return { consume: true };
+    }
+    if (!terminalOwns) {
       if (
-        this.bufferQuery &&
-        !["\u0013", "\u000b", "\u0010", "\u0015", "\u0004", "\u0003"].includes(data)
+        (
+          ["ctrl+shift+f", "ctrl+up", "ctrl+down", "ctrl+shift+up", "ctrl+shift+down"] as const
+        ).some((key) => matchesKey(data, key))
+      )
+        return { consume: true };
+      if (data === "\u0013" || data === "\u000b") {
+        const picker =
+          this.localOverlayKey === "__command-palette" ||
+          [
+            "new-tab",
+            "draft-setting",
+            "session-setting",
+            "launch-profile",
+            "new-workspace-project",
+            "new-workspace-placement",
+            "new-workspace-base",
+            "mode",
+            "thinking",
+          ].includes(this.state.modal.type);
+        const creationPicker =
+          this.state.modal.type === "create-agent" &&
+          !["prompt", "confirm"].includes(this.state.modal.step);
+        if (data === "\u000b" && (picker || creationPicker)) return undefined;
+        const destination = data === "\u0013" ? "tree" : "timeline";
+        const available =
+          destination === "tree" ||
+          Boolean(
+            this.state.selectedAgentId &&
+              !activeSessionDraftWorkspaceId(this.state) &&
+              !activeLaunchWorkspaceId(this.state),
+          );
+        if (
+          available &&
+          (this.state.focus !== destination ||
+            this.localOverlayKey ||
+            this.state.modal.type !== "none")
+        ) {
+          this.prepareInputTransition();
+          this.emit({ type: "set-focus", focus: destination });
+        }
+        return { consume: true };
+      }
+      if (data === "\u0010") {
+        if (this.localOverlayKey !== "__command-palette") {
+          this.prepareInputTransition();
+          this.openCommandPalette();
+        }
+        return { consume: true };
+      }
+      if (data === "\u0015" || data === "\u0004") {
+        this.composer.cancelPendingInput();
+        this.controller.cancelPendingInput();
+        if (
+          this.state.focus === "timeline" &&
+          !this.bufferQuery &&
+          !this.localOverlayKey &&
+          this.state.modal.type === "none"
+        ) {
+          this.controller.handleKey(data);
+          return { consume: true };
+        }
+        this.handleControllerIntent({
+          type: "scroll-timeline",
+          direction: data === "\u0015" ? -1 : 1,
+        });
+        if (this.localSnapshot)
+          this.localSnapshot = {
+            ...this.localSnapshot,
+            scrollTop: this.transcript.scrollTop,
+            following: this.transcript.isFollowingEnd,
+          };
+        return { consume: true };
+      }
+    }
+    if (!this.localOverlayKey && this.state.modal.type === "none" && !this.state.activeTerminalId) {
+      if (data.startsWith("\u001b[200~")) {
+        if (this.state.focus === "composer") this.composer.handleInput(data);
+        return { consume: true };
+      }
+      if (
+        this.state.focus === "composer" &&
+        ((data === "\u001b" && this.state.composerMode !== undefined) ||
+          !commandForKey(this.state, data))
       ) {
-        if (matchesKey(data, "escape")) this.finishBufferQuery(false);
-        else this.bufferQuery.field.handleInput(data);
+        if (
+          !(data === "\u001b" && this.state.composerMode !== undefined) &&
+          !this.composer.hasPendingCommand &&
+          this.controller.handleKey(data)
+        )
+          return { consume: true };
+        this.composer.handleInput(data);
+        // Cursor and selection motions can change presentation without a store event.
         this.renderScheduler.requestImmediate();
         return { consume: true };
       }
-      if (!terminalOwns) {
-        if (data === "\u0013" || data === "\u000b") {
-          const picker =
-            this.localOverlayKey === "__command-palette" ||
-            [
-              "new-tab",
-              "draft-setting",
-              "session-setting",
-              "launch-profile",
-              "new-workspace-project",
-              "new-workspace-placement",
-              "new-workspace-base",
-              "mode",
-              "thinking",
-            ].includes(this.state.modal.type);
-          const creationPicker =
-            this.state.modal.type === "create-agent" &&
-            !["prompt", "confirm"].includes(this.state.modal.step);
-          if (data === "\u000b" && (picker || creationPicker)) return undefined;
-          const destination = data === "\u0013" ? "tree" : "timeline";
-          const available =
-            destination === "tree" ||
-            Boolean(
-              this.state.selectedAgentId &&
-                !activeSessionDraftWorkspaceId(this.state) &&
-                !activeLaunchWorkspaceId(this.state),
-            );
-          if (
-            available &&
-            (this.state.focus !== destination ||
-              this.localOverlayKey ||
-              this.state.modal.type !== "none")
-          ) {
-            this.prepareInputTransition();
-            this.emit({ type: "set-focus", focus: destination });
-          }
-          return { consume: true };
-        }
-        if (data === "\u0010") {
-          if (this.localOverlayKey !== "__command-palette") {
-            this.prepareInputTransition();
-            this.openCommandPalette();
-          }
-          return { consume: true };
-        }
-        if (data === "\u0015" || data === "\u0004") {
-          if (
-            this.state.focus === "timeline" &&
-            !this.bufferQuery &&
-            !this.localOverlayKey &&
-            this.state.modal.type === "none"
-          ) {
-            this.controller.handleKey(data);
-            return { consume: true };
-          }
-          this.handleControllerIntent({
-            type: "scroll-timeline",
-            direction: data === "\u0015" ? -1 : 1,
-          });
-          if (this.localSnapshot)
-            this.localSnapshot = {
-              ...this.localSnapshot,
-              scrollTop: this.transcript.scrollTop,
-              following: this.transcript.isFollowingEnd,
-            };
-          return { consume: true };
-        }
-      }
-      if (
-        !this.localOverlayKey &&
-        this.state.modal.type === "none" &&
-        !this.state.activeTerminalId
-      ) {
-        if (data.startsWith("\u001b[200~")) {
-          if (this.state.focus === "composer") this.composer.handleInput(data);
-          return { consume: true };
-        }
-        if (
-          this.state.focus === "composer" &&
-          ((data === "\u001b" && this.state.composerMode !== undefined) ||
-            !commandForKey(this.state, data))
-        ) {
-          if (
-            !(data === "\u001b" && this.state.composerMode !== undefined) &&
-            !this.composer.hasPendingCommand &&
-            this.controller.handleKey(data)
-          )
-            return { consume: true };
-          this.composer.handleInput(data);
-          // Cursor and selection motions can change presentation without a store event.
-          this.renderScheduler.requestImmediate();
-          return { consume: true };
-        }
-      }
-      // Local overlays have no AppState modal, so keep global bindings from
-      // interpreting their editor/list input.
-      // Help and palette are intentionally global nested overlays. They are
-      // available above an editor/dialog without handing ordinary keys through.
-      if (data === "\u0003") return this.controller.handleKey(data) ? { consume: true } : undefined;
+    }
+    // Local overlays have no AppState modal, so keep global bindings from
+    // interpreting their editor/list input.
+    // Help and palette are intentionally global nested overlays. They are
+    // available above an editor/dialog without handing ordinary keys through.
+    if (data === "\u0003") return this.controller.handleKey(data) ? { consume: true } : undefined;
 
-      const global = commandForKey(this.state, data);
-      if (
-        global?.id === "command-palette" ||
-        (global?.id === "help" &&
-          !(this.state.focus === "composer" && this.state.composerMode === "insert") &&
-          !(this.state.focus === "timeline" && this.state.activeTerminalId))
-      )
-        return this.controller.handleKey(data) ? { consume: true } : undefined;
-      if (this.localOverlayKey === "__command-palette" || this.localOverlayKey === "__help") {
-        if (data === "\u001b") {
-          this.restoreLocalOverlay();
-          return { consume: true };
-        }
-        return undefined;
-      }
+    const global = commandForKey(this.state, data);
+    if (
+      global?.id === "command-palette" ||
+      (global?.id === "help" &&
+        !(this.state.focus === "composer" && this.state.composerMode === "insert") &&
+        !(this.state.focus === "timeline" && this.state.activeTerminalId))
+    )
       return this.controller.handleKey(data) ? { consume: true } : undefined;
-    });
+    if (this.localOverlayKey === "__command-palette" || this.localOverlayKey === "__help") {
+      if (data === "\u001b") {
+        this.restoreLocalOverlay();
+        return { consume: true };
+      }
+      return undefined;
+    }
+    const handled = this.controller.handleKey(data);
+    return handled || (this.state.focus === "tree" && this.state.modal.type === "none")
+      ? { consume: true }
+      : undefined;
   }
 
   private readonly clipboard: SharedClipboard;

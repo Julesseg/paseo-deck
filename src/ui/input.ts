@@ -1,9 +1,46 @@
 import { isKeyRelease, matchesKey, type Terminal } from "@earendil-works/pi-tui";
 
+// Only exact Ctrl-letter chords collapse to their legacy bytes. Shift/Alt chords
+// (including distinct Ctrl-Shift-Z redo) retain their enhanced identity.
+const deckControlKeys = [
+  "a",
+  "b",
+  "c",
+  "d",
+  "e",
+  "f",
+  "g",
+  "h",
+  "i",
+  "j",
+  "k",
+  "l",
+  "m",
+  "n",
+  "o",
+  "p",
+  "q",
+  "r",
+  "s",
+  "t",
+  "u",
+  "v",
+  "w",
+  "x",
+  "y",
+  "z",
+] as const;
+function normalizeDeckKey(data: string): string {
+  for (const key of deckControlKeys)
+    if (matchesKey(data, `ctrl+${key}`)) return String.fromCharCode(key.charCodeAt(0) - 96);
+  return matchesKey(data, "enter") ? "\r" : data;
+}
+
 /** Frame escape sequences and paste before any Deck or inherited handler sees input. */
 export function ownedInputTerminal(
   terminal: Terminal,
   direct: () => boolean = () => false,
+  owns: (data: string) => boolean = () => false,
 ): Terminal {
   let pending = "";
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -16,7 +53,10 @@ export function ownedInputTerminal(
           target.stop();
         };
       if (property === "start")
-        return (input: (data: string) => void, resize: () => void) => {
+        return (inheritedInput: (data: string) => void, resize: () => void) => {
+          const input = (data: string) => {
+            if (!owns(data)) inheritedInput(data);
+          };
           const drain = () => {
             while (pending) {
               if (pending.startsWith("\u001b[200~")) {
@@ -32,7 +72,7 @@ export function ownedInputTerminal(
                   return;
                 }
                 pending = pending.slice(sequence.length);
-                if (!isKeyRelease(sequence)) input(matchesKey(sequence, "enter") ? "\r" : sequence);
+                if (!isKeyRelease(sequence)) input(normalizeDeckKey(sequence));
               } else if (pending === "\u001b") {
                 timer = setTimeout(() => {
                   pending = "";

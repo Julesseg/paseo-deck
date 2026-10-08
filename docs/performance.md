@@ -98,3 +98,37 @@ The declared 24-process sequential sweep was repeated after the final Composer c
 | ascii | truecolor | timeline | 14.978542000000289 | 17.69404099999997 | 338.36354100000005 | 257.954834 |
 
 Environment: {"measuredAt": "2026-10-08T13:13:02.536Z", "node": "v26.10.0", "platform": "darwin", "release": "27.0.0", "arch": "arm64", "cpu": "Apple M2 Pro"}. Native daemons were stopped and there were no concurrent tests/builds/captures/probes during this reserved sweep. Headless first-write, cold/replacement and physical-host limits above still apply.
+
+
+## Final review input-ownership rerun
+
+Moving Deck input ownership before inherited fullscreen handlers changed the measured idle input path, so the full declared 24-process sequential sweep was repeated on base `9d6f40e` plus the review fixes in this change. No later production changes followed this measurement. All 24 processes passed visible outcome assertions and idle p95 <50 ms. Raw external evidence: `/tmp/paseo-spec-72/bench-review-fixes.jsonl`. The same 1,000-item/30-Workspace/90-Session/120x35 fixture, 10 excluded warmups and 100 measured keys were used. The #93 table above remains historical evidence for its declared revision.
+
+| Symbols | Color | Context | Idle median ms | Idle p95 ms | Cold single observation ms | Replacement single observation ms |
+| --- | --- | --- | --- | --- | --- | --- |
+| unicode | none | composer | 15.08504099999982 | 16.149582999999893 | 324.935917 | 294.647834 |
+| unicode | none | tree | 15.198583999999983 | 16.099874999999884 | 341.15979200000004 | 301.97362499999997 |
+| unicode | none | timeline | 14.912792000000081 | 16.047291999999743 | 311.715459 | 277.94000000000005 |
+| unicode | ansi16 | composer | 14.67141700000002 | 15.848124999999982 | 335.05616599999996 | 319.5249170000001 |
+| unicode | ansi16 | tree | 15.275333000000046 | 34.85470899999973 | 318.468625 | 272.08945800000015 |
+| unicode | ansi16 | timeline | 21.31433299999935 | 43.37750000000051 | 1160.9085 | 730.9688329999999 |
+| unicode | ansi256 | composer | 18.89624999999978 | 39.55762499999946 | 861.8482079999999 | 778.94875 |
+| unicode | ansi256 | tree | 15.120957999999973 | 15.868207999999868 | 344.369792 | 275.27312500000005 |
+| unicode | ansi256 | timeline | 14.863916000000245 | 20.87833300000011 | 331.3995 | 281.77750000000003 |
+| unicode | truecolor | composer | 14.946500000000015 | 15.83508299999994 | 318.58904099999995 | 298.7805410000001 |
+| unicode | truecolor | tree | 14.832292000000052 | 17.792167000000063 | 324.76775 | 358.660083 |
+| unicode | truecolor | timeline | 14.878499999999804 | 21.10216700000001 | 375.66008300000004 | 310.35679200000015 |
+| ascii | none | composer | 15.102166000000125 | 16.765249999999924 | 334.89662500000003 | 251.9375419999999 |
+| ascii | none | tree | 15.06041600000026 | 16.29712500000005 | 284.291791 | 248.90983299999994 |
+| ascii | none | timeline | 15.241791999999805 | 17.41608300000007 | 280.677209 | 249.93820799999992 |
+| ascii | ansi16 | composer | 15.01120899999978 | 16.22008299999993 | 334.406333 | 286.6310830000001 |
+| ascii | ansi16 | tree | 15.043083999999908 | 16.122666999999865 | 330.825208 | 266.89375000000007 |
+| ascii | ansi16 | timeline | 14.981417000000192 | 16.544875000000047 | 287.147208 | 258.4865 |
+| ascii | ansi256 | composer | 15.05054199999995 | 16.31708299999991 | 309.10566600000004 | 255.414583 |
+| ascii | ansi256 | tree | 15.131417000000056 | 18.631875000000036 | 313.459459 | 302.060791 |
+| ascii | ansi256 | timeline | 14.822165999999925 | 16.368167000000085 | 288.38545799999997 | 267.590291 |
+| ascii | truecolor | composer | 15.043042000000241 | 16.737082999999984 | 289.82725 | 277.4747910000001 |
+| ascii | truecolor | tree | 15.0864160000001 | 16.167124999999942 | 300.5615 | 254.50079099999994 |
+| ascii | truecolor | timeline | 14.945875000000342 | 15.975374999999985 | 313.908334 | 304.68225000000007 |
+
+First-process environment: `{"measuredAt": "2026-10-08T13:28:20.155Z", "node": "v26.10.0", "platform": "darwin", "release": "27.0.0", "arch": "arm64", "cpu": "Apple M2 Pro"}`. Root confirmed task-owned daemons and Chrome stopped; no concurrent tests/builds/captures/probes ran during this reserved sequential sweep. Headless first-write, single-observation cold/replacement and physical-host limitations above still apply.

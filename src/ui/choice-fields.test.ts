@@ -70,20 +70,23 @@ async function fixture() {
   };
 }
 
-it("LF selects a New tab result, caret motion keeps it selected, and CR executes", async () => {
-  const f = await fixture();
-  try {
-    await f.app.handleIntent({ type: "open-new-tab", workspaceId: "w" });
-    f.terminal.sendInput("\n");
-    expect(f.app.state.modal.type).toBe("new-tab");
-    f.terminal.sendInput("\u0001");
-    f.terminal.sendInput("\r");
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(f.gateway.terminals).toHaveLength(1);
-  } finally {
-    await f.stop();
-  }
-});
+it.each(["\n", "\u001b[106;5u", "\u001b[27;5;106~"])(
+  "picker next %j selects without confirming, caret keeps selection, and CR executes",
+  async (next) => {
+    const f = await fixture();
+    try {
+      await f.app.handleIntent({ type: "open-new-tab", workspaceId: "w" });
+      f.terminal.sendInput(next);
+      expect(f.app.state.modal.type).toBe("new-tab");
+      f.terminal.sendInput("\u0001");
+      f.terminal.sendInput("\r");
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(f.gateway.terminals).toHaveLength(1);
+    } finally {
+      await f.stop();
+    }
+  },
+);
 
 it("rename paste is literal single-line text and one local undo step with enhanced redo", async () => {
   const f = await fixture();
