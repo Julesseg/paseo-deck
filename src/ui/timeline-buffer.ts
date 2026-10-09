@@ -9,7 +9,8 @@ import {
   positionAt,
   wordClass,
 } from "./logical-text.js";
-import { characterStep, findTextCharacter } from "./text-buffer.js";
+import { characterOffsets, characterStep, findTextCharacter } from "./text-buffer.js";
+import { terminalDisplayWidth } from "./text-safety.js";
 /** Read-only, Vim-like state for the rendered timeline text.
  *
  * This deliberately operates on rendered plain lines rather than TimelineEvent
@@ -72,7 +73,25 @@ export function moveTimelineBuffer(
 ): TimelineBufferState {
   if (key === ";" || key === ",")
     return repeatTimelineCharacterFind(state, key === ",", Math.max(1, count));
-  const moved = moveLogicalText(state, key === "_" ? "^" : key, count);
+  let moved = moveLogicalText(state, key === "_" ? "^" : key, count);
+  if (["j", "k", "gj", "gk"].includes(key)) {
+    // Buffer offsets are UTF-16; the vertical preference belongs to terminal cells.
+    const goalColumn =
+      state.goalColumn ??
+      terminalDisplayWidth((state.lines[state.line] ?? "").slice(0, state.column));
+    const text = state.lines[moved.line] ?? "";
+    let column = 0;
+    let cells = 0;
+    const limit = cursorLimit(text);
+    const offsets = characterOffsets(text);
+    for (let index = 0; index < offsets.length - 1; index++) {
+      const offset = offsets[index] ?? 0;
+      if (cells > goalColumn || offset > limit) break;
+      column = offset;
+      cells += terminalDisplayWidth(text.slice(offset, offsets[index + 1]));
+    }
+    moved = { ...moved, column, goalColumn };
+  }
   const next = { ...state, ...moved };
   if (moved.goalColumn === undefined) delete (next as { goalColumn?: number }).goalColumn;
   delete (next as { selectionRange?: TimelineTextRange }).selectionRange;

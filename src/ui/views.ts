@@ -959,7 +959,11 @@ class TimelineView implements Component {
         const primary = item?.type === "user-message" || item?.type === "assistant-message";
         const padding = !primary && line.startsWith("    ") ? 4 : 2;
         return (
-          mapping?.region === "body" && line.startsWith("  ") ? line.slice(padding) : line
+          mapping?.region === "body" && line.startsWith("  ")
+            ? line.slice(padding)
+            : mapping?.region === "header" && !primary && line.startsWith("  ")
+              ? line.slice(2)
+              : line
         ).trimEnd();
       })
       .join("\n");
@@ -995,14 +999,18 @@ class TimelineView implements Component {
             end: to,
             text: event.content.slice(from, to),
           });
-      } else
+      } else {
+        const item = this.events[eventIndex]?.item;
+        const primary = item?.type === "user-message" || item?.type === "assistant-message";
+        const padding = mapping.region === "header" && !primary && line.startsWith("  ") ? 2 : 0;
         pieces.push({
           event: eventIndex,
           region: "header",
           start: 0,
           end: 0,
-          text: line.slice(lo, hi).trimEnd(),
+          text: line.slice(Math.max(padding, lo), Math.max(padding, hi)).trimEnd(),
         });
+      }
     }
     return printableTimelineText(
       pieces
@@ -1267,7 +1275,7 @@ class TimelineView implements Component {
       this.keepCursorAtEnd &&
       this.state.timelineNavigation[this.state.selectedAgentId]?.following !== false
     )
-      this.buffer = moveTimelineBuffer(this.buffer, "G");
+      this.buffer = { ...moveTimelineBuffer(this.buffer, "G"), column: 0 };
     this.syncSelectedIndex();
     if (wasVisual && this.buffer.mode !== "visual")
       this.selectionFeedback = "Selection cleared: timeline changed";
@@ -1568,7 +1576,9 @@ class TimelineView implements Component {
       // character sequentially into it, so repeated identical rows have separate
       // offsets and rewrapping never uses row numbers as content identity.
       const canonical = this.itemViews.get(item.id)?.canonicalLines() ?? [];
-      const contentStart = primary ? 1 : 0;
+      // Every item owns a heading. Clipped headings and synthetic separators
+      // must not consume canonical body offsets or collide with body rows.
+      const contentStart = 1;
       const canonicalText = canonical
         .slice(contentStart)
         .map((line) => line.trimEnd())
@@ -1576,9 +1586,16 @@ class TimelineView implements Component {
       let source = 0;
       const positions = lines.map((line, index) => {
         const itemRow = index - gap.length - header.length;
-        const region = itemRow < contentStart ? ("header" as const) : ("body" as const);
+        const region =
+          index < gap.length
+            ? ("gap" as const)
+            : index < gap.length + header.length
+              ? ("group" as const)
+              : itemRow < contentStart
+                ? ("header" as const)
+                : ("body" as const);
         const text = printableTimelineText(line).trimEnd();
-        if (region === "header")
+        if (region !== "body")
           return {
             region,
             offsets: Array.from({ length: Math.max(1, text.length) }, (_, column) => column),
@@ -1623,7 +1640,7 @@ type TimelineContentAnchor = {
   itemId: string;
   eventIndex: number;
   eventOrder: readonly string[];
-  region: "header" | "body";
+  region: "gap" | "group" | "header" | "body";
   offset: number;
   content: string;
   folded: boolean;
@@ -1637,7 +1654,10 @@ type TimelineLayout = {
     itemId: string;
     content: string;
     folded: boolean;
-    positions: readonly { region: "header" | "body"; offsets: readonly number[] }[];
+    positions: readonly {
+      region: "gap" | "group" | "header" | "body";
+      offsets: readonly number[];
+    }[];
     start: number;
     bodyStart: number;
     lines: readonly string[];
