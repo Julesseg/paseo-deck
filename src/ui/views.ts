@@ -19,6 +19,7 @@ import {
   VStack,
 } from "@earendil-works/pi-tui";
 import { wordWrapLine } from "@earendil-works/pi-tui/dist/components/editor.js";
+import { LAYOUT_NODE } from "@earendil-works/pi-tui/dist/layout-node.js";
 import type { AppState, ModalState } from "../contracts/app-state.js";
 import type { TimelineEvent, TimelineItem } from "../contracts/domain.js";
 import { terminalDisplayName } from "../domain/resource-actions.js";
@@ -61,6 +62,7 @@ import {
   MIN_TERMINAL_ROWS,
   MIN_TREE_WIDTH,
   NARROW_SIDEBAR_WIDTH,
+  readingColumnLayout,
   shellLayout,
 } from "./layout.js";
 import { logicalWordOffset, offsetAt, positionAt } from "./logical-text.js";
@@ -1702,6 +1704,39 @@ class TimelineScrollView extends ScrollView {
   }
 }
 
+/** Arrange fixed equal gutters before pi-tui's sequential flex allocation. */
+class ReadingColumn extends HStack {
+  constructor(
+    content: Component,
+    private readonly mainWidth: () => number,
+  ) {
+    super(
+      [
+        { component: new Spacer(1), basis: 0, shrink: 0, minSize: 0 },
+        { component: content, basis: 1, shrink: 0, minSize: 1 },
+        { component: new Spacer(1), basis: 0, shrink: 0, minSize: 0 },
+      ],
+      { align: "stretch" },
+    );
+  }
+
+  private arrange(width: number): void {
+    const geometry = readingColumnLayout(width);
+    const widths = [geometry.left, geometry.width, geometry.right];
+    for (const [index, entry] of this.entries.entries()) entry.basis = widths[index] ?? 0;
+  }
+
+  override render(width: number): string[] {
+    this.arrange(width);
+    return super.render(width);
+  }
+
+  override [LAYOUT_NODE]() {
+    this.arrange(this.mainWidth());
+    return super[LAYOUT_NODE]();
+  }
+}
+
 class BorderlessEditor extends Editor {
   override render(width: number): string[] {
     const lines = super.render(width);
@@ -3106,126 +3141,89 @@ export class DeckTui {
   private setShellLayout(): void {
     const supported = (viewport: { width: number; height: number }): boolean =>
       shellLayout(viewport.width, viewport.height, this.treeWidth).supported;
-    const centeredTabs = new HStack(
-      [
-        { component: new Spacer(1), basis: 4, grow: 1, shrink: 1, minSize: 1 },
-        { component: this.tabs, basis: 100, shrink: 1, minSize: 1 },
-        { component: new Spacer(1), basis: 4, grow: 1, shrink: 1, minSize: 1 },
-      ],
-      { align: "stretch" },
-    );
-    const mainPane = new HStack(
-      [
-        {
-          component: new VStack([
+    const mainWidth = (): number =>
+      this.terminal.columns -
+      (shellLayout(this.terminal.columns, this.terminal.rows, this.treeWidth).narrow
+        ? 0
+        : this.treeWidth + 2);
+    const centeredTabs = new ReadingColumn(this.tabs, mainWidth);
+    const mainPane = new VStack([
+      {
+        component: centeredTabs,
+        basis: 1,
+        minSize: 1,
+        visible: () => !activeLaunchWorkspaceId(this.state) && workspaceTabs(this.state).length > 0,
+      },
+      {
+        component: new ReadingColumn(
+          new VStack([
             {
-              component: centeredTabs,
+              component: new Spacer(1),
+              basis: 1,
+              minSize: 0,
+              visible: (viewport) =>
+                viewport.height >= 20 &&
+                (!this.state.activeTerminalId || Boolean(this.state.newWorkspace)),
+            },
+            { component: this.transcript, basis: 0, grow: 1, minSize: 3 },
+            {
+              component: new Spacer(2),
+              basis: 2,
+              minSize: 0,
+              visible: (viewport) =>
+                viewport.height >= 24 &&
+                (!this.state.activeTerminalId || Boolean(this.state.newWorkspace)),
+            },
+            {
+              component: new Spacer(1),
+              basis: 1,
+              minSize: 0,
+              visible: (viewport) =>
+                viewport.height >= 18 &&
+                viewport.height < 24 &&
+                (!this.state.activeTerminalId || Boolean(this.state.newWorkspace)),
+            },
+            {
+              component: new SessionActivityView(() => this.state, this.theme),
               basis: 1,
               minSize: 1,
-              visible: () =>
-                !activeLaunchWorkspaceId(this.state) && workspaceTabs(this.state).length > 0,
+              visible: (viewport) =>
+                viewport.height >= 24 &&
+                (!this.state.activeTerminalId || Boolean(this.state.newWorkspace)),
             },
             {
-              component: new HStack(
-                [
-                  {
-                    component: new Spacer(1),
-                    basis: 4,
-                    grow: 1,
-                    shrink: 1,
-                    minSize: 1,
-                  },
-                  {
-                    component: new VStack([
-                      {
-                        component: new Spacer(1),
-                        basis: 1,
-                        minSize: 0,
-                        visible: (viewport) =>
-                          viewport.height >= 20 &&
-                          (!this.state.activeTerminalId || Boolean(this.state.newWorkspace)),
-                      },
-                      { component: this.transcript, basis: 0, grow: 1, minSize: 3 },
-                      {
-                        component: new Spacer(2),
-                        basis: 2,
-                        minSize: 0,
-                        visible: (viewport) =>
-                          viewport.height >= 24 &&
-                          (!this.state.activeTerminalId || Boolean(this.state.newWorkspace)),
-                      },
-                      {
-                        component: new Spacer(1),
-                        basis: 1,
-                        minSize: 0,
-                        visible: (viewport) =>
-                          viewport.height >= 18 &&
-                          viewport.height < 24 &&
-                          (!this.state.activeTerminalId || Boolean(this.state.newWorkspace)),
-                      },
-                      {
-                        component: new SessionActivityView(() => this.state, this.theme),
-                        basis: 1,
-                        minSize: 1,
-                        visible: (viewport) =>
-                          viewport.height >= 24 &&
-                          (!this.state.activeTerminalId || Boolean(this.state.newWorkspace)),
-                      },
-                      {
-                        component: {
-                          render: (width: number) =>
-                            workspaceControlRows(this.state, this.theme, width),
-                          invalidate() {},
-                        },
-                        basis: "auto",
-                        minSize: 0,
-                        visible: () => Boolean(this.state.newWorkspace),
-                      },
-                      {
-                        component: this.composer,
-                        basis: "auto",
-                        minSize: 4,
-                        visible: () =>
-                          !this.state.activeTerminalId || Boolean(this.state.newWorkspace),
-                      },
-                      {
-                        component: {
-                          render: (width: number) => this.bufferQuery?.field.render(width) ?? [],
-                          invalidate: () => {},
-                        },
-                        basis: 1,
-                        minSize: 1,
-                        visible: () => Boolean(this.bufferQuery),
-                      },
-                    ]),
-                    basis: 100,
-                    shrink: 1,
-                    minSize: 1,
-                  },
-                  {
-                    component: new Spacer(1),
-                    basis: 4,
-                    grow: 1,
-                    shrink: 1,
-                    minSize: 1,
-                  },
-                ],
-                { align: "stretch" },
-              ),
-              basis: 0,
-              grow: 1,
-              minSize: 7,
+              component: {
+                render: (width: number) => workspaceControlRows(this.state, this.theme, width),
+                invalidate() {},
+              },
+              basis: "auto",
+              minSize: 0,
+              visible: () => Boolean(this.state.newWorkspace),
             },
-            { component: this.status, basis: 1, minSize: 1 },
+            {
+              component: this.composer,
+              basis: "auto",
+              minSize: 4,
+              visible: () => !this.state.activeTerminalId || Boolean(this.state.newWorkspace),
+            },
+            {
+              component: {
+                render: (width: number) => this.bufferQuery?.field.render(width) ?? [],
+                invalidate: () => {},
+              },
+              basis: 1,
+              minSize: 1,
+              visible: () => Boolean(this.bufferQuery),
+            },
           ]),
-          basis: 0,
-          grow: 1,
-          minSize: 8,
-        },
-        { component: new Spacer(1), basis: 1, minSize: 1 },
-      ],
-      { align: "stretch" },
-    );
+          mainWidth,
+        ),
+        basis: 0,
+        grow: 1,
+        minSize: 7,
+      },
+      { component: this.status, basis: 1, minSize: 1 },
+    ]);
     this.tui.setLayoutRoot(
       new VStack([
         {
