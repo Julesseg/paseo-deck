@@ -125,4 +125,14 @@ export class RecordingTerminal implements Terminal {
       );
     });
   }
+  /** Captures underline cells so visual reports can retain native selection fallback. */
+  viewportUnderlineCells(): boolean[][] {
+    const buffer = this.xterm.buffer.active;
+    return Array.from({ length: this.xterm.rows }, (_, row) => {
+      const line = buffer.getLine(buffer.viewportY + row);
+      return Array.from({ length: this.xterm.cols }, (_, column) =>
+        Boolean(line?.getCell(column)?.isUnderline()),
+      );
+    });
+  }
 }

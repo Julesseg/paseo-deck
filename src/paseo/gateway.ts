@@ -34,8 +34,10 @@ import type {
   TerminalRecord,
   TerminalStreamUpdate,
 } from "../contracts/terminal.js";
+import { existingModelSwitchReason } from "../domain/session-settings.js";
 import { type CliRunner, createCliRunner, runJson } from "./cli.js";
 import { PaseoGatewayError, paseoFailure } from "./errors.js";
+import { createSessionSettingsClient, type SessionSettingsClient } from "./session-settings.js";
 import { type PaseoTarget, type PaseoTargetInput, targetFromDaemonStatus } from "./target.js";
 
 import {
@@ -62,6 +64,7 @@ type ClientSurface = PaseoClient;
 export interface PaseoGatewayOptions extends PaseoTargetInput {
   cliRunner?: CliRunner;
   fetchRemote?: (directory: string, branch: string) => Promise<void>;
+  createSettingsClient?: (target: PaseoTarget) => SessionSettingsClient;
   createMetadataClient?: (target: PaseoTarget) => WorkspaceMetadataClient;
   createClient?: (target: PaseoTarget) => ClientSurface;
 }
@@ -73,6 +76,7 @@ export class ProductionPaseoGateway implements PaseoGateway {
   private target: PaseoTarget | undefined;
   private focused: Observation | undefined;
   private focusGeneration = 0;
+  private settings: Promise<SessionSettingsClient> | undefined;
   private metadata: Promise<WorkspaceMetadataClient> | undefined;
 
   public constructor(private readonly options: PaseoGatewayOptions = {}) {
@@ -109,7 +113,8 @@ export class ProductionPaseoGateway implements PaseoGateway {
             throw error;
           });
       }
-      return await workspacePlacement(await this.metadata, directory);
+      const metadata = await this.metadata;
+      return await workspacePlacement(metadata, directory, () => this.verifyLocalFetchTarget());
     } catch (error) {
       throw paseoFailure(error, "protocol");
     }
@@ -180,6 +185,8 @@ export class ProductionPaseoGateway implements PaseoGateway {
   }
 
   public async close(): Promise<void> {
+    const settings = this.settings;
+    this.settings = undefined;
     this.focusGeneration += 1;
     const focused = this.focused;
     const metadata = this.metadata;
@@ -187,6 +194,7 @@ export class ProductionPaseoGateway implements PaseoGateway {
     this.focused = undefined;
     this.metadata = undefined;
     const outcomes = await Promise.allSettled([
+      settings?.then((connection) => connection.close()),
       focused?.release(),
       metadata?.then((connection) => connection.close()),
       client?.close(),
@@ -214,8 +222,14 @@ export class ProductionPaseoGateway implements PaseoGateway {
 
   public async listTerminals(workspaceId: string): Promise<readonly TerminalRecord[]> {
     try {
-      const entries = await this.requireClient().workspaces.ref(workspaceId).terminals.list();
-      return entries.entries.map(toTerminalRecord);
+      // SDK 0.8's public TerminalSchema strips title/activity. Keep the exception
+      // on the same owned internal connection as rename; never cache a guessed title.
+      const entries = await (await this.mutationClient()).listTerminals(undefined, undefined, {
+        workspaceId,
+      });
+      return entries.terminals
+        .filter((terminal) => terminal.workspaceId === workspaceId)
+        .map(toTerminalRecord);
     } catch (error) {
       throw paseoFailure(error, "protocol");
     }
@@ -498,13 +512,28 @@ export class ProductionPaseoGateway implements PaseoGateway {
     try {
       const client = this.requireClient();
       switch (command.type) {
+        case "archive-workspace":
+          await this.runFallback(["workspace", "archive", command.workspaceId]);
+          return { type: "ok" };
+        case "rename-workspace":
+          await this.runFallback(["workspace", "rename", command.workspaceId, command.name]);
+          return { type: "ok" };
+        case "rename-terminal": {
+          const result = await (await this.mutationClient()).renameTerminal({
+            terminalId: command.terminalId,
+            title: command.name,
+          });
+          if (!result.success || result.error)
+            throw new PaseoGatewayError(result.error ?? "Terminal rename was rejected.");
+          return { type: "ok" };
+        }
         case "send-prompt":
           await client.agents.ref(command.agentId).send(command.prompt);
           return { type: "ok" };
         case "create-agent": {
           const agent = await client.workspaces.ref(command.workspaceId).agents.create({
             title: command.title,
-            prompt: command.prompt,
+            ...(command.prompt ? { prompt: command.prompt } : {}),
             config: {
               provider: `${command.providerId}/${command.modelId}`,
               ...(command.modeId === undefined ? {} : { modeId: command.modeId }),
@@ -533,6 +562,20 @@ export class ProductionPaseoGateway implements PaseoGateway {
         case "rename-agent":
           await this.runFallback(["agent", "update", command.agentId, "--name", command.name]);
           return { type: "ok" };
+        case "set-agent-model": {
+          const snapshot = await this.getDirectorySnapshot();
+          const agent = snapshot.agents.find((item) => item.id === command.agentId);
+          const reason = existingModelSwitchReason(agent?.providerId);
+          if (reason) throw new PaseoGatewayError(reason);
+          const settings = await this.mutationClient();
+          await settings.setAgentModel(command.agentId, command.modelId);
+          const notice = await settings.setAgentThinkingOption(
+            command.agentId,
+            command.thinkingLevel,
+          );
+          if (notice?.type === "error") throw new PaseoGatewayError(notice.message);
+          return { type: "ok", ...(notice ? { notice: notice.message } : {}) };
+        }
         case "set-thinking-level":
           await this.runFallback([
             "agent",
@@ -551,10 +594,28 @@ export class ProductionPaseoGateway implements PaseoGateway {
     }
   }
 
+  private async mutationClient(): Promise<SessionSettingsClient> {
+    this.requireClient();
+    if (!this.settings) {
+      const target = this.target;
+      if (!target) throw new PaseoGatewayError("Paseo Deck is not connected.");
+      const settings = (this.options.createSettingsClient ?? createSessionSettingsClient)(target);
+      this.settings = settings
+        .connect()
+        .then(() => settings)
+        .catch(async (error) => {
+          this.settings = undefined;
+          await settings.close().catch(() => {});
+          throw error;
+        });
+    }
+    return this.settings;
+  }
+
   private async verifyLocalFetchTarget(): Promise<void> {
     const unsupported = () =>
       new PaseoGatewayError(
-        "Remote Base ref refresh is unsupported for remote daemons. Choose a local Base ref, or connect to a verified local daemon without --host.",
+        "Advertised origin default and remote Base ref refresh are unsupported for remote daemons. Connect to a verified local daemon without --host.",
       );
     if (this.options.host !== undefined || process.env.PASEO_HOST) throw unsupported();
     const status = await this.daemonStatus();
@@ -1396,11 +1457,11 @@ function asRecord(value: unknown): UnknownRecord | undefined {
 
 function toTerminalRecord(value: {
   id: string;
-  workspaceId?: string;
-  cwd?: string;
+  workspaceId?: string | undefined;
+  cwd?: string | undefined;
   name: string;
-  title?: string;
-  activity?: { state: "idle" | "working" | "attention" } | null;
+  title?: string | undefined;
+  activity?: { state: "idle" | "working" | "attention" } | null | undefined;
 }): TerminalRecord {
   return {
     id: value.id,

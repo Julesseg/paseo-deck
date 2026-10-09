@@ -3,20 +3,16 @@ import {
   createTimelineBuffer,
   enterTimelineVisual,
   findTimelineCharacter,
-  jumpTimelineMark,
   leaveTimelineVisual,
   moveTimelineBuffer,
-  moveTimelineJump,
   moveTimelineViewport,
   osc52,
   printableTimelineText,
-  recordTimelineJump,
   replaceTimelineBuffer,
   searchTimelineBuffer,
   searchTimelineWord,
   selectedTimelineText,
   selectTimelineTextRange,
-  setTimelineMark,
   timelineTextObjectRange,
   timelineTextObjectText,
   timelineWordAtCursor,
@@ -60,28 +56,13 @@ describe("rendered timeline buffer", () => {
     expect(searchTimelineBuffer(state, "one", -1)).toMatchObject({ line: 0, column: 8 });
   });
 
-  it("searches the word under the cursor with whole and partial variants", () => {
+  it("searches the word under the cursor with whole-word matches", () => {
     const state = createTimelineBuffer({ lines: ["cat category cat", "catfish"] });
     expect(timelineWordAtCursor(state)).toBe("cat");
     expect(searchTimelineWord(state, "*")).toMatchObject({ line: 0, column: 13 });
-    expect(searchTimelineWord(state, "g*")).toMatchObject({ line: 0, column: 4 });
     expect(searchTimelineWord(state, "#")).toMatchObject({ line: 0, column: 13 });
-    expect(searchTimelineWord(state, "g#")).toMatchObject({ line: 1, column: 0 });
     const next = searchTimelineWord(state, "*");
     expect(searchTimelineBuffer(next, "cat")).toMatchObject({ line: 0, column: 0 });
-  });
-
-  it("sets exact and linewise marks and traverses the jump list", () => {
-    const lines = ["  first", "  second", "  third"];
-    const marked = setTimelineMark(createTimelineBuffer({ lines, line: 1, column: 5 }), "a");
-    const elsewhere = moveTimelineBuffer(marked, "G");
-    const exact = jumpTimelineMark(elsewhere, "a");
-    expect(exact).toMatchObject({ line: 1, column: 5 });
-    expect(moveTimelineJump(exact, -1)).toMatchObject({ line: 2, column: 6 });
-    expect(moveTimelineJump(moveTimelineJump(exact, -1), 1)).toMatchObject({ line: 1, column: 5 });
-    expect(jumpTimelineMark(elsewhere, "a", true)).toMatchObject({ line: 1, column: 2 });
-    const chained = recordTimelineJump(exact, { line: 0, column: 2 });
-    expect(moveTimelineJump(chained, -1, 2)).toMatchObject({ line: 2, column: 6 });
   });
 
   it("preserves meaningful streaming position and a Visual selection through reflow", () => {
@@ -144,15 +125,6 @@ describe("rendered timeline buffer", () => {
     });
   });
 
-  it("yanks a rectangular Visual Block selection", () => {
-    const state = moveTimelineBuffer(
-      enterTimelineVisual(createTimelineBuffer({ lines: ["abcdef", "abXYZf"] }), "block"),
-      "j",
-    );
-    const selected = moveTimelineBuffer(state, "l", 3);
-    expect(selectedTimelineText(selected)).toBe("abcd\nabXY");
-  });
-
   it("yanks printable text through OSC 52 without ANSI controls", () => {
     const text = printableTimelineText(
       "\u001b[31mhello\u001b[0m\u001b]8;;url\u0007link\u001b]8;;\u001b\\",
@@ -161,7 +133,7 @@ describe("rendered timeline buffer", () => {
     expect(osc52("hello")).toBe("\u001b]52;c;aGVsbG8=\u0007");
   });
 
-  it("moves by sentences, paragraphs, last nonblank, and file percentage", () => {
+  it("moves by sentences, paragraphs, last nonblank, and rejects file percentage", () => {
     const lines = ["One. Two!", "  Three?", "", "Fourth sentence.", "  end  "];
     const initial = createTimelineBuffer({ lines });
     expect(moveTimelineBuffer(initial, ")", 2)).toMatchObject({ line: 1, column: 2 });
@@ -174,7 +146,7 @@ describe("rendered timeline buffer", () => {
       line: 2,
       column: 0,
     });
-    expect(moveTimelineBuffer(initial, "%", 50).line).toBe(2);
+    expect(moveTimelineBuffer(initial, "%", 50).line).toBe(0);
     expect(moveTimelineBuffer(createTimelineBuffer({ lines, line: 4 }), "g_").column).toBe(4);
   });
 

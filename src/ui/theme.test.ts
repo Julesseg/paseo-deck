@@ -105,7 +105,7 @@ describe("DeckTheme", () => {
         palette: "terminal",
         symbols: "unicode",
       }).styleBackground("selection", "x"),
-    ).toBe("x");
+    ).toBe("\u001b[7mx\u001b[0m");
     expect(
       new DeckTheme({
         color: "none",

@@ -1,4 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
+import { ApplicationController } from "../app/controller.js";
+import { RecordingTerminal } from "../ui/terminal.js";
+import { DeckTui } from "../ui/views.js";
 import type { PaseoGatewayError } from "./errors.js";
 import { ProductionPaseoGateway } from "./gateway.js";
 
@@ -856,6 +859,12 @@ describe("ProductionPaseoGateway", () => {
     });
     await gateway.execute({ type: "stop-agent", agentId: "agent-1" });
     await gateway.execute({ type: "rename-agent", agentId: "agent-1", name: "Renamed" });
+    await gateway.execute({
+      type: "rename-workspace",
+      workspaceId: "workspace-1",
+      name: "Renamed workspace",
+    });
+    await gateway.execute({ type: "archive-workspace", workspaceId: "workspace-1" });
     expect(fixture.agent.respondToPermission).toHaveBeenCalledWith({
       requestId: "permission-1",
       response: { behavior: "deny" },
@@ -879,6 +888,23 @@ describe("ProductionPaseoGateway", () => {
       "agent-1",
       "--name",
       "Renamed",
+    ]);
+    expect(runner).toHaveBeenNthCalledWith(3, [
+      "--json",
+      "--host",
+      "tcp://host.test:6767",
+      "workspace",
+      "rename",
+      "workspace-1",
+      "Renamed workspace",
+    ]);
+    expect(runner).toHaveBeenNthCalledWith(4, [
+      "--json",
+      "--host",
+      "tcp://host.test:6767",
+      "workspace",
+      "archive",
+      "workspace-1",
     ]);
   });
 });
@@ -919,7 +945,7 @@ describe("Local workspace gateway", () => {
 });
 
 describe("Worktree workspace metadata", () => {
-  it("offers exact remote and local refs and defaults to the repository base instead of the current branch", async () => {
+  it("blocks local Git lookup for explicit host targets even with plausible cached metadata", async () => {
     const fixture = testClient();
     const metadata = {
       connect: vi.fn(async () => {}),
@@ -945,15 +971,9 @@ describe("Worktree workspace metadata", () => {
     });
     await gateway.connect();
     expect(metadata.connect).not.toHaveBeenCalled();
-    expect(await gateway.getWorkspacePlacement("/repo")).toEqual({
-      supportsWorktree: true,
-      defaultRef: "refs/remotes/origin/main",
-      refs: [
-        { label: "feature (local)", ref: "refs/heads/feature", remote: false },
-        { label: "main", ref: "refs/remotes/origin/main", remote: true },
-        { label: "main (local)", ref: "refs/heads/main", remote: false },
-      ],
-    });
+    await expect(gateway.getWorkspacePlacement("/repo")).rejects.toThrow(
+      "unsupported for remote daemons",
+    );
     await gateway.close();
     expect(metadata.close).toHaveBeenCalledOnce();
   });
@@ -1040,10 +1060,9 @@ describe("Unsupported Worktree projects", () => {
       refs: [],
     });
     metadata.getCheckoutStatus.mockResolvedValueOnce({ isGit: true, error: null } as never);
-    expect(await gateway.getWorkspacePlacement("/unborn")).toEqual({
-      supportsWorktree: false,
-      refs: [],
-    });
+    await expect(gateway.getWorkspacePlacement("/unborn")).rejects.toThrow(
+      "unsupported for remote daemons",
+    );
     await gateway.close();
   });
 });
@@ -1148,15 +1167,15 @@ describe("Workspace metadata lifecycle", () => {
       kind: "daemon-unavailable",
     });
     expect(metadata.close).toHaveBeenCalledOnce();
-    expect(await gateway.getWorkspacePlacement("/repo")).toMatchObject({
-      defaultRef: "refs/heads/main",
-    });
+    await expect(gateway.getWorkspacePlacement("/repo")).rejects.toThrow(
+      "unsupported for remote daemons",
+    );
     expect(fixture.client.connect).toHaveBeenCalledOnce();
     await gateway.close();
     expect(metadata.close).toHaveBeenCalledTimes(2);
   });
 
-  it("uses the main repository default when the selected project root is an owned worktree", async () => {
+  it("does not use main repository cached defaults for a remote owned worktree", async () => {
     const fixture = testClient();
     const metadata = {
       connect: vi.fn(async () => {}),
@@ -1179,9 +1198,9 @@ describe("Workspace metadata lifecycle", () => {
       createMetadataClient: () => metadata,
     });
     await gateway.connect();
-    expect(await gateway.getWorkspacePlacement("/worktree")).toMatchObject({
-      defaultRef: "refs/remotes/origin/main",
-    });
+    await expect(gateway.getWorkspacePlacement("/worktree")).rejects.toThrow(
+      "unsupported for remote daemons",
+    );
     await gateway.close();
   });
 
@@ -1303,7 +1322,7 @@ describe("Local daemon verification", () => {
 });
 
 describe("Pinned Git metadata protocol", () => {
-  it("uses supported suggestion limits and includes the repository default beyond the first page", async () => {
+  it("never falls back to branch suggestions for an unverified host", async () => {
     const { BranchSuggestionsRequestSchema } = await import("@getpaseo/protocol/messages");
     const fixture = testClient();
     const metadata = {
@@ -1332,13 +1351,362 @@ describe("Pinned Git metadata protocol", () => {
       createMetadataClient: () => metadata,
     });
     await gateway.connect();
-    expect(await gateway.getWorkspacePlacement("/repo")).toMatchObject({
-      supportsWorktree: true,
-      defaultRef: "refs/remotes/origin/main",
-      refs: expect.arrayContaining([
-        { label: "main", ref: "refs/remotes/origin/main", remote: true },
-      ]),
-    });
+    await expect(gateway.getWorkspacePlacement("/repo")).rejects.toThrow(
+      "unsupported for remote daemons",
+    );
+    expect(metadata.getBranchSuggestions).not.toHaveBeenCalled();
     await gateway.close();
   });
+});
+
+it("changes existing model through the isolated SDK lifecycle and preserves partial success on rejection", async () => {
+  const fixture = testClient();
+  fixture.client.agents.list.mockResolvedValue({
+    subscriptionId: "agents",
+    entries: [
+      {
+        agent: {
+          id: "agent-1",
+          workspaceId: "workspace-1",
+          title: "Same Session",
+          status: "idle",
+          provider: "codex",
+          model: "old",
+          availableModes: [],
+          pendingPermissions: [],
+        },
+      },
+    ],
+  } as never);
+  const settings = {
+    connect: vi.fn(async () => {}),
+    close: vi.fn(async () => {}),
+    listTerminals: vi.fn(async () => ({ requestId: "list", terminals: [] })),
+    renameTerminal: vi.fn(async () => ({ success: true, error: null })),
+    setAgentModel: vi.fn(async () => {}),
+    setAgentThinkingOption: vi.fn(async () => {
+      throw new Error("thinking rejected");
+    }),
+  };
+  const cliRunner = vi.fn();
+  const gateway = new ProductionPaseoGateway({
+    host: "127.0.0.1:6767",
+    createClient: () => fixture.client as never,
+    createSettingsClient: () => settings,
+    cliRunner,
+  });
+  await gateway.connect();
+  await expect(
+    gateway.execute({
+      type: "set-agent-model",
+      agentId: "agent-1",
+      modelId: "new",
+      thinkingLevel: "medium",
+    }),
+  ).rejects.toThrow("thinking rejected");
+  expect(settings.setAgentModel).toHaveBeenCalledExactlyOnceWith("agent-1", "new");
+  expect(settings.setAgentThinkingOption).toHaveBeenCalledExactlyOnceWith("agent-1", "medium");
+  expect(cliRunner).not.toHaveBeenCalled();
+  await gateway.close();
+  expect(settings.connect).toHaveBeenCalledOnce();
+  expect(settings.close).toHaveBeenCalledOnce();
+});
+
+it("reuses the settings connection, exposes provider notices and closes it once", async () => {
+  const fixture = testClient();
+  fixture.client.agents.list.mockResolvedValue({
+    subscriptionId: "agents",
+    entries: [
+      {
+        agent: {
+          id: "agent-1",
+          workspaceId: "workspace-1",
+          title: "Same Session",
+          status: "idle",
+          provider: "codex",
+          model: "old",
+          availableModes: [],
+          pendingPermissions: [],
+        },
+      },
+    ],
+  } as never);
+  const settings = {
+    connect: vi.fn(async () => {}),
+    close: vi.fn(async () => {}),
+    listTerminals: vi.fn(async () => ({ requestId: "list", terminals: [] })),
+    renameTerminal: vi.fn(async () => ({ success: true, error: null })),
+    setAgentModel: vi.fn(async () => {}),
+    setAgentThinkingOption: vi.fn(async () => ({
+      type: "warning" as const,
+      message: "Applies to the next turn",
+    })),
+  };
+  const gateway = new ProductionPaseoGateway({
+    host: "127.0.0.1:6767",
+    createClient: () => fixture.client as never,
+    createSettingsClient: () => settings,
+  });
+  await gateway.connect();
+  for (const modelId of ["new", "another"]) {
+    expect(
+      await gateway.execute({
+        type: "set-agent-model",
+        agentId: "agent-1",
+        modelId,
+        thinkingLevel: null,
+      }),
+    ).toEqual({ type: "ok", notice: "Applies to the next turn" });
+  }
+  expect(settings.connect).toHaveBeenCalledOnce();
+  expect(settings.setAgentThinkingOption).toHaveBeenLastCalledWith("agent-1", null);
+  await gateway.close();
+  await gateway.close();
+  expect(settings.close).toHaveBeenCalledOnce();
+});
+
+it("does not invoke a model setter for a provider without a verified contract", async () => {
+  const fixture = testClient();
+  const createSettingsClient = vi.fn();
+  const gateway = new ProductionPaseoGateway({
+    host: "127.0.0.1:6767",
+    createClient: () => fixture.client as never,
+    createSettingsClient,
+  });
+  await gateway.connect();
+  await expect(
+    gateway.execute({
+      type: "set-agent-model",
+      agentId: "agent-1",
+      modelId: "new",
+      thinkingLevel: null,
+    }),
+  ).rejects.toThrow("Model switching is unverified");
+  expect(createSettingsClient).not.toHaveBeenCalled();
+  await gateway.close();
+});
+
+it("renames a Terminal through the owned SDK, rejects false success, and never restarts it", async () => {
+  const fixture = testClient();
+  const settings = {
+    connect: vi.fn(async () => {}),
+    close: vi.fn(async () => {}),
+    setAgentModel: vi.fn(async () => {}),
+    setAgentThinkingOption: vi.fn(async () => null),
+    listTerminals: vi.fn(async () => ({ requestId: "list", terminals: [] })),
+    renameTerminal: vi.fn(
+      async (): Promise<{ success: boolean; error: string | null }> => ({
+        success: false,
+        error: "terminal rejected",
+      }),
+    ),
+  };
+  const cliRunner = vi.fn();
+  const gateway = new ProductionPaseoGateway({
+    host: "127.0.0.1:6767",
+    createClient: () => fixture.client as never,
+    createSettingsClient: () => settings,
+    cliRunner,
+  });
+  await gateway.connect();
+  const command = {
+    type: "rename-terminal" as const,
+    terminalId: "term",
+    workspaceId: "w",
+    name: "New title",
+  };
+  await expect(gateway.execute(command)).rejects.toThrow("terminal rejected");
+  settings.renameTerminal.mockResolvedValue({ success: true, error: null });
+  await expect(gateway.execute(command)).resolves.toEqual({ type: "ok" });
+  expect(settings.renameTerminal).toHaveBeenLastCalledWith({
+    terminalId: "term",
+    title: "New title",
+  });
+  expect(cliRunner).not.toHaveBeenCalled();
+  await gateway.close();
+  expect(settings.connect).toHaveBeenCalledOnce();
+  expect(settings.close).toHaveBeenCalledOnce();
+});
+
+it("creates an existing Workspace Session without an initial prompt, then sends to its returned identity", async () => {
+  const fixture = testClient();
+  const gateway = new ProductionPaseoGateway({
+    host: "127.0.0.1:6767",
+    createClient: () => fixture.client as never,
+  });
+  await gateway.connect();
+  const result = await gateway.execute({
+    type: "create-agent",
+    workspaceId: "workspace-1",
+    providerId: "codex",
+    modelId: "gpt",
+    prompt: "",
+  });
+  expect(result).toEqual({ type: "agent-created", agentId: "new-agent" });
+  expect(fixture.create).toHaveBeenCalledWith({
+    title: undefined,
+    config: { provider: "codex/gpt" },
+  });
+  await gateway.execute({ type: "send-prompt", agentId: "new-agent", prompt: "initial message" });
+  expect(fixture.client.agents.ref).toHaveBeenLastCalledWith("new-agent");
+  expect(fixture.agent.send).toHaveBeenCalledWith("initial message");
+  await gateway.close();
+});
+
+it("retains authoritative Terminal display metadata across rename and repeated reads despite the public SDK projection", async () => {
+  const fixture = testClient();
+  let terminal = {
+    id: "term",
+    workspaceId: "workspace-1",
+    cwd: "/repo",
+    name: "Shell",
+    title: "Original title",
+    activity: { state: "working" as const, changedAt: 1 },
+  };
+  // SDK 0.8 TerminalSchema strips title/activity from list(), even when the daemon returns them.
+  const projectedList = vi.fn(async () => ({
+    entries: [
+      {
+        id: terminal.id,
+        workspaceId: terminal.workspaceId,
+        cwd: terminal.cwd,
+        name: terminal.name,
+      },
+    ],
+  }));
+  const client = {
+    ...fixture.client,
+    workspaces: {
+      ...fixture.client.workspaces,
+      ref: () => ({ terminals: { list: projectedList } }),
+    },
+  };
+  const settings = {
+    connect: vi.fn(async () => {}),
+    close: vi.fn(async () => {}),
+    setAgentModel: vi.fn(async () => {}),
+    setAgentThinkingOption: vi.fn(async () => null),
+    listTerminals: vi.fn(async () => ({ requestId: "list", terminals: [terminal] })),
+    renameTerminal: vi.fn(async ({ title }: { terminalId: string; title: string }) => {
+      terminal = { ...terminal, title };
+      return { success: true, error: null };
+    }),
+  };
+  const gateway = new ProductionPaseoGateway({
+    host: "127.0.0.1:6767",
+    createClient: () => client as never,
+    createSettingsClient: () => settings,
+  });
+  await gateway.connect();
+  try {
+    expect(await gateway.listTerminals("workspace-1")).toEqual([
+      {
+        id: "term",
+        workspaceId: "workspace-1",
+        cwd: "/repo",
+        name: "Shell",
+        title: "Original title",
+        activity: "working",
+      },
+    ]);
+    await gateway.execute({
+      type: "rename-terminal",
+      terminalId: "term",
+      workspaceId: "workspace-1",
+      name: "Renamed title",
+    });
+    for (let i = 0; i < 2; i++)
+      expect(await gateway.listTerminals("workspace-1")).toEqual([
+        {
+          id: "term",
+          workspaceId: "workspace-1",
+          cwd: "/repo",
+          name: "Shell",
+          title: "Renamed title",
+          activity: "working",
+        },
+      ]);
+    expect(settings.listTerminals).toHaveBeenLastCalledWith(undefined, undefined, {
+      workspaceId: "workspace-1",
+    });
+  } finally {
+    await gateway.close();
+  }
+  expect(settings.connect).toHaveBeenCalledOnce();
+  expect(settings.close).toHaveBeenCalledOnce();
+});
+
+it("shows a renamed Terminal title through the assembled app after later directory refreshes with SDK-projected public records", async () => {
+  const fixture = testClient();
+  let title = "Shell";
+  const projected = { id: "term", workspaceId: "workspace-1", cwd: "/repo", name: "Shell" };
+  const client = {
+    ...fixture.client,
+    workspaces: {
+      ...fixture.client.workspaces,
+      ref: () => ({ terminals: { list: async () => ({ entries: [projected] }) } }),
+    },
+    terminals: {
+      ref: () => ({
+        capture: async () => ({ lines: ["persistent shell output"], totalLines: 1 }),
+        write: () => {},
+      }),
+    },
+  };
+  const settings = {
+    connect: vi.fn(async () => {}),
+    close: vi.fn(async () => {}),
+    setAgentModel: vi.fn(async () => {}),
+    setAgentThinkingOption: vi.fn(async () => null),
+    listTerminals: vi.fn(async () => ({ requestId: "list", terminals: [{ ...projected, title }] })),
+    renameTerminal: vi.fn(async (input: { terminalId: string; title: string }) => {
+      title = input.title;
+      return { success: true, error: null };
+    }),
+  };
+  const gateway = new ProductionPaseoGateway({
+    host: "127.0.0.1:6767",
+    createClient: () => client as never,
+    createSettingsClient: () => settings,
+  });
+  const app = new ApplicationController(gateway);
+  await app.start();
+  const terminal = new RecordingTerminal(120, 35);
+  const deck = new DeckTui(terminal, app.state, (intent) => {
+    void app.handleIntent(intent);
+  });
+  const unsubscribe = app.subscribe((state) => deck.update(state));
+  await deck.start();
+  try {
+    await app.handleIntent({ type: "open-terminal", terminalId: "term" });
+    terminal.sendInput("\u0013");
+    terminal.sendInput("\u0010");
+    terminal.sendInput("Rename active terminal");
+    terminal.sendInput("\r");
+    await terminal.waitForRender();
+    terminal.sendInput("\u0005");
+    terminal.sendInput(" renamed");
+    terminal.sendInput("\r");
+    await terminal.waitForRender();
+    expect(app.state.modal.type).toBe("none");
+    expect(terminal.viewport().join("\n")).toContain("Shell renamed");
+    for (let i = 0; i < 2; i++) {
+      await app.handleIntent({ type: "refresh" });
+      await terminal.waitForRender();
+      expect(terminal.viewport().join("\n")).toContain("Shell renamed");
+      expect(app.state.workspaceTerminals?.["workspace-1"]).toEqual([
+        { ...projected, title: "Shell renamed" },
+      ]);
+    }
+    expect(app.state.activeTerminalId).toBe("term");
+    expect(settings.renameTerminal).toHaveBeenCalledExactlyOnceWith({
+      terminalId: "term",
+      title: "Shell renamed",
+    });
+  } finally {
+    unsubscribe();
+    await deck.stop();
+    await app.releaseObservations();
+    await gateway.close();
+  }
 });

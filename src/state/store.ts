@@ -3,7 +3,6 @@ import type {
   FocusArea,
   ModalState,
   TabId,
-  TerminalMode,
   TimelineNavigationState,
   TreeOrder,
 } from "../contracts/app-state.js";
@@ -44,7 +43,6 @@ export type AppAction =
     }
   | { type: "discard-session-draft"; workspaceId: string }
   | { type: "complete-session-draft"; workspaceId: string; agentId: string }
-  | { type: "set-terminal-mode"; mode: TerminalMode }
   | { type: "terminal-lines"; terminalId: string; lines: readonly string[]; stale?: boolean }
   | { type: "set-terminal-scroll"; terminalId: string; offset: number }
   | { type: "select-sidebar"; selection?: AppState["sidebarSelection"]; order?: readonly string[] }
@@ -92,6 +90,7 @@ export type AppAction =
       retry?: AppState["notifications"][number]["retry"];
       failureKind?: AppState["notifications"][number]["failureKind"];
     }
+  | { type: "notification-retry-completed"; token: number }
   | { type: "select-notification"; id: number }
   | { type: "recovery-stage-succeeded"; stage: "directory" | "timeline" }
   | { type: "clear-notification" };
@@ -125,7 +124,6 @@ export function createInitialState(): AppState {
     composer: createComposerState(),
     creationDefaults: {},
     workspaceTerminals: {},
-    terminalMode: "normal",
     terminalLines: {},
     staleTerminalIds: new Set(),
     notifications: [],
@@ -886,7 +884,6 @@ export function reduceApp(state: AppState, action: AppAction): AppState {
         ...state,
         selectedWorkspaceId: terminal.workspaceId,
         activeTabIds: { ...state.activeTabIds, [terminal.workspaceId]: id },
-        terminalMode: "normal",
         focus: "timeline",
       });
     }
@@ -906,13 +903,16 @@ export function reduceApp(state: AppState, action: AppAction): AppState {
         selectedWorkspaceId: action.workspaceId,
         sessionDrafts: state.sessionDrafts[action.workspaceId]
           ? state.sessionDrafts
-          : { ...state.sessionDrafts, [action.workspaceId]: { ...defaults, prompt: "" } },
+          : { ...state.sessionDrafts, [action.workspaceId]: launch ?? { ...defaults, prompt: "" } },
         activeTabIds: {
           ...state.activeTabIds,
           [action.workspaceId]: `draft:${action.workspaceId}`,
         },
         focus: "composer",
-        composerMode: "normal",
+        composerMode:
+          activeSessionDraftWorkspaceId(state) === action.workspaceId
+            ? (state.composerMode ?? "normal")
+            : "normal",
       });
     }
     case "set-session-draft": {
@@ -953,8 +953,6 @@ export function reduceApp(state: AppState, action: AppAction): AppState {
           : state.activeTabIds,
       });
     }
-    case "set-terminal-mode":
-      return { ...state, terminalMode: action.mode };
     case "set-terminal-scroll":
       return {
         ...state,
@@ -1063,7 +1061,7 @@ export function reduceApp(state: AppState, action: AppAction): AppState {
           workspaceId: launchId,
           changes: {
             [draft.kind === "session" ? "prompt" : "command"]: action.text,
-            dirty: true,
+            dirty: Boolean(action.text.length) || Boolean(draft.settingsDirty),
             error: undefined,
           },
         });
@@ -1255,9 +1253,22 @@ export function reduceApp(state: AppState, action: AppAction): AppState {
       return {
         ...state,
         notifications: [...state.notifications, record].slice(-MAX_NOTIFICATIONS),
-        activeNotificationId: record.id,
+        activeNotificationId:
+          state.modal.type === "notifications" || state.modal.type === "error-details"
+            ? (state.activeNotificationId ?? record.id)
+            : record.id,
       };
     }
+    case "notification-retry-completed":
+      return {
+        ...state,
+        notifications: state.notifications.map((notice) => {
+          if (notice.retry?.type !== "operation" || notice.retry.token !== action.token)
+            return notice;
+          const { retry: _retry, ...completed } = notice;
+          return completed;
+        }),
+      };
     case "select-notification": {
       const notification = state.notifications.find((item) => item.id === action.id);
       if (notification === undefined) return state;
@@ -1272,7 +1283,10 @@ export function reduceApp(state: AppState, action: AppAction): AppState {
 }
 
 export function activeNotification(state: AppState): AppState["notifications"][number] | undefined {
-  const id = state.activeNotificationId ?? state.notifications.at(-1)?.id;
+  const id =
+    state.modal.type === "notifications"
+      ? (state.modal.noticeId ?? state.notifications[state.modal.index]?.id)
+      : (state.activeNotificationId ?? state.notifications.at(-1)?.id);
   return id === undefined ? undefined : state.notifications.find((item) => item.id === id);
 }
 

@@ -1,4 +1,5 @@
 import type { AppState, FocusArea } from "../contracts/app-state.js";
+import { resourceActionUnavailable, terminalDisplayName } from "../domain/resource-actions.js";
 import { activeSessionDraftWorkspaceId, selectedComposerDraft } from "../state/composer.js";
 import { activeLaunchWorkspaceId } from "../state/launch.js";
 import { activeNotification, pendingPermissions } from "../state/store.js";
@@ -36,6 +37,7 @@ export type CommandContext =
   | "new-workspace-title"
   | "new-workspace-placement"
   | "new-workspace-base"
+  | "session-setting"
   | "draft-setting"
   | "mode"
   | "thinking"
@@ -50,34 +52,112 @@ export interface ResolvedCommand extends Omit<DeckCommand, "disabledReason"> {
 const selectedAgent = (state: AppState): string | undefined => state.selectedAgentId;
 const requireAgent = (state: AppState): string | undefined =>
   selectedAgent(state) ? undefined : "Select an active session first";
+export const targetWorkspaceId = (state: AppState): string | undefined =>
+  state.focus === "tree"
+    ? state.sidebarSelection?.kind === "workspace"
+      ? state.sidebarSelection.id
+      : undefined
+    : state.selectedWorkspaceId;
 const requireWorkspace = (state: AppState): string | undefined =>
-  state.selectedWorkspaceId &&
+  targetWorkspaceId(state) &&
   state.directory.workspaces.some(
-    (workspace) => workspace.id === state.selectedWorkspaceId && !workspace.archived,
+    (workspace) => workspace.id === targetWorkspaceId(state) && !workspace.archived,
   )
     ? undefined
     : "Select an active workspace first";
 const requireConnected = (state: AppState): string | undefined =>
   state.connection === "connected" ? undefined : "Reconnect to Paseo first";
 const requireRemoteAgent = (state: AppState): string | undefined =>
-  requireConnected(state) ?? requireAgent(state);
+  requireConnected(state) ??
+  requireAgent(state) ??
+  resourceActionUnavailable(state, "session", { agentId: selectedAgent(state) ?? "" });
+
+function activeTerminal(state: AppState) {
+  return Object.values(state.workspaceTerminals ?? {})
+    .flat()
+    .find((item) => item.id === state.activeTerminalId);
+}
+const requireTerminal = (state: AppState): string | undefined =>
+  requireConnected(state) ?? (activeTerminal(state) ? undefined : "No active terminal tab");
+
+const requireNormalBuffer = (state: AppState): string | undefined =>
+  !state.activeTerminalId &&
+  ((state.focus === "composer" && state.composerMode === "normal") ||
+    (state.focus === "timeline" && (state.timelineMode ?? "normal") === "normal"))
+    ? undefined
+    : "Available in Composer or Timeline Normal only";
 
 export function newTabUnavailableReason(state: AppState): string | undefined {
-  if (state.newWorkspace) return "Finish or cancel the New workspace composer first";
+  if (state.newWorkspace)
+    return state.focus === "composer" &&
+      state.composerMode === "normal" &&
+      state.modal.type === "none" &&
+      !state.newWorkspace.launch.submitting &&
+      !state.newWorkspace.launch.createdTerminal &&
+      !state.newWorkspace.launch.createdAgentId
+      ? undefined
+      : "Choose the first Tab from New workspace Normal";
   const workspace = requireWorkspace(state);
   if (workspace) return workspace;
   if (state.modal.type !== "none") return "Close the dialog first";
-  if (state.focus === "tree") return "Leave sidebar navigation first";
+
   if (state.focus === "composer" && state.composerMode !== "normal")
     return "Return to normal mode first";
-  if (state.focus === "timeline" && state.activeTerminalId && state.terminalMode !== "normal")
-    return "Leave terminal insert mode first";
+  if (state.focus === "timeline" && state.activeTerminalId)
+    return "Use Ctrl-S to leave Terminal input first";
   if (state.focus === "timeline" && !state.activeTerminalId && state.timelineMode === "visual")
     return "Leave visual mode first";
   return undefined;
 }
 
 export const deckCommands: readonly DeckCommand[] = [
+  {
+    id: "terminal-rename",
+    label: "Rename active terminal",
+    group: "Sessions",
+    shortcuts: [],
+    contexts: ["tree"],
+    disabledReason: requireTerminal,
+    intent: (state) => ({
+      type: "open-resource-rename",
+      workspaceId: activeTerminal(state)?.workspaceId ?? "",
+      terminalId: state.activeTerminalId ?? "",
+    }),
+  },
+  {
+    id: "terminal-reconnect",
+    label: "Reconnect active terminal",
+    group: "Sessions",
+    shortcuts: [],
+    contexts: ["tree"],
+    disabledReason: requireTerminal,
+    intent: () => ({ type: "reconnect-terminal" }),
+  },
+  {
+    id: "rename-workspace",
+    label: "Rename Workspace",
+    group: "Workspaces",
+    shortcuts: [],
+    contexts: ["tree"],
+    disabledReason: (state) => requireConnected(state) ?? requireWorkspace(state),
+    intent: (state) => ({
+      type: "open-resource-rename",
+      workspaceId: targetWorkspaceId(state) ?? "",
+    }),
+  },
+  {
+    id: "archive-workspace",
+    label: "Archive Workspace",
+    group: "Workspaces",
+    shortcuts: ["Ctrl-A"],
+    contexts: ["tree"],
+    disabledReason: (state) => requireConnected(state) ?? requireWorkspace(state),
+    intent: (state) => ({
+      type: "open-confirmation",
+      action: "archive-workspace",
+      workspaceId: targetWorkspaceId(state) ?? "",
+    }),
+  },
   {
     id: "composer-submit",
     label: "Send composer text",
@@ -106,11 +186,11 @@ export const deckCommands: readonly DeckCommand[] = [
     id: "new-tab",
     label: "New Tab",
     group: "Tabs",
-    shortcuts: ["T"],
-    contexts: ["composer", "timeline"],
+    shortcuts: ["Ctrl-T"],
+    contexts: ["composer", "timeline", "tree"],
     palette: true,
     disabledReason: newTabUnavailableReason,
-    intent: (state) => ({ type: "open-new-tab", workspaceId: state.selectedWorkspaceId ?? "" }),
+    intent: (state) => ({ type: "open-new-tab", workspaceId: targetWorkspaceId(state) ?? "" }),
   },
   {
     id: "discard-draft",
@@ -120,12 +200,12 @@ export const deckCommands: readonly DeckCommand[] = [
     contexts: ["composer", "timeline"],
     palette: true,
     disabledReason: (state) =>
-      state.selectedWorkspaceId && state.sessionDrafts[state.selectedWorkspaceId]
+      activeSessionDraftWorkspaceId(state) || activeLaunchWorkspaceId(state)
         ? undefined
-        : "No session draft in this workspace",
+        : "No active draft",
     intent: (state) => ({
       type: "discard-session-draft",
-      workspaceId: state.selectedWorkspaceId ?? "",
+      workspaceId: activeSessionDraftWorkspaceId(state) ?? activeLaunchWorkspaceId(state) ?? "",
     }),
   },
   {
@@ -135,10 +215,10 @@ export const deckCommands: readonly DeckCommand[] = [
     shortcuts: [],
     contexts: ["tree", "timeline"],
     palette: true,
-    disabledReason: (state) => (state.selectedWorkspaceId ? undefined : "Select a workspace first"),
+    disabledReason: requireWorkspace,
     intent: (state) => ({
       type: "open-create-terminal",
-      workspaceId: state.selectedWorkspaceId ?? "",
+      workspaceId: targetWorkspaceId(state) ?? "",
     }),
   },
   {
@@ -146,9 +226,9 @@ export const deckCommands: readonly DeckCommand[] = [
     label: "Terminate active terminal (confirm)",
     group: "Sessions",
     shortcuts: ["gk"],
-    contexts: ["timeline", "tree"],
+    contexts: ["tree"],
     palette: true,
-    disabledReason: (state) => (state.activeTerminalId ? undefined : "No active terminal tab"),
+    disabledReason: requireTerminal,
     intent: () => ({ type: "kill-terminal" }),
   },
   {
@@ -156,8 +236,9 @@ export const deckCommands: readonly DeckCommand[] = [
     label: "Next tab",
     group: "Tabs",
     shortcuts: ["gt"],
-    contexts: ["tree", "timeline", "composer"],
+    contexts: ["timeline", "composer"],
     palette: true,
+    disabledReason: requireNormalBuffer,
     intent: () => ({ type: "switch-tab", direction: 1 }),
   },
   {
@@ -165,8 +246,9 @@ export const deckCommands: readonly DeckCommand[] = [
     label: "Previous tab",
     group: "Tabs",
     shortcuts: ["gT"],
-    contexts: ["tree", "timeline", "composer"],
+    contexts: ["timeline", "composer"],
     palette: true,
+    disabledReason: requireNormalBuffer,
     intent: () => ({ type: "switch-tab", direction: -1 }),
   },
   {
@@ -249,7 +331,7 @@ export const deckCommands: readonly DeckCommand[] = [
     id: "composer-history-previous",
     label: "Previous prompt draft",
     group: "Application",
-    shortcuts: ["Ctrl-P"],
+    shortcuts: [],
     contexts: ["composer"],
     palette: false,
     intent: () => ({ type: "navigate-composer-history", direction: -1 }),
@@ -258,7 +340,7 @@ export const deckCommands: readonly DeckCommand[] = [
     id: "composer-history-next",
     label: "Next prompt draft",
     group: "Application",
-    shortcuts: ["Ctrl-N"],
+    shortcuts: [],
     contexts: ["composer"],
     palette: false,
     intent: () => ({ type: "navigate-composer-history", direction: 1 }),
@@ -275,8 +357,7 @@ export const deckCommands: readonly DeckCommand[] = [
     id: "sidebar-navigation",
     label: "Navigate sidebar",
     group: "Sessions",
-    shortcuts: ["n"],
-    contexts: ["composer", "timeline"],
+    shortcuts: ["Ctrl-S"],
     palette: false,
     intent: () => ({ type: "set-focus", focus: "tree" }),
   },
@@ -284,14 +365,13 @@ export const deckCommands: readonly DeckCommand[] = [
     id: "timeline-navigation",
     label: "Navigate timeline",
     group: "Timeline",
-    shortcuts: ["t"],
-    contexts: ["composer"],
+    shortcuts: ["Ctrl-K"],
     palette: false,
     intent: () => ({ type: "set-focus", focus: "timeline" }),
   },
   {
     id: "open-selection",
-    label: "Open or toggle selected session",
+    label: "Activate highlighted Workspace",
     group: "Sessions",
     shortcuts: ["Enter"],
     contexts: ["tree"],
@@ -312,7 +392,7 @@ export const deckCommands: readonly DeckCommand[] = [
     id: "quit",
     label: "Quit Paseo Deck",
     group: "Application",
-    shortcuts: ["q", "Ctrl-C"],
+    shortcuts: ["Ctrl-C"],
     palette: false,
     intent: () => ({ type: "quit" }),
   },
@@ -434,7 +514,10 @@ export const deckCommands: readonly DeckCommand[] = [
     disabledReason: (state) => (activeNotification(state) ? undefined : "No notification selected"),
     intent: (state) => ({
       type: "select-notification",
-      id: activeNotification(state)?.id ?? -1,
+      id:
+        state.modal.type === "notifications"
+          ? (state.modal.noticeId ?? state.notifications[state.modal.index]?.id ?? -1)
+          : -1,
     }),
   },
   {
@@ -475,16 +558,16 @@ export const deckCommands: readonly DeckCommand[] = [
   },
   {
     id: "tree-start",
-    label: "Go to first session",
+    label: "Go to first Sidebar row",
     group: "Sessions",
-    shortcuts: ["g"],
+    shortcuts: ["gg"],
     contexts: ["tree"],
     palette: false,
     intent: () => ({ type: "select-boundary", boundary: "start" }),
   },
   {
     id: "tree-end",
-    label: "Go to last session",
+    label: "Go to last Sidebar row",
     group: "Sessions",
     shortcuts: ["G"],
     contexts: ["tree"],
@@ -569,7 +652,7 @@ export const deckCommands: readonly DeckCommand[] = [
   },
   {
     id: "narrow-tree",
-    label: "Narrow session tree",
+    label: "Narrow Sidebar",
     group: "Sessions",
     shortcuts: ["["],
     contexts: ["tree"],
@@ -578,7 +661,7 @@ export const deckCommands: readonly DeckCommand[] = [
   },
   {
     id: "widen-tree",
-    label: "Widen session tree",
+    label: "Widen Sidebar",
     group: "Sessions",
     shortcuts: ["]"],
     contexts: ["tree"],
@@ -589,7 +672,7 @@ export const deckCommands: readonly DeckCommand[] = [
     id: "command-palette",
     label: "Command palette",
     group: "Application",
-    shortcuts: ["Ctrl-K", "Cmd-P"],
+    shortcuts: ["Ctrl-P"],
     intent: () => ({ type: "open-command-palette" }),
   },
   {
@@ -603,21 +686,21 @@ export const deckCommands: readonly DeckCommand[] = [
     id: "help",
     label: "Show contextual help",
     group: "Application",
-    shortcuts: ["?"],
+    shortcuts: ["g?"],
     intent: () => ({ type: "open-help" }),
   },
   {
     id: "refresh",
     label: "Refresh directory",
     group: "Application",
-    shortcuts: ["r"],
+    shortcuts: [],
     intent: () => ({ type: "refresh" }),
   },
   {
     id: "notifications",
     label: "Open notification history",
     group: "Application",
-    shortcuts: ["N"],
+    shortcuts: [],
     disabledReason: (state) => (state.notifications.length ? undefined : "No notifications"),
     intent: () => ({ type: "open-notifications" }),
   },
@@ -625,7 +708,7 @@ export const deckCommands: readonly DeckCommand[] = [
     id: "retry",
     label: "Retry selected failure",
     group: "Application",
-    shortcuts: ["R"],
+    shortcuts: [],
     disabledReason: (state) => {
       const retry = activeNotification(state)?.retry;
       if (!retry) return "No retryable failure selected";
@@ -637,7 +720,7 @@ export const deckCommands: readonly DeckCommand[] = [
     id: "error-details",
     label: "Show selected error details",
     group: "Application",
-    shortcuts: ["E"],
+    shortcuts: [],
     disabledReason: (state) =>
       activeNotification(state)?.detail ? undefined : "No error details available",
     intent: (state) => {
@@ -651,19 +734,29 @@ export const deckCommands: readonly DeckCommand[] = [
   },
   {
     id: "filter",
-    label: "Filter sessions",
+    label: "Filter Project/Workspace names",
     group: "Sessions",
     shortcuts: ["/"],
     intent: () => ({ type: "open-filter" }),
   },
   {
+    id: "workspace-session-draft",
+    label: "New Session draft in Workspace",
+    group: "Tabs",
+    shortcuts: ["c"],
+    contexts: ["tree"],
+    disabledReason: requireWorkspace,
+    intent: (state) => ({
+      type: "open-workspace-session-draft",
+      workspaceId: targetWorkspaceId(state) ?? "",
+    }),
+  },
+  {
     id: "new-workspace",
     label: "New workspace",
     group: "Workspaces",
-    shortcuts: ["c"],
-    contexts: ["tree"],
-    disabledReason: (state) =>
-      state.newWorkspace ? "Finish or cancel the New workspace composer first" : undefined,
+    shortcuts: ["n"],
+    contexts: ["tree", "composer", "timeline"],
     intent: () => ({ type: "open-new-workspace" }),
   },
   {
@@ -685,7 +778,7 @@ export const deckCommands: readonly DeckCommand[] = [
   },
   {
     id: "toggle-archived",
-    label: "Toggle archived sessions",
+    label: "Show/hide archived Workspaces",
     group: "Sessions",
     shortcuts: ["v"],
     intent: () => ({ type: "toggle-archived" }),
@@ -699,10 +792,14 @@ export const deckCommands: readonly DeckCommand[] = [
   },
   {
     id: "stop-agent",
-    label: "Stop agent",
+    label: "Stop Session",
     group: "Agent",
     shortcuts: ["x"],
-    disabledReason: requireRemoteAgent,
+    contexts: ["composer", "timeline"],
+    disabledReason: (state) =>
+      requireNormalBuffer(state) ??
+      requireRemoteAgent(state) ??
+      resourceActionUnavailable(state, "stop", { agentId: selectedAgent(state) ?? "" }),
     intent: (state) => ({
       type: "open-confirmation",
       action: "stop",
@@ -711,10 +808,11 @@ export const deckCommands: readonly DeckCommand[] = [
   },
   {
     id: "archive-agent",
-    label: "Archive agent",
+    label: "Archive Session",
     group: "Agent",
     shortcuts: ["A"],
-    disabledReason: requireRemoteAgent,
+    contexts: ["composer", "timeline"],
+    disabledReason: (state) => requireNormalBuffer(state) ?? requireRemoteAgent(state),
     intent: (state) => ({
       type: "open-confirmation",
       action: "archive",
@@ -723,10 +821,11 @@ export const deckCommands: readonly DeckCommand[] = [
   },
   {
     id: "detach-agent",
-    label: "Detach agent",
+    label: "Detach Session",
     group: "Agent",
     shortcuts: ["d"],
-    disabledReason: requireRemoteAgent,
+    contexts: ["composer", "timeline"],
+    disabledReason: (state) => requireNormalBuffer(state) ?? requireRemoteAgent(state),
     intent: (state) => ({
       type: "open-confirmation",
       action: "detach",
@@ -735,70 +834,56 @@ export const deckCommands: readonly DeckCommand[] = [
   },
   {
     id: "rename-agent",
-    label: "Rename agent",
+    label: "Rename Session",
     group: "Agent",
     shortcuts: ["e"],
-    disabledReason: requireRemoteAgent,
+    contexts: ["composer", "timeline"],
+    disabledReason: (state) => requireNormalBuffer(state) ?? requireRemoteAgent(state),
     intent: (state) => ({ type: "open-rename", agentId: selectedAgent(state) ?? "" }),
   },
   {
-    id: "model",
-    label: "Change model",
-    group: "Agent",
-    shortcuts: ["m"],
-    contexts: ["composer"],
-    disabledReason: () => "Live model switching is unavailable for this session",
-    intent: () => ({ type: "close-modal" }),
+    id: "provider",
+    label: "Change provider",
+    group: "Sessions",
+    shortcuts: ["mp"],
+    contexts: ["composer", "timeline"],
+    disabledReason: (state) =>
+      !(activeSessionDraftWorkspaceId(state) || activeLaunchWorkspaceId(state))
+        ? "Only Session drafts can change provider"
+        : (state.focus === "composer" && state.composerMode !== "normal") ||
+            (state.focus === "timeline" && state.timelineMode !== "normal")
+          ? "Return to Normal mode first"
+          : undefined,
+    intent: () => ({ type: "open-session-setting", setting: "provider" }),
   },
-  {
-    id: "mode",
-    label: "Change operational mode",
-    group: "Agent",
-    shortcuts: ["m"],
-    contexts: ["tree"],
-    disabledReason: (state) => {
-      const agent = state.directory.agents.find((item) => item.id === selectedAgent(state));
-      return (
-        requireRemoteAgent(state) ??
-        (agent?.availableModeIds.length ? undefined : "No modes available")
-      );
-    },
-    intent: (state) => ({ type: "open-mode", agentId: selectedAgent(state) ?? "" }),
-  },
-  {
-    id: "operational-mode",
-    label: "Change operational mode",
-    group: "Agent",
-    shortcuts: ["o"],
-    contexts: ["composer"],
-    disabledReason: (state) => {
-      const agent = state.directory.agents.find((item) => item.id === selectedAgent(state));
-      return (
-        requireRemoteAgent(state) ??
-        (agent?.availableModeIds.length ? undefined : "No modes available")
-      );
-    },
-    intent: (state) => ({ type: "open-mode", agentId: selectedAgent(state) ?? "" }),
-  },
-  {
-    id: "thinking",
-    label: "Change thinking level",
-    group: "Agent",
-    shortcuts: ["z", "t"],
-    disabledReason: (state) => {
-      const agent = state.directory.agents.find((item) => item.id === selectedAgent(state));
-      return (
-        requireRemoteAgent(state) ??
-        (agent?.availableThinkingLevels.length ? undefined : "No thinking levels available")
-      );
-    },
-    intent: (state) => ({ type: "open-thinking", agentId: selectedAgent(state) ?? "" }),
-  },
+  ...(
+    [
+      ["model", "model", "Change model", "mm"],
+      ["operational-mode", "mode", "Change operational mode", "mo"],
+      ["thinking", "thinking", "Change thinking level", "mt"],
+    ] as const
+  ).map(
+    ([id, setting, label, shortcut]): DeckCommand => ({
+      id,
+      label,
+      group: "Sessions",
+      shortcuts: [shortcut],
+      contexts: ["composer", "timeline"],
+      disabledReason: (state) =>
+        (state.focus === "composer" && state.composerMode !== "normal") ||
+        (state.focus === "timeline" && state.timelineMode !== "normal")
+          ? "Return to Normal mode first"
+          : state.activeTerminalId
+            ? "Select a Session"
+            : undefined,
+      intent: () => ({ type: "open-session-setting", setting }),
+    }),
+  ),
   {
     id: "timeline-search",
     label: "Search timeline",
     group: "Timeline",
-    shortcuts: ["Ctrl-F"],
+    shortcuts: ["/"],
     contexts: ["timeline"],
     disabledReason: (state) => (state.timeline.items.length ? undefined : "Timeline is empty"),
     intent: () => ({ type: "open-timeline-search", direction: 1 }),
@@ -822,15 +907,6 @@ export const deckCommands: readonly DeckCommand[] = [
     intent: () => ({ type: "timeline-yank-object", object: "line" }),
   },
   {
-    id: "timeline-yank-event",
-    label: "Yank event at cursor",
-    group: "Timeline",
-    shortcuts: ["yiv"],
-    contexts: ["timeline"],
-    palette: false,
-    intent: () => ({ type: "timeline-yank-object", object: "event" }),
-  },
-  {
     id: "timeline-open-link",
     label: "Open link at cursor",
     group: "Timeline",
@@ -845,36 +921,36 @@ export const deckCommands: readonly DeckCommand[] = [
 // and timeline use one mnemonic backslash prefix, including disabled actions
 // so help and the palette show the same binding as input dispatch.
 const bufferShortcuts: Readonly<Record<string, readonly string[]>> = {
-  "new-tab": ["\\T"],
-  "discard-draft": ["\\D"],
-  "terminal-kill": ["\\K"],
-  "tab-next": ["\\]"],
-  "tab-previous": ["\\["],
-  quit: ["\\q", "Ctrl-C"],
-  "sidebar-navigation": ["\\n"],
-  "timeline-navigation": ["\\t"],
-  "focus-composer": ["\\i"],
-  "composer-history-previous": ["\\h"],
-  "composer-history-next": ["\\H"],
+  "timeline-search": ["/"],
+  quit: ["Ctrl-C"],
+  "sidebar-navigation": ["Ctrl-S"],
+  "timeline-navigation": ["Ctrl-K"],
+  help: ["g?"],
+  "new-tab": ["Ctrl-T"],
+  "discard-draft": [],
+  "terminal-kill": [],
+  "tab-next": ["gt"],
+  "tab-previous": ["gT"],
+  "focus-composer": [],
+  "composer-history-previous": [],
+  "composer-history-next": [],
+  refresh: [],
+  notifications: [],
+  retry: [],
+  "error-details": [],
+  filter: [],
+  permissions: [],
+  "toggle-archived": [],
+  "toggle-attention": [],
+  "stop-agent": ["Ctrl-X"],
+  "archive-agent": ["Ctrl-A"],
+  "detach-agent": [],
+  "rename-agent": [],
+  model: ["mm"],
+  "operational-mode": ["mo"],
+  thinking: ["mt"],
   "scroll-timeline-up": [],
   "scroll-timeline-down": [],
-  help: ["\\?"],
-  refresh: ["\\r"],
-  notifications: ["\\N"],
-  retry: ["\\R"],
-  "error-details": ["\\E"],
-  filter: ["\\f"],
-  permissions: ["\\P"],
-  "toggle-archived": ["\\v"],
-  "toggle-attention": ["\\!"],
-  "stop-agent": ["\\x"],
-  "archive-agent": ["\\A"],
-  "detach-agent": ["\\d"],
-  "rename-agent": ["\\e"],
-  model: ["\\m"],
-  "operational-mode": ["\\o"],
-  thinking: ["\\z"],
-  "timeline-search": ["/"],
   "previous-turn": ["[t"],
   "next-turn": ["]t"],
   "previous-error": ["[e"],
@@ -886,6 +962,20 @@ export function resolvedCommands(
   context: CommandContext = commandContext(state),
 ): readonly ResolvedCommand[] {
   return deckCommands
+    .filter(
+      (command) =>
+        context !== "tree" ||
+        ![
+          "stop-agent",
+          "archive-agent",
+          "detach-agent",
+          "rename-agent",
+          "model",
+          "mode",
+          "operational-mode",
+          "thinking",
+        ].includes(command.id),
+    )
     .filter((command) => !command.contexts || command.contexts.includes(context))
     .map((command) => {
       const { disabledReason: availability, ...definition } = command;
@@ -893,10 +983,48 @@ export function resolvedCommands(
       const buffer =
         (context === "timeline" && !state.activeTerminalId) ||
         (context === "composer" && state.composerMode !== "insert");
-      const shortcuts = buffer
-        ? (bufferShortcuts[command.id] ?? command.shortcuts)
-        : command.shortcuts;
-      return { ...definition, shortcuts, ...(disabledReason ? { disabledReason } : {}) };
+      let shortcuts =
+        command.id === "new-workspace" && context !== "tree"
+          ? []
+          : buffer
+            ? (bufferShortcuts[command.id] ?? command.shortcuts)
+            : command.shortcuts;
+      if (
+        ["new-tab", "tab-next", "tab-previous", "stop-agent", "archive-agent"].includes(
+          command.id,
+        ) &&
+        !(
+          (context === "tree" && command.id === "new-tab") ||
+          (context === "composer" && state.composerMode === "normal") ||
+          (context === "timeline" &&
+            !state.activeTerminalId &&
+            (state.timelineMode ?? "normal") === "normal")
+        )
+      )
+        shortcuts = [];
+      if (
+        context === "tree" &&
+        ["refresh", "notifications", "retry", "error-details", "terminal-kill"].includes(command.id)
+      )
+        shortcuts = [];
+      if (context === "notifications" && command.id === "retry") shortcuts = ["r"];
+      const terminal = ["terminal-rename", "terminal-reconnect", "terminal-kill"].includes(
+        command.id,
+      )
+        ? activeTerminal(state)
+        : undefined;
+      const terminalWorkspace =
+        terminal && state.directory.workspaces.find((item) => item.id === terminal.workspaceId);
+      return {
+        ...definition,
+        ...(terminal
+          ? {
+              label: `${definition.label} · ${terminalDisplayName(terminal)} (${terminal.id}) · Workspace ${terminalWorkspace?.title ?? terminal.workspaceId} (${terminal.workspaceId})`,
+            }
+          : {}),
+        shortcuts,
+        ...(disabledReason ? { disabledReason } : {}),
+      };
     });
 }
 
@@ -914,7 +1042,20 @@ export function contextualHelp(
   state: AppState,
   context: CommandContext = commandContext(state),
 ): readonly ResolvedCommand[] {
-  return resolvedCommands(state, context);
+  const commands = resolvedCommands(state, context);
+  if (context === "timeline" && state.activeTerminalId)
+    return commands
+      .filter((command) => ["sidebar-navigation", "tab-next", "tab-previous"].includes(command.id))
+      .map(({ disabledReason: _disabledReason, ...command }) => ({
+        ...command,
+        shortcuts:
+          command.id === "tab-next"
+            ? ["Ctrl-Tab"]
+            : command.id === "tab-previous"
+              ? ["Ctrl-Shift-Tab"]
+              : ["Ctrl-S"],
+      }));
+  return commands;
 }
 
 export function commandContext(state: AppState): CommandContext {
@@ -927,6 +1068,10 @@ export function commandContext(state: AppState): CommandContext {
 
 export function shortcutForInput(data: string): string | undefined {
   if (data === "\u001b") return "Esc";
+  if (data === "\u0013") return "Ctrl-S";
+  if (data === "\u0014") return "Ctrl-T";
+  if (data === "\u0018") return "Ctrl-X";
+  if (data === "\u0001") return "Ctrl-A";
   if (data === "\u000b") return "Ctrl-K";
   if (data === "\u0006") return "Ctrl-F";
   if (data === "\u001b[A") return "Up";
@@ -939,7 +1084,6 @@ export function shortcutForInput(data: string): string | undefined {
   if (data === "\u000e") return "Ctrl-N";
   if (data === "\u0015") return "Ctrl-U";
   if (data === "\u0004") return "Ctrl-D";
-  // Most terminal emulators encode Cmd-P as ESC+p. Do not consume ordinary p.
-  if (data === "\u001bp") return "Cmd-P";
+
   return data.length === 1 ? data : undefined;
 }

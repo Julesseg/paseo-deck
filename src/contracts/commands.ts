@@ -1,4 +1,7 @@
 export type AgentCommand =
+  | { type: "archive-workspace"; workspaceId: string }
+  | { type: "rename-workspace"; workspaceId: string; name: string }
+  | { type: "rename-terminal"; terminalId: string; workspaceId: string; name: string }
   | { type: "send-prompt"; agentId: string; prompt: string }
   | {
       type: "create-agent";
@@ -15,10 +18,11 @@ export type AgentCommand =
   | { type: "archive-agent"; agentId: string }
   | { type: "detach-agent"; agentId: string }
   | { type: "rename-agent"; agentId: string; name: string }
+  | { type: "set-agent-model"; agentId: string; modelId: string; thinkingLevel: string | null }
   | { type: "set-agent-mode"; agentId: string; modeId: string }
   | { type: "set-thinking-level"; agentId: string; thinkingLevel: string };
 
 export type CommandResult =
-  | { type: "ok" }
+  | { type: "ok"; notice?: string }
   | { type: "agent-created"; agentId: string }
   | { type: "permission-resolved"; requestId: string };
