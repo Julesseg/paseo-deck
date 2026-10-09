@@ -101,7 +101,13 @@ import {
   toggleTimelineFold,
 } from "./timeline-buffer.js";
 import { clipboardPlainText, copyTargets } from "./timeline-search.js";
-import { deriveTreeRows, shortAgentId, timelineItemDisplay, workspaceTabs } from "./view-model.js";
+import {
+  deriveTreeRows,
+  shortAgentId,
+  timelineItemDisplay,
+  toolBodyText,
+  workspaceTabs,
+} from "./view-model.js";
 
 function markdownTheme(theme: DeckTheme) {
   // TimelineItemView sanitizes the Markdown source before pi-tui tokenises it.
@@ -538,12 +544,16 @@ class TimelineItemView implements Component {
     return [...lines];
   }
   canonicalLines(): readonly string[] {
-    this.canonical ??= this.renderUncached(
-      Math.max(
-        80,
-        ...copyTargets(this.item).map((target) => terminalDisplayWidth(target.text) + 32),
-      ),
-    ).map(printableTimelineText);
+    if (!this.canonical) {
+      const detailText =
+        this.item.type === "tool" ? toolBodyText(this.item, this.expanded).split("\n") : [];
+      this.canonical = this.renderUncached(
+        [...copyTargets(this.item).map((target) => target.text), ...detailText].reduce(
+          (width, text) => Math.max(width, terminalDisplayWidth(text) + 32),
+          80,
+        ),
+      ).map(printableTimelineText);
+    }
     return this.canonical;
   }
   private renderUncached(width: number): string[] {
@@ -1552,9 +1562,12 @@ class TimelineView implements Component {
       const gap = firstInGroup && priorGroup && item.type === "turn" ? [""] : [];
       if (firstInGroup) ordinal += 1;
       priorGroup = group;
-      const itemLines = this.itemViews.get(item.id)?.render(width) ?? [];
       const primary = item.type === "user-message" || item.type === "assistant-message";
       const prominent = item.type === "error" || (item.type === "tool" && item.status === "failed");
+      const itemLines =
+        this.itemViews
+          .get(item.id)
+          ?.render(primary || prominent ? width : Math.max(1, width - 2)) ?? [];
       const children =
         primary || prominent
           ? itemLines

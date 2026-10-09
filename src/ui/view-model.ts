@@ -209,6 +209,26 @@ export function timelineDisplay(
   );
 }
 
+/** The selected tool payload, shared by rendered and canonical body text. */
+export function toolBodyText(
+  item: Extract<TimelineItem, { type: "tool" }>,
+  expanded: boolean,
+): string {
+  const output = item.output ?? item.summary ?? "";
+  const summary = item.summary ?? output.split("\n")[0] ?? "";
+  const detail = item.detail;
+  const structuredSummary = detail ? toolDetailSummary(detail) : undefined;
+  const preview =
+    detail?.diff ??
+    (detail?.kind === "command" || detail?.kind === "file-read" || detail?.kind === "file-write"
+      ? (structuredSummary ?? output)
+      : (detail?.content ?? output));
+  const displaySummary = structuredSummary ?? summary;
+  return (
+    (!expanded && output.length > 180 ? displaySummary : preview || displaySummary) || "No output"
+  );
+}
+
 /** App-owned separators only; timeline payloads remain unmodified. */
 export interface TimelineChrome {
   bullet: string;
@@ -255,28 +275,21 @@ export function timelineItemDisplay(
     }
     case "tool": {
       const output = item.output ?? item.summary ?? "";
-      const summary = item.summary ?? output.split("\n")[0] ?? "";
       const detail = item.detail;
       const kindLabel = detail ? toolDetailLabel(detail.kind) : undefined;
-      const structuredSummary = detail ? toolDetailSummary(detail) : undefined;
-      const preview =
-        detail?.diff ??
-        (detail?.kind === "command" || detail?.kind === "file-read" || detail?.kind === "file-write"
-          ? (structuredSummary ?? output)
-          : (detail?.content ?? output));
-      const displaySummary = structuredSummary ?? summary;
+      const text = toolBodyText(item, expanded);
       if (!expanded && output.length > 180)
         return [
           heading(
             `Tool ${item.status}: ${item.name}${kindLabel ? ` ${chrome.bullet} ${kindLabel}` : ""}${duration(item.durationMs)}${item.failureSummary ? ` ${chrome.bullet} ${item.failureSummary}` : ""}  [za to expand]`,
           ),
-          ...body(displaySummary || "No output").slice(0, 1),
+          ...body(text).slice(0, 1),
         ];
       return [
         heading(
           `Tool ${item.status}: ${item.name}${kindLabel ? ` ${chrome.bullet} ${kindLabel}` : ""}${duration(item.durationMs)}${item.failureSummary ? ` ${chrome.bullet} ${item.failureSummary}` : ""}`,
         ),
-        ...body(preview || displaySummary || "No output"),
+        ...body(text),
       ];
     }
     case "error":
