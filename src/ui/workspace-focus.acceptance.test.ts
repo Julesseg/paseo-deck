@@ -78,17 +78,25 @@ async function fixture() {
 }
 
 it.each([
-  ["Shell", "Sidebar"],
-  ["Empty", "Sidebar"],
-  ["Shell", "another Workspace Timeline"],
-  ["Empty", "another Workspace Timeline"],
-] as const)("late %s activation preserves a newer %s", async (workspace, destination) => {
+  ["Shell", "capture", "Sidebar"],
+  ["Shell", "observation", "Sidebar"],
+  ["Empty", "profile discovery", "Sidebar"],
+  ["Shell", "capture", "another Workspace Timeline"],
+  ["Shell", "observation", "another Workspace Timeline"],
+  ["Empty", "profile discovery", "another Workspace Timeline"],
+] as const)("late %s %s preserves a newer %s", async (workspace, boundary, destination) => {
   const f = await fixture();
   let release!: () => void;
   const delayed = new Promise<void>((resolve) => {
     release = resolve;
   });
-  if (workspace === "Shell") {
+  if (boundary === "capture") {
+    const capture = f.gateway.captureTerminal.bind(f.gateway);
+    f.gateway.captureTerminal = async (...args) => {
+      await delayed;
+      return capture(...args);
+    };
+  } else if (boundary === "observation") {
     const observe = f.gateway.observeTerminal.bind(f.gateway);
     f.gateway.observeTerminal = async (...args) => {
       await delayed;

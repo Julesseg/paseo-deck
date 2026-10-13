@@ -314,6 +314,11 @@ export class ApplicationController {
           .find((item) => item.id === intent.terminalId);
         if (!terminal) return;
         const generation = ++this.#focusGeneration;
+        this.apply({ type: "open-terminal-tab", terminalId: terminal.id });
+        const previousTimeline = this.#timelineObservation;
+        this.#timelineObservation = undefined;
+        this.#observedAgentId = undefined;
+        void previousTimeline?.release();
         try {
           const capture = await this.gateway.captureTerminal(terminal.id, { start: -2000 });
           if (generation !== this.#focusGeneration) return;
@@ -322,11 +327,6 @@ export class ApplicationController {
             terminalId: terminal.id,
             lines: capture.lines.map(sanitizeObservedTerminal),
           });
-          this.apply({ type: "open-terminal-tab", terminalId: terminal.id });
-          const previousTimeline = this.#timelineObservation;
-          this.#timelineObservation = undefined;
-          this.#observedAgentId = undefined;
-          void previousTimeline?.release();
           await this.#terminalObservations.get(terminal.id)?.release();
           const observation = await this.gateway.observeTerminal(terminal.id, (update) => {
             if (update.type === "exited") {
