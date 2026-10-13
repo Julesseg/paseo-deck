@@ -27,7 +27,7 @@ The SDK lacks public per-Session attention clearing and public draft command dis
 
 ## Checks and visual evidence
 
-`npm run check` passed: Biome, TypeScript, 62 test files / 878 tests, coverage, build and packed `paseo-deck`/`pdeck` executable smoke. Coverage: statements 89.22%, branches 81.54%, functions 86.84%, lines 91.32%. Baseline checks passed 57 files / 806 tests. CI results for the final PR head are recorded in the PR.
+`npm run check` passed: Biome, TypeScript, 62 test files / 878 tests, coverage, build and packed `paseo-deck`/`pdeck` executable smoke. Coverage: statements 89.15%, branches 81.5%, functions 86.67%, lines 91.25%. Baseline checks passed 57 files / 806 tests. CI results for the final PR head are recorded in the PR.
 
 Independent Standards and Spec reviews have no remaining actionable findings. Review corrections cover collapsed-group ordering and asynchronous Terminal focus; the retry test checks resource/modal identity instead of counting repeated labels across the whole frame.
 
