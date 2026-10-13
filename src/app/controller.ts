@@ -67,6 +67,8 @@ export class ApplicationController {
   #directoryObservation: Observation | undefined;
   #timelineObservation: Observation | undefined;
   #observedAgentId: string | undefined;
+  #visible = true;
+  readonly #acknowledgingCompletions = new Set<string>();
   #focusGeneration = 0;
   #creationGeneration = 0;
   #recoveryGeneration = 0;
@@ -272,6 +274,7 @@ export class ApplicationController {
         return;
       }
       this.#timelineObservation = observation;
+      this.acknowledgeSeenCompletion();
     } catch (error) {
       this.apply({
         type: "timeline",
@@ -1383,6 +1386,46 @@ export class ApplicationController {
     }
     this.pruneRetries();
     for (const listener of this.#listeners) listener(this.#state);
+    if (action.type === "directory" || action.type === "open-session-tab")
+      this.acknowledgeSeenCompletion();
+  }
+
+  setVisible(visible: boolean): void {
+    this.#visible = visible;
+    if (visible) this.acknowledgeSeenCompletion();
+  }
+
+  private acknowledgeSeenCompletion(): void {
+    const agentId = this.#state.selectedAgentId;
+    if (
+      !this.#visible ||
+      this.#state.connection !== "connected" ||
+      !agentId ||
+      this.#state.activeTerminalId ||
+      this.#observedAgentId !== agentId ||
+      !this.#timelineObservation ||
+      this.#acknowledgingCompletions.has(agentId)
+    )
+      return;
+    const active = this.#state.selectedWorkspaceId
+      ? this.#state.activeTabIds[this.#state.selectedWorkspaceId]
+      : undefined;
+    const agent = this.#state.directory.agents.find((item) => item.id === agentId);
+    if (
+      active !== `session:${agentId}` ||
+      !agent?.needsAttention ||
+      agent.attentionReason !== "finished" ||
+      agent.pendingPermissions.length > 0
+    )
+      return;
+    this.#acknowledgingCompletions.add(agentId);
+    void this.gateway.acknowledgeAgentCompletion(agentId).then(
+      () => this.#acknowledgingCompletions.delete(agentId),
+      (error) => {
+        this.#acknowledgingCompletions.delete(agentId);
+        this.reportError("Could not acknowledge the displayed Session's completion.", error);
+      },
+    );
   }
 
   private async openPermission(
@@ -2586,6 +2629,7 @@ export class ApplicationController {
         return;
       }
       this.#timelineObservation = observation;
+      this.acknowledgeSeenCompletion();
       this.apply({ type: "recovery-stage-succeeded", stage: "timeline" });
     } catch (error) {
       if (recoveryGeneration !== this.#recoveryGeneration) return;
