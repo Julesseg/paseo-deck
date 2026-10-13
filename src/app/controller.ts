@@ -24,6 +24,7 @@ import {
   hasUnsentWork,
 } from "../state/composer.js";
 import { activeLaunchWorkspaceId, launchDraft, NEW_WORKSPACE_DRAFT_ID } from "../state/launch.js";
+import { providerCommandContext, providerCommandContextKey } from "../state/provider-commands.js";
 import {
   type AppAction,
   activeNotification,
@@ -70,6 +71,7 @@ export class ApplicationController {
   #visible = true;
   readonly #acknowledgingCompletions = new Set<string>();
   #focusGeneration = 0;
+  #providerCommandGeneration = 0;
   #creationGeneration = 0;
   #recoveryGeneration = 0;
   #nextRetryToken = 0;
@@ -162,6 +164,7 @@ export class ApplicationController {
   }
 
   async releaseObservations(): Promise<void> {
+    this.#providerCommandGeneration += 1;
     this.#focusGeneration += 1;
     const observations = [this.#timelineObservation, this.#directoryObservation];
     this.#timelineObservation = undefined;
@@ -1385,6 +1388,26 @@ export class ApplicationController {
         this.#state = reduceApp(this.#state, { type: "open-modal", modal: { ...captured, error } });
     }
     this.pruneRetries();
+    const contextKey = providerCommandContextKey(this.#state);
+    if (contextKey !== this.#state.providerCommands?.contextKey) {
+      this.#state = { ...this.#state, providerCommands: { contextKey, items: [] } };
+      const generation = ++this.#providerCommandGeneration;
+      const context = providerCommandContext(this.#state);
+      if (context)
+        void this.gateway
+          .getProviderCommands(context)
+          .then((items) => {
+            if (
+              this.quitting ||
+              generation !== this.#providerCommandGeneration ||
+              providerCommandContextKey(this.#state) !== contextKey
+            )
+              return;
+            this.#state = { ...this.#state, providerCommands: { contextKey, items } };
+            for (const listener of this.#listeners) listener(this.#state);
+          })
+          .catch(() => {});
+    }
     for (const listener of this.#listeners) listener(this.#state);
     if (action.type === "directory" || action.type === "open-session-tab")
       this.acknowledgeSeenCompletion();

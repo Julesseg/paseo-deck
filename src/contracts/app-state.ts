@@ -6,7 +6,7 @@ import type {
   TimelineEvent,
   UsageSummary,
 } from "./domain.js";
-import type { WorkspacePlacement } from "./gateway.js";
+import type { ProviderCommand, WorkspacePlacement } from "./gateway.js";
 import type { TerminalProfile, TerminalRecord } from "./terminal.js";
 
 export type FocusArea = "tree" | "timeline" | "composer";
@@ -240,6 +240,7 @@ export interface AppState {
   timeline: FocusedTimelineState;
   timelineNavigation: Readonly<Record<string, TimelineNavigationState>>;
   composer: ComposerState;
+  providerCommands?: { contextKey: string; items: readonly ProviderCommand[] };
   /** Successful creation choices, isolated by workspace for the current run. */
   creationDefaults: Readonly<Record<string, CreationDefaults>>;
   /** Workspace terminals are presentation tabs, never session tabs. */

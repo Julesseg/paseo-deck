@@ -24,6 +24,8 @@ import type {
 import type {
   Observation,
   PaseoGateway,
+  ProviderCommand,
+  ProviderCommandContext,
   WorkspaceCreateOptions,
   WorkspacePlacement,
 } from "../contracts/gateway.js";
@@ -39,6 +41,7 @@ import { existingModelSwitchReason } from "../domain/session-settings.js";
 import { type AttentionClient, createAttentionClient } from "./attention.js";
 import { type CliRunner, createCliRunner, runJson } from "./cli.js";
 import { PaseoGatewayError, paseoFailure } from "./errors.js";
+import { createProviderCommandsClient, type ProviderCommandsClient } from "./provider-commands.js";
 import { createSessionSettingsClient, type SessionSettingsClient } from "./session-settings.js";
 import { type PaseoTarget, type PaseoTargetInput, targetFromDaemonStatus } from "./target.js";
 
@@ -69,6 +72,7 @@ export interface PaseoGatewayOptions extends PaseoTargetInput {
   createAttentionClient?: (target: PaseoTarget) => AttentionClient;
   createSettingsClient?: (target: PaseoTarget) => SessionSettingsClient;
   createMetadataClient?: (target: PaseoTarget) => WorkspaceMetadataClient;
+  createCommandsClient?: (target: PaseoTarget) => ProviderCommandsClient;
   createClient?: (target: PaseoTarget) => ClientSurface;
 }
 
@@ -81,6 +85,7 @@ export class ProductionPaseoGateway implements PaseoGateway {
   private focusGeneration = 0;
   private attention: Promise<AttentionClient> | undefined;
   private settings: Promise<SessionSettingsClient> | undefined;
+  private commandsClient: Promise<ProviderCommandsClient> | undefined;
   private metadata: Promise<WorkspaceMetadataClient> | undefined;
 
   public constructor(private readonly options: PaseoGatewayOptions = {}) {
@@ -189,6 +194,8 @@ export class ProductionPaseoGateway implements PaseoGateway {
   }
 
   public async close(): Promise<void> {
+    const commandsClient = this.commandsClient;
+    this.commandsClient = undefined;
     const attention = this.attention;
     this.attention = undefined;
     const settings = this.settings;
@@ -200,6 +207,7 @@ export class ProductionPaseoGateway implements PaseoGateway {
     this.focused = undefined;
     this.metadata = undefined;
     const outcomes = await Promise.allSettled([
+      commandsClient?.then((connection) => connection.close()),
       attention?.then((connection) => connection.close()),
       settings?.then((connection) => connection.close()),
       focused?.release(),
@@ -210,6 +218,56 @@ export class ProductionPaseoGateway implements PaseoGateway {
     this.target = undefined;
     const failure = outcomes.find((outcome) => outcome.status === "rejected");
     if (failure?.status === "rejected") throw paseoFailure(failure.reason, "protocol");
+  }
+
+  public async getProviderCommands(
+    context: ProviderCommandContext,
+  ): Promise<readonly ProviderCommand[]> {
+    try {
+      const client = this.requireClient();
+      let result: Awaited<ReturnType<ProviderCommandsClient["listCommands"]>>;
+      if ("agentId" in context) result = await client.agents.ref(context.agentId).commands();
+      else {
+        if (!this.commandsClient) {
+          if (!this.target) throw new PaseoGatewayError("Paseo Deck is not connected.");
+          const owned = (this.options.createCommandsClient ?? createProviderCommandsClient)(
+            this.target,
+          );
+          this.commandsClient = owned
+            .connect()
+            .then(() => owned)
+            .catch(async (error) => {
+              this.commandsClient = undefined;
+              await owned.close().catch(() => {});
+              throw error;
+            });
+        }
+        const owned = await this.commandsClient;
+        result = await owned.listCommands({
+          agentId: `deck-draft:${context.workspaceId}`,
+          draftConfig: {
+            provider: context.draft.providerId,
+            cwd: context.draft.cwd,
+            ...(context.draft.modelId ? { model: context.draft.modelId } : {}),
+            ...(context.draft.modeId ? { modeId: context.draft.modeId } : {}),
+            ...(context.draft.thinkingLevel
+              ? { thinkingOptionId: context.draft.thinkingLevel }
+              : {}),
+          },
+        });
+      }
+      if (result.error) throw new PaseoGatewayError(result.error);
+      return result.commands
+        .filter((item) => Boolean(item.name) && !/[\s/]/u.test(item.name))
+        .map((item) => ({
+          name: item.name,
+          description: item.description,
+          ...(item.argumentHint ? { argumentHint: item.argumentHint } : {}),
+          ...(item.kind === "skill" || item.kind === "command" ? { kind: item.kind } : {}),
+        }));
+    } catch (error) {
+      throw paseoFailure(error, "protocol");
+    }
   }
 
   public async getDirectorySnapshot(): Promise<DirectorySnapshot> {
@@ -266,7 +324,7 @@ export class ProductionPaseoGateway implements PaseoGateway {
 
   public async listTerminals(workspaceId: string): Promise<readonly TerminalRecord[]> {
     try {
-      // SDK 0.8's public TerminalSchema strips title/activity. Keep the exception
+      // SDK 0.11.2's public TerminalSchema strips title/activity. Keep the exception
       // on the same owned internal connection as rename; never cache a guessed title.
       const entries = await (await this.mutationClient()).listTerminals(undefined, undefined, {
         workspaceId,
@@ -396,7 +454,7 @@ export class ProductionPaseoGateway implements PaseoGateway {
     // ApplicationController establishes its initial connected state after the
     // snapshot. Forward only later transitions so startup does not refetch the
     // directory a second time.
-    // Stable 0.8.0 exposes the server-issued subscriptionId but no public release
+    // Pinned 0.11.2 exposes the server-issued subscriptionId but no public release
     // handle. Local listeners below are released here; server demand ends on close().
     releases.push(client.agents.subscribe((message) => emitDirectoryMessage(message, listener)));
     try {
