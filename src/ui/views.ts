@@ -967,17 +967,21 @@ class TimelineView implements Component {
           this.eventIndexAtBodyLine(start + index)
         ];
         const mapping = event?.positions[start + index - (event?.start ?? 0)];
+        if (mapping?.region === "gap" || mapping?.region === "group") return undefined;
         const item = this.events[this.eventIndexAtBodyLine(start + index)]?.item;
         const primary = item?.type === "user-message" || item?.type === "assistant-message";
-        const padding = !primary && line.startsWith("    ") ? 4 : 2;
+        const gutter = mapping?.gutter ?? 0;
+        const text = line.slice(gutter);
+        const padding = !primary && text.startsWith("    ") ? 4 : 2;
         return (
-          mapping?.region === "body" && line.startsWith("  ")
-            ? line.slice(padding)
-            : mapping?.region === "header" && !primary && line.startsWith("  ")
-              ? line.slice(2)
-              : line
+          mapping?.region === "body" && text.startsWith("  ")
+            ? text.slice(padding)
+            : mapping?.region === "header" && !primary && text.startsWith("  ")
+              ? text.slice(2)
+              : text
         ).trimEnd();
       })
+      .filter((line) => line !== undefined)
       .join("\n");
   }
   private copyCharacterRange(start: number, end: number): string {
@@ -993,9 +997,18 @@ class TimelineView implements Component {
       const line = this.buffer.lines[row] ?? "";
       const lo = row === first.line ? first.column : 0;
       const hi = row === last.line ? last.column + 1 : line.length;
-      if (!event || !mapping) continue;
+      if (!event || !mapping || mapping.region === "gap" || mapping.region === "group") continue;
       if (mapping.region === "body") {
-        const from = mapping.offsets[Math.min(lo, mapping.offsets.length - 1)] ?? 0;
+        const from =
+          mapping.offsets[
+            Math.min(
+              Math.max(
+                lo,
+                mapping.offsets.findIndex((offset) => offset >= 0),
+              ),
+              mapping.offsets.length - 1,
+            )
+          ] ?? 0;
         const tail =
           mapping.offsets[Math.min(Math.max(lo, hi - 1), mapping.offsets.length - 1)] ?? from;
         const to = hi > lo && line.length ? Math.min(event.content.length, tail + 1) : from;
@@ -1014,7 +1027,11 @@ class TimelineView implements Component {
       } else {
         const item = this.events[eventIndex]?.item;
         const primary = item?.type === "user-message" || item?.type === "assistant-message";
-        const padding = mapping.region === "header" && !primary && line.startsWith("  ") ? 2 : 0;
+        const padding =
+          mapping.gutter +
+          (mapping.region === "header" && !primary && line.slice(mapping.gutter).startsWith("  ")
+            ? 2
+            : 0);
         pieces.push({
           event: eventIndex,
           region: "header",
@@ -1288,6 +1305,11 @@ class TimelineView implements Component {
       this.state.timelineNavigation[this.state.selectedAgentId]?.following !== false
     )
       this.buffer = { ...moveTimelineBuffer(this.buffer, "G"), column: 0 };
+    const cursorEvent = layout.events[this.eventIndexAtBodyLine(this.buffer.line)];
+    const cursorRow = cursorEvent?.positions[this.buffer.line - cursorEvent.start];
+    const cursorStart = cursorRow?.offsets.findIndex((offset) => offset >= 0) ?? 0;
+    if (cursorRow && this.buffer.column < cursorStart)
+      this.buffer = { ...this.buffer, column: cursorStart };
     this.syncSelectedIndex();
     if (wasVisual && this.buffer.mode !== "visual")
       this.selectionFeedback = "Selection cleared: timeline changed";
@@ -1376,6 +1398,21 @@ class TimelineView implements Component {
         rendered = `${query ? highlightBufferMatches(plain.slice(0, range.start), query, this.buffer.search?.wholeWord) : plain.slice(0, range.start)}${selected}${query ? highlightBufferMatches(plain.slice(range.end), query, this.buffer.search?.wholeWord) : plain.slice(range.end)}`;
       }
     }
+    if (rendered !== line && !active) {
+      const eventIndex = this.eventIndexAtBodyLine(bodyLine);
+      const event = layout.events[eventIndex];
+      const mapping = event?.positions[bodyLine - event.start];
+      const item = this.events[eventIndex]?.item;
+      if (item?.type === "tool")
+        rendered = this.theme.styleRenderedBackground(
+          "tool",
+          `${rendered}${" ".repeat(Math.max(0, width - terminalDisplayWidth(rendered)))}`,
+        );
+      if (item?.type === "user-message" && mapping) {
+        const body = sliceByColumn(rendered, mapping.gutter, width - mapping.gutter);
+        rendered = `${" ".repeat(mapping.gutter)}${this.theme.styleRenderedBackground("user-message", `${body}${" ".repeat(Math.max(0, width - mapping.gutter - terminalDisplayWidth(body)))}`)}`;
+      }
+    }
     const clipped = clipTerminalLine(rendered, width, this.theme.glyph("ellipsis"));
     if (!active) return clipped;
     const padded = `${clipped}${" ".repeat(Math.max(0, width - terminalDisplayWidth(clipped)))}`;
@@ -1385,7 +1422,13 @@ class TimelineView implements Component {
       Math.max(0, width - 1),
     );
     const withCursor = `${sliceByColumn(padded, 0, cursorColumn)}${CURSOR_MARKER}${sliceByColumn(padded, cursorColumn, width - cursorColumn)}`;
-    return this.theme.styleRenderedBackground("selection", withCursor);
+    return this.theme.styleRenderedBackground(
+      "selection",
+      withCursor.replace(
+        new RegExp(`${String.fromCharCode(27)}\\[(?:48;[\\d;]+|4[0-7]|10[0-7])m`, "gu"),
+        "",
+      ),
+    );
   }
 
   private eventBodyLine(index: number): number {
@@ -1434,7 +1477,16 @@ class TimelineView implements Component {
             eventIndex,
             eventOrder: layout.events.map((entry) => entry.itemId),
             region: row.region,
-            offset: row.offsets[Math.min(column, row.offsets.length - 1)] ?? 0,
+            offset:
+              row.offsets[
+                Math.min(
+                  Math.max(
+                    column,
+                    row.offsets.findIndex((offset) => offset >= 0),
+                  ),
+                  row.offsets.length - 1,
+                )
+              ] ?? 0,
             content: event.content,
             folded: event.folded,
           }
@@ -1499,6 +1551,7 @@ class TimelineView implements Component {
     for (const [rowIndex, row] of event.positions.entries()) {
       if (row.region !== anchor.region) continue;
       for (const [column, offset] of row.offsets.entries()) {
+        if (offset < 0) continue;
         const delta = Math.abs(offset - anchor.offset);
         if (delta < distance) {
           nearest = { line: event.start + rowIndex, column };
@@ -1550,7 +1603,7 @@ class TimelineView implements Component {
     let priorGroup: string | undefined;
     let ordinal = 0;
     let start = 0;
-    const events = this.events.map((event) => {
+    const events = this.events.map((event, eventIndex) => {
       const item = event.item;
       if (item.type === "user-message") group = `user:${item.id}`;
       else if (item.type === "turn") group = `turn:${item.turnId ?? item.id}`;
@@ -1559,21 +1612,44 @@ class TimelineView implements Component {
       // Explicit turn records are the visual boundaries between turns. Avoid
       // inflating long streamed message histories with separator rows for
       // every provider-assigned turn id.
-      const gap = firstInGroup && priorGroup && item.type === "turn" ? [""] : [];
+      const gap =
+        item.type === "tool" && this.events[eventIndex - 1]?.item.type === "tool"
+          ? [
+              this.theme.styleRenderedBackground(
+                "tool",
+                this.theme.styleRendered("border", this.theme.glyph("divider").repeat(width)),
+              ),
+            ]
+          : firstInGroup && priorGroup && item.type === "turn"
+            ? [""]
+            : [];
       if (firstInGroup) ordinal += 1;
       priorGroup = group;
       const primary = item.type === "user-message" || item.type === "assistant-message";
       const prominent = item.type === "error" || (item.type === "tool" && item.status === "failed");
+      const userWidth =
+        item.type === "user-message" ? Math.max(1, Math.floor(width * 0.75)) : width;
+      const gutter = item.type === "user-message" ? width - userWidth : 0;
       const itemLines =
         this.itemViews
           .get(item.id)
-          ?.render(primary || prominent ? width : Math.max(1, width - 2)) ?? [];
-      const children =
+          ?.render(primary || prominent ? userWidth : Math.max(1, width - 2)) ?? [];
+      const contentLines =
         primary || prominent
           ? itemLines
           : itemLines.map((line) =>
               clipTerminalLine(`  ${line}`, width, this.theme.glyph("ellipsis")),
             );
+      const children = contentLines.map((line) => {
+        if (item.type === "user-message")
+          return `${" ".repeat(gutter)}${this.theme.styleRenderedBackground("user-message", `${line}${" ".repeat(Math.max(0, userWidth - terminalDisplayWidth(line)))}`)}`;
+        if (item.type === "tool")
+          return this.theme.styleRenderedBackground(
+            "tool",
+            `${line}${" ".repeat(Math.max(0, width - terminalDisplayWidth(line)))}`,
+          );
+        return line;
+      });
       const header =
         firstInGroup && !primary && item.type !== "turn"
           ? [
@@ -1613,10 +1689,17 @@ class TimelineView implements Component {
         if (region !== "body")
           return {
             region,
-            offsets: Array.from({ length: Math.max(1, text.length) }, (_, column) => column),
+            gutter: region === "header" ? gutter : 0,
+            offsets: Array.from({ length: Math.max(1, text.length) }, (_, column) =>
+              column < gutter ? -1 : column - gutter,
+            ),
           };
         const offsets: number[] = [];
         for (let column = 0; column < text.length; column++) {
+          if (column < gutter + (item.type === "user-message" ? 2 : 0)) {
+            offsets.push(-1);
+            continue;
+          }
           const character = text[column] ?? "";
           if (!/\s/u.test(character)) {
             while (source < canonicalText.length && /\s/u.test(canonicalText[source] ?? ""))
@@ -1629,7 +1712,7 @@ class TimelineView implements Component {
           offsets.push(source);
           if (canonicalText[source] === "\n") source++;
         }
-        return { region, offsets };
+        return { region, offsets, gutter };
       });
       const layout = {
         itemId: item.id,
@@ -1672,6 +1755,7 @@ type TimelineLayout = {
     positions: readonly {
       region: "gap" | "group" | "header" | "body";
       offsets: readonly number[];
+      gutter: number;
     }[];
     start: number;
     bodyStart: number;

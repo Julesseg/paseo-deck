@@ -2541,6 +2541,8 @@ describe("DeckTui viewport and focus", () => {
     await terminal.waitForRender();
     expect(terminal.writes.join("")).toContain("\u001b[2 q");
     expect(terminal.writes.join("")).toContain("\u001b[?25h");
+    for (const key of ["g", "g", "j", "^"]) terminal.sendInput(key);
+    await terminal.waitForRender();
     const row = terminal.viewport().findIndex((line) => line.includes("docs"));
     expect(row).toBeGreaterThan(0);
     expect(terminal.viewportBackgrounds()[row]).toContain("#332e27");

@@ -1548,6 +1548,73 @@ for (const [placement, state] of [
   });
 }
 
+const timelineStructureState = withTimeline(baseState, "timeline-structure", [
+  {
+    id: "structure-user",
+    type: "user-message",
+    text: "Please check **Timeline** messages and preserve wrapped content while resizing the terminal.",
+  },
+  {
+    id: "structure-assistant",
+    type: "assistant-message",
+    messageId: "structure-assistant",
+    text: "I will check the conversation and tool boundaries.\n\n- Preserve Markdown\n- Preserve copying",
+  },
+  {
+    id: "structure-tool",
+    type: "tool",
+    callId: "structure-tool",
+    name: "read_file",
+    status: "completed",
+    summary: "src/ui/views.ts",
+    output: `First output line\n${"Long tool output with wrapping and content.\n".repeat(5)}`,
+  },
+  {
+    id: "structure-failure",
+    type: "tool",
+    callId: "structure-failure",
+    name: "npm test",
+    status: "failed",
+    failureSummary: "exit 1",
+    output: "Assertion failed: expected readable boundaries.",
+  },
+  {
+    id: "structure-stream",
+    type: "assistant-message",
+    messageId: "structure-stream",
+    text: "The tool boundaries now remain clear while updates stream.",
+    streaming: true,
+  },
+]);
+for (const [name, columns, rows, appearance, input] of [
+  ["conversation", 140, 40, sampledTerminalAppearance, []],
+  ["expanded", 140, 40, sampledTerminalAppearance, ["\u000b", "g", "g", "j", "z", "a", "\u001b"]],
+  ["narrow", 52, 28, sampledTerminalAppearance, []],
+  ["plain", 100, 36, { color: "none", unicode: true, theme: "plain", symbols: "unicode" }, []],
+  ["ascii", 100, 36, { color: "ansi16", unicode: false, theme: "ember", symbols: "ascii" }, []],
+  ["light", 140, 40, { ...sampledTerminalAppearance, background: [245, 245, 244] }, []],
+] as const) {
+  shots.push({
+    name: `timeline-structure-${name}`,
+    columns,
+    rows,
+    state: {
+      ...(name === "expanded"
+        ? withTimeline(
+            baseState,
+            "timeline-structure-expanded",
+            timelineStructureState.timeline.items
+              .filter((event) => event.item.type === "tool")
+              .map((event) => event.item),
+          )
+        : timelineStructureState),
+      focus: "composer",
+    },
+    appearance: appearance as TerminalAppearance,
+    input,
+  });
+}
+
 // Populate interactive Composer selections through actual editing so cursor history is reproducible.
 for (const shot of shots) {
   if (!shot.name.startsWith("composer-visual")) continue;
