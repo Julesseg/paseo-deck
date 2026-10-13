@@ -24,6 +24,8 @@ The timeline adapter subscribes before fetching history. Live events received du
 
 On quit, Ctrl+C, connection failure, or an uncaught error, the controller releases its focused and directory observations, closes the gateway, and restores the terminal's alternate screen exactly once. Public client 0.8.0 restores focused timeline demand and reports timeline replacements, but exposes neither a connection-state listener nor guaranteed directory-demand restoration. The UI therefore offers palette **Refresh directory / reconnect** as an explicit full reconnect and directory refresh after transport interruption instead of polling or depending on a private SDK hook.
 
+Provider completion uses public SDK 0.11.2 `Agent.commands()` for existing Sessions. Drafts use a separately owned package-exported DaemonClient connection because the public Agent handle cannot represent unsent provider/Workspace configuration. Catalogs are transient and keyed by resource, provider, Workspace directory and draft settings; late results cannot replace a different current context. Missing command kind remains unclassified and is eligible only at prompt start.
+
 ## Preference lifecycle
 
 The runtime opens one preference session before constructing the controller or terminal view. The session validates a strict versioned allowlist and hydrates only tree ordering, archived visibility, expanded group IDs, tree width, theme, and symbol choices. Theme and symbols are global; tree state is keyed by a hash of the normalized daemon target. Passwords and raw target strings never enter the preference schema.

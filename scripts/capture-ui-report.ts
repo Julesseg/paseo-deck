@@ -111,6 +111,13 @@ const sampledTerminalAppearance: TerminalAppearance = {
   background: [28, 25, 23],
   symbols: "unicode",
 };
+const completionCatalog = [
+  { name: "clear", description: "Clear context", kind: "command" as const },
+  { name: "review", description: "Review changes", kind: "skill" as const },
+  { name: "research", description: "Research a topic", kind: "skill" as const },
+  { name: "project-check", description: "Project skill", kind: "skill" as const },
+  { name: "plugin-workflow", description: "Plugin skill", kind: "skill" as const },
+];
 const shots: Array<{
   name: string;
   columns: number;
@@ -119,6 +126,66 @@ const shots: Array<{
   appearance?: TerminalAppearance;
   input?: readonly string[];
 }> = [
+  ...(
+    [
+      ["leading", 100, 28, sampledTerminalAppearance, baseState, ["i", "/"]],
+      ["inline", 100, 28, sampledTerminalAppearance, baseState, ["i", ..."please /"]],
+      ["selected", 100, 28, sampledTerminalAppearance, baseState, ["i", ..."/re", "\u001b[B"]],
+      ["draft", 100, 28, sampledTerminalAppearance, draftState, ["i", "/"]],
+      [
+        "wrapped",
+        100,
+        28,
+        sampledTerminalAppearance,
+        baseState,
+        ["i", `\u001b[200~${"word ".repeat(12)}\u001b[201~`, "/", "r", "v"],
+      ],
+      [
+        "scrolled-short",
+        30,
+        12,
+        sampledTerminalAppearance,
+        baseState,
+        [
+          "i",
+          "\u001b[200~first\nsecond\nthird\nfourth\nfifth\nsixth\nseventh\n\u001b[201~",
+          "/",
+          "r",
+          "v",
+        ],
+      ],
+      ["narrow", 52, 18, sampledTerminalAppearance, baseState, ["i", "/"]],
+      [
+        "light",
+        100,
+        28,
+        { ...sampledTerminalAppearance, background: [240, 230, 220] },
+        baseState,
+        ["i", "/"],
+      ],
+      [
+        "ascii",
+        100,
+        28,
+        { color: "none", unicode: false, theme: "plain", symbols: "ascii" },
+        baseState,
+        ["i", "/"],
+      ],
+      ["no-popup", 100, 28, sampledTerminalAppearance, baseState, ["i", ..."plain prompt"]],
+    ] satisfies Array<[string, number, number, TerminalAppearance, AppState, string[]]>
+  ).map(([name, columns, rows, appearance, fixture, input]) => ({
+    name: `provider-completion-${name}`,
+    columns,
+    rows,
+    appearance,
+    state: {
+      ...fixture,
+      focus: "composer" as const,
+      composerMode: "normal" as const,
+      composer: { ...fixture.composer, drafts: {} },
+    },
+    input,
+  })),
   ...(
     [
       ["long-settings", 100, 28, sampledTerminalAppearance],
@@ -1634,6 +1701,7 @@ for (const shot of shots.filter(
   const terminal = new RecordingTerminal(shot.columns, shot.rows);
   const gateway = new FakePaseoGateway(shot.state.directory);
   gateway.terminals = Object.values(shot.state.workspaceTerminals ?? {}).flat();
+  if (shot.name.startsWith("provider-completion-")) gateway.providerCommands = completionCatalog;
   await gateway.connect();
   const app = new ApplicationController(gateway, { initialState: shot.state });
   const pending = new Set<Promise<void>>();
@@ -1761,6 +1829,8 @@ for (const shot of shots.filter(
 await writeFile(join(outputDirectory, "manifest.json"), JSON.stringify(manifest, null, 2));
 
 function captureRequirements(name: string): string {
+  if (name.startsWith("provider-completion-"))
+    return "#103 provider-scoped Insert completion; eligibility, selection, anchoring and constrained layouts";
   if (name.startsWith("composer-layout"))
     return "#102; Composer spacing, removed bottom status row, complete padded token count and editor sizing";
   if (name.includes("search")) return "#72 appendix 2/14; bottom Main query and retained settings";

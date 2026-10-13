@@ -9,6 +9,8 @@ import type {
 import type {
   Observation,
   PaseoGateway,
+  ProviderCommand,
+  ProviderCommandContext,
   WorkspaceCreateOptions,
   WorkspacePlacement,
 } from "../contracts/gateway.js";
@@ -26,6 +28,15 @@ export class FakePaseoGateway implements PaseoGateway {
   private readonly timelineListeners = new Map<string, Set<(update: TimelineUpdate) => void>>();
   public readonly commands: AgentCommand[] = [];
   public releaseCount = 0;
+  public providerCommands: readonly ProviderCommand[] = [];
+  public readonly providerCommandContexts: ProviderCommandContext[] = [];
+  public async getProviderCommands(
+    context: ProviderCommandContext,
+  ): Promise<readonly ProviderCommand[]> {
+    this.assertConnected();
+    this.providerCommandContexts.push(context);
+    return this.providerCommands;
+  }
   public terminals: TerminalRecord[] = [];
   public terminalProfiles: TerminalProfile[] = [];
   public readonly createdTerminals: Array<{

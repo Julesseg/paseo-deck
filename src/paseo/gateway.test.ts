@@ -1710,3 +1710,168 @@ it("shows a renamed Terminal title through the assembled app after later directo
     await gateway.close();
   }
 });
+
+it("projects the public Session catalog into controller state without guessing an absent command kind", async () => {
+  const fixture = testClient();
+  Object.assign(fixture.agent, {
+    commands: async () => ({
+      commands: [
+        { name: "clear", description: "Clear context", argumentHint: "", kind: "command" },
+        {
+          name: "personal-review",
+          description: "Personal skill",
+          argumentHint: "files",
+          kind: "skill",
+        },
+        { name: "project-review", description: "Project skill", argumentHint: "", kind: "skill" },
+        { name: "plugin-review", description: "Plugin skill", argumentHint: "", kind: "skill" },
+        { name: "legacy", description: "Unclassified", argumentHint: "" },
+        { name: "unsafe/name", description: "Invalid reference", argumentHint: "" },
+      ],
+      error: null,
+    }),
+  });
+  const gateway = new ProductionPaseoGateway({
+    host: "127.0.0.1:6767",
+    createClient: () => fixture.client as never,
+  });
+  const app = new ApplicationController(gateway);
+  try {
+    await app.start();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(app.state.providerCommands?.items).toEqual([
+      { name: "clear", description: "Clear context", kind: "command" },
+      {
+        name: "personal-review",
+        description: "Personal skill",
+        argumentHint: "files",
+        kind: "skill",
+      },
+      { name: "project-review", description: "Project skill", kind: "skill" },
+      { name: "plugin-review", description: "Plugin skill", kind: "skill" },
+      { name: "legacy", description: "Unclassified" },
+    ]);
+  } finally {
+    await app.releaseObservations();
+    await gateway.close();
+  }
+});
+
+it("uses owned draft discovery with the chosen provider configuration and clears stale catalogs on provider changes", async () => {
+  const fixture = testClient();
+  fixture.client.providers.waitForReady.mockResolvedValue({
+    entries: [
+      { provider: "codex", label: "Codex", status: "ready", enabled: true },
+      { provider: "claude", label: "Claude", status: "ready", enabled: true },
+    ],
+  });
+  const first = deferred<{
+    commands: Array<{ name: string; description: string; argumentHint: string; kind: "skill" }>;
+    error: null;
+  }>();
+  const second = deferred<{
+    commands: Array<{ name: string; description: string; argumentHint: string; kind: "skill" }>;
+    error: null;
+  }>();
+  const requests: unknown[] = [];
+  const owned = {
+    connect: vi.fn(async () => {}),
+    close: vi.fn(async () => {}),
+    listCommands: async (options: unknown) => {
+      requests.push(options);
+      return requests.length === 1 ? first.promise : second.promise;
+    },
+  };
+  const gateway = new ProductionPaseoGateway({
+    host: "127.0.0.1:6767",
+    createClient: () => fixture.client as never,
+    createCommandsClient: () => owned as never,
+  });
+  const app = new ApplicationController(gateway);
+  try {
+    await app.start();
+    await app.handleIntent({ type: "open-workspace-session-draft", workspaceId: "workspace-1" });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(requests[0]).toEqual({
+      agentId: "deck-draft:workspace-1",
+      draftConfig: { provider: "codex", cwd: "/repo", model: "gpt-5" },
+    });
+    await app.handleIntent({ type: "open-draft-setting", setting: "provider" });
+    await app.handleIntent({ type: "draft-setting-choice", choice: "claude" });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(requests[1]).toEqual({
+      agentId: "deck-draft:workspace-1",
+      draftConfig: { provider: "claude", cwd: "/repo", model: "gpt-5" },
+    });
+    first.resolve({
+      commands: [{ name: "old-codex", description: "Stale", argumentHint: "", kind: "skill" }],
+      error: null,
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(app.state.providerCommands?.items).toEqual([]);
+    second.resolve({
+      commands: [
+        { name: "claude-review", description: "Current", argumentHint: "", kind: "skill" },
+      ],
+      error: null,
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(app.state.providerCommands?.items).toEqual([
+      { name: "claude-review", description: "Current", kind: "skill" },
+    ]);
+  } finally {
+    await app.releaseObservations();
+    await gateway.close();
+  }
+  expect(owned.close).toHaveBeenCalledOnce();
+});
+
+it("ignores superseded catalog requests when the user returns to the original provider context", async () => {
+  const fixture = testClient();
+  const pending = Array.from({ length: 3 }, () =>
+    deferred<{
+      commands: Array<{ name: string; description: string; argumentHint: string; kind: "skill" }>;
+      error: null;
+    }>(),
+  );
+  let request = 0;
+  Object.assign(fixture.agent, { commands: () => pending[request++]?.promise });
+  const gateway = new ProductionPaseoGateway({
+    host: "127.0.0.1:6767",
+    createClient: () => fixture.client as never,
+  });
+  const app = new ApplicationController(gateway);
+  try {
+    await app.start();
+    const agent = {
+      id: "agent-1",
+      workspaceId: "workspace-1",
+      title: "Agent",
+      status: "idle",
+      availableModes: [],
+      pendingPermissions: [],
+    };
+    fixture.emitAgentDirectory({
+      type: "agent_snapshot_update",
+      payload: { agent: { ...agent, provider: "claude" } },
+    });
+    fixture.emitAgentDirectory({ type: "agent_snapshot_update", payload: { agent } });
+    pending[0]?.resolve({
+      commands: [{ name: "outdated", description: "Old", argumentHint: "", kind: "skill" }],
+      error: null,
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(app.state.providerCommands?.items).toEqual([]);
+    pending[2]?.resolve({
+      commands: [{ name: "fresh", description: "Current", argumentHint: "", kind: "skill" }],
+      error: null,
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(app.state.providerCommands?.items).toEqual([
+      { name: "fresh", description: "Current", kind: "skill" },
+    ]);
+  } finally {
+    await app.releaseObservations();
+    await gateway.close();
+  }
+});

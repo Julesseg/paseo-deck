@@ -30,6 +30,7 @@ import {
   selectedComposerDraft,
 } from "../state/composer.js";
 import { activeLaunchWorkspaceId, launchDraft } from "../state/launch.js";
+import { providerCommandContextKey } from "../state/provider-commands.js";
 import { pendingPermissions } from "../state/store.js";
 import { defaultTerminalAppearance, type TerminalAppearance } from "./capabilities.js";
 import { type ClipboardAdapter, SharedClipboard, systemClipboard } from "./clipboard.js";
@@ -66,6 +67,7 @@ import {
   shellLayout,
 } from "./layout.js";
 import { logicalWordOffset, offsetAt, positionAt } from "./logical-text.js";
+import { acceptCompletion, completionItems, completionReference } from "./provider-completion.js";
 import { type RenderClock, RenderScheduler } from "./render-scheduler.js";
 import { choiceNavigation, SingleLineField } from "./single-line-field.js";
 import { TerminalLifecycle } from "./terminal.js";
@@ -1877,12 +1879,22 @@ class ComposerView implements Component, Focusable {
   private vim: ComposerVimState;
   private inputRevision = 0;
   private visibleEditorLines = 3;
+  private completionIndex = 0;
+  private completionQuery = "";
+  private dismissedReference = "";
+  private completionOverlay: OverlayHandle | undefined;
+  private readonly completionOverlayOptions: NonNullable<Parameters<TUI["showOverlay"]>[1]> = {
+    nonCapturing: true,
+    margin: 0,
+  };
+
   constructor(
     private readonly tui: TUI,
     state: AppState,
     private readonly emit: (intent: UiIntent) => void,
     private readonly theme: DeckTheme,
     private readonly clipboard: SharedClipboard,
+    private readonly screenColumn: (width: number) => number,
   ) {
     this.state = state;
     this.selectedAgentId = state.selectedAgentId;
@@ -2052,6 +2064,7 @@ class ComposerView implements Component, Focusable {
       "",
       ` ${controls}`,
     ];
+    this.renderCompletion(innerWidth, lines.length, editorStart, body.length);
     return lines.map((line) =>
       this.theme.styleRenderedBackground(
         "composer",
@@ -2059,6 +2072,104 @@ class ComposerView implements Component, Focusable {
       ),
     );
   }
+  private suggestions() {
+    const current = syncComposerVim(this.vim, this.editor.getText(), this.editor.getCursor());
+    const reference = completionReference(current.text, current.cursor);
+    const key = reference ? `${this.resourceKey}:${reference.start}` : "";
+    const catalog = this.state.providerCommands;
+    if (
+      !this.focused ||
+      this.state.modal.type !== "none" ||
+      current.mode !== "insert" ||
+      !reference ||
+      key === this.dismissedReference ||
+      catalog?.contextKey !== providerCommandContextKey(this.state)
+    )
+      return;
+    const items = completionItems(catalog.items, reference);
+    if (!items.length) return;
+    const query = `${catalog.contextKey}:${key}:${reference.query}`;
+    if (query !== this.completionQuery) {
+      this.completionQuery = query;
+      this.completionIndex = 0;
+    }
+    this.completionIndex = Math.min(this.completionIndex, items.length - 1);
+    return { current, reference, items };
+  }
+
+  private renderCompletion(
+    width: number,
+    height: number,
+    editorStart: number,
+    bodyHeight: number,
+  ): void {
+    const suggestions = this.suggestions();
+    if (!suggestions) {
+      this.completionOverlay?.hide();
+      this.completionOverlay = undefined;
+      return;
+    }
+    const rows: { offset: number; text: string }[] = [];
+    let offset = 0;
+    for (const line of suggestions.current.text.split("\n")) {
+      for (const chunk of wordWrapLine(line, Math.max(1, width - 2)))
+        rows.push({ offset: offset + chunk.startIndex, text: chunk.text });
+      offset += line.length + 1;
+    }
+    const tokenRow = Math.max(
+      0,
+      rows.findIndex(
+        (row, index) =>
+          suggestions.reference.start >= row.offset &&
+          suggestions.reference.start < (rows[index + 1]?.offset ?? Infinity),
+      ),
+    );
+    const visibleRow = Math.max(editorStart, Math.min(tokenRow, editorStart + bodyHeight - 1));
+    const row = rows[visibleRow];
+    const column =
+      tokenRow < editorStart
+        ? 0
+        : terminalDisplayWidth(
+            row?.text.slice(0, Math.max(0, suggestions.reference.start - (row?.offset ?? 0))) ?? "",
+          );
+    const anchorRow = this.tui.terminal.rows - height + 2 + visibleRow - editorStart;
+    const menuHeight = Math.min(5, suggestions.items.length, anchorRow);
+    const menuWidth = Math.min(46, width, this.tui.terminal.columns);
+    this.completionOverlayOptions.width = menuWidth;
+    this.completionOverlayOptions.row = Math.max(0, anchorRow - menuHeight);
+    this.completionOverlayOptions.col = Math.max(
+      0,
+      Math.min(this.tui.terminal.columns - menuWidth, this.screenColumn(width) + 1 + column),
+    );
+    this.completionOverlayOptions.maxHeight = menuHeight;
+    if (!this.completionOverlay)
+      this.completionOverlay = this.tui.showOverlay(
+        {
+          invalidate() {},
+          render: (menuWidth) => {
+            const current = this.suggestions();
+            if (!current) return [];
+            const visibleHeight = Number(this.completionOverlayOptions.maxHeight);
+            const start = Math.max(0, this.completionIndex - visibleHeight + 1);
+            return current.items
+              .slice(start, start + visibleHeight)
+              .map((item, index) =>
+                this.theme.styleRenderedBackground(
+                  index + start === this.completionIndex ? "selection" : "composer",
+                  this.theme
+                    .clipRendered(
+                      ` ${index + start === this.completionIndex ? ">" : " "} /${sanitizeTerminalText(item.name)}  ${sanitizeTerminalText(item.description)}${item.argumentHint ? ` ${sanitizeTerminalText(item.argumentHint)}` : ""}`,
+                      menuWidth,
+                    )
+                    .padEnd(menuWidth),
+                ),
+              );
+          },
+        },
+        this.completionOverlayOptions,
+      );
+  }
+
   get hasPendingCommand(): boolean {
     return Boolean(this.vim.pending || this.vim.count);
   }
@@ -2067,6 +2178,10 @@ class ComposerView implements Component, Focusable {
     this.inputRevision++;
     const launchId = activeLaunchWorkspaceId(this.state);
     if (launchId && launchDraft(this.state, launchId).submitting) return;
+    if (data.startsWith("\u001b[200~")) {
+      const reference = completionReference(this.vim.text, this.vim.cursor);
+      if (reference) this.dismissedReference = `${this.resourceKey}:${reference.start}`;
+    }
     if (data.startsWith("\u001b[200~") && this.vim.mode === "visual") {
       const text = data.slice(6).replace("\u001b[201~", "").replace(/\r\n?/gu, "\n");
       this.applyVimResult({ state: applyComposerNativePaste(this.vim, text), handled: true });
@@ -2074,12 +2189,15 @@ class ComposerView implements Component, Focusable {
     }
     if (data.startsWith("\u001b[200~")) {
       const payload = data.slice(6, data.endsWith("\u001b[201~") ? -6 : undefined);
+      const inserted = applyComposerInsertText(
+        syncComposerVim(this.vim, this.editor.getText(), this.editor.getCursor()),
+        payload.replace(/\r\n?/gu, "\n").replace(/\t/gu, "    "),
+        true,
+      );
+      const reference = completionReference(inserted.text, inserted.cursor);
+      if (reference) this.dismissedReference = `${this.resourceKey}:${reference.start}`;
       this.applyVimResult({
-        state: applyComposerInsertText(
-          syncComposerVim(this.vim, this.editor.getText(), this.editor.getCursor()),
-          payload,
-          true,
-        ),
+        state: inserted,
         handled: true,
       });
       return;
@@ -2088,6 +2206,29 @@ class ComposerView implements Component, Focusable {
       this.handleVimInput(data);
       return;
     }
+    const suggestions = this.suggestions();
+    if (suggestions) {
+      if (matchesKey(data, "up") || matchesKey(data, "down")) {
+        this.completionIndex =
+          (this.completionIndex + (matchesKey(data, "up") ? -1 : 1) + suggestions.items.length) %
+          suggestions.items.length;
+        return;
+      }
+      if (matchesKey(data, "tab") || matchesKey(data, "enter")) {
+        const item = suggestions.items[this.completionIndex];
+        if (item)
+          this.applyVimResult({
+            state: acceptCompletion(suggestions.current, suggestions.reference, item.name),
+            handled: true,
+          });
+        return;
+      }
+      if (data === "\u001b") {
+        this.dismissedReference = `${this.resourceKey}:${suggestions.reference.start}`;
+        return;
+      }
+    }
+    if (data === "/" && !suggestions) this.dismissedReference = "";
     const current = syncComposerVim(this.vim, this.editor.getText(), this.editor.getCursor());
     if (matchesKey(data, "up") || matchesKey(data, "down")) {
       const up = matchesKey(data, "up");
@@ -2279,6 +2420,10 @@ class ComposerView implements Component, Focusable {
   }
 
   cancelPendingInput(): void {
+    this.completionOverlay?.hide();
+    this.completionOverlay = undefined;
+    const reference = completionReference(this.vim.text, this.vim.cursor);
+    this.dismissedReference = reference ? `${this.resourceKey}:${reference.start}` : "";
     this.inputRevision++;
     this.vim = {
       ...this.vim,
@@ -3041,6 +3186,11 @@ export class DeckTui {
       (intent) => this.handleControllerIntent(intent),
       this.theme,
       this.clipboard,
+      (width) => {
+        const layout = shellLayout(this.terminal.columns, this.terminal.rows, this.treeWidth);
+        const mainWidth = this.terminal.columns - (layout.narrow ? 0 : this.treeWidth + 2);
+        return this.terminal.columns - width - readingColumnLayout(mainWidth).right;
+      },
     );
     this.minimumSize = new MinimumSizeView(this.theme);
     this.treeTranscript = new SidebarScrollView(this.tree, { follow: "none", scrollbar: "auto" });

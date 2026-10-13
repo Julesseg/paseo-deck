@@ -31,7 +31,28 @@ export interface WorkspaceCreateOptions {
   firstAgentPrompt?: string;
 }
 
+export interface ProviderCommand {
+  name: string;
+  description: string;
+  argumentHint?: string;
+  kind?: "command" | "skill";
+}
+
+export type ProviderCommandContext =
+  | { agentId: string; workspaceId: string; providerId?: string }
+  | {
+      workspaceId: string;
+      draft: {
+        providerId: string;
+        cwd: string;
+        modelId?: string;
+        modeId?: string;
+        thinkingLevel?: string;
+      };
+    };
+
 export interface PaseoGateway extends TerminalGateway {
+  getProviderCommands(context: ProviderCommandContext): Promise<readonly ProviderCommand[]>;
   getWorkspacePlacement(directory: string): Promise<WorkspacePlacement>;
   createWorkspace(options: WorkspaceCreateOptions): Promise<WorkspaceRecord>;
   connect(): Promise<void>;
