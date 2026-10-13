@@ -9,7 +9,7 @@ import { DeckTui } from "./views.js";
 async function fixture(
   columns: number,
   treeWidth: number,
-  options: { rows?: number; appearance?: TerminalAppearance; text?: string } = {},
+  options: { rows?: number; appearance?: TerminalAppearance; text?: string; user?: boolean } = {},
 ) {
   const gateway = new FakePaseoGateway({
     projects: [],
@@ -40,7 +40,8 @@ async function fixture(
         sequence: 1,
         item: {
           id: "message",
-          type: "user-message",
+          type: options.user ? "user-message" : "assistant-message",
+          messageId: "message",
           text: options.text ?? `READING ${"word ".repeat(60)}`,
         },
       },
@@ -293,6 +294,165 @@ it("Visual content selection survives width reflow of the same centered column",
     await f.terminal.waitForRender();
     expect(f.clipboard()).toBe("alp");
     expect(f.app.state.composer.drafts.a ?? "").toBe("");
+  } finally {
+    await f.close();
+  }
+});
+
+it("right-aligns a bounded user block while assistant text stays at the reading edge", async () => {
+  const f = await fixture(140, 34, { rows: 40, text: "User body", user: true });
+  try {
+    f.gateway.emitTimeline("a", {
+      type: "event",
+      agentId: "a",
+      event: {
+        epoch: "e",
+        sequence: 2,
+        item: {
+          id: "assistant",
+          type: "assistant-message",
+          messageId: "assistant",
+          text: "Assistant body",
+        },
+      },
+    });
+    await f.terminal.waitForRender();
+    const lines = f.terminal.viewport();
+    const userRow = lines.findIndex((line) => line.includes("User body"));
+    const assistantRow = lines.findIndex((line) => line.includes("Assistant body"));
+    const backgrounds = f.terminal.viewportBackgrounds()[userRow] ?? [];
+    const painted = backgrounds.flatMap((color, column) => (color && column > 34 ? [column] : []));
+    expect(painted).toHaveLength(76);
+    expect(painted[0]).toBe(63);
+    expect(painted.at(-1)).toBe(138);
+    expect(lines[userRow]?.indexOf("User body")).toBe(65);
+    expect(lines[assistantRow]?.indexOf("Assistant body")).toBe(39);
+    expect(f.terminal.viewportBackgrounds()[assistantRow]?.slice(37)).not.toContain(
+      backgrounds[65],
+    );
+  } finally {
+    await f.close();
+  }
+});
+
+it("copies a right-aligned user row without its alignment gutter", async () => {
+  const f = await fixture(140, 34, { rows: 40, text: "User body", user: true });
+  try {
+    for (const key of ["\u000b", "g", "g", "j", "y", "y"]) f.terminal.sendInput(key);
+    await f.terminal.waitForRender();
+    expect(f.clipboard()).toBe("User body");
+  } finally {
+    await f.close();
+  }
+});
+
+it("paints consecutive tools across the reading column and leaves assistant output unpainted", async () => {
+  const f = await fixture(140, 34, { rows: 40, text: "User body", user: true });
+  try {
+    f.gateway.emitTimeline("a", {
+      type: "hydrated",
+      agentId: "a",
+      items: [
+        {
+          epoch: "tools",
+          sequence: 1,
+          item: {
+            id: "tool1",
+            type: "tool",
+            callId: "c1",
+            name: "shell",
+            status: "completed",
+            output: "first output",
+          },
+        },
+        {
+          epoch: "tools",
+          sequence: 2,
+          item: {
+            id: "tool2",
+            type: "tool",
+            callId: "c2",
+            name: "shell",
+            status: "failed",
+            failureSummary: "exit 1",
+            output: "failed output",
+          },
+        },
+        {
+          epoch: "tools",
+          sequence: 3,
+          item: { id: "assistant", type: "assistant-message", messageId: "m", text: "After tools" },
+        },
+      ],
+    });
+    await f.terminal.waitForRender();
+    const lines = f.terminal.viewport();
+    for (const text of ["Tool completed", "first output", "Tool failed", "failed output"]) {
+      const row = lines.findIndex((line) => line.includes(text));
+      const cells = f.terminal.viewportBackgrounds()[row]?.slice(37, 139);
+      expect(cells?.every((cell) => cell && cell === cells[0])).toBe(true);
+    }
+    expect(lines.some((line) => line.slice(37, 139) === "─".repeat(102))).toBe(true);
+    const assistant = lines.findIndex((line) => line.includes("After tools"));
+    expect(
+      f.terminal
+        .viewportBackgrounds()
+        [assistant]?.slice(37, 139)
+        .every((cell) => !cell),
+    ).toBe(true);
+    for (const key of ["\u000b", "g", "g", "V", "G", "y"]) f.terminal.sendInput(key);
+    await f.terminal.waitForRender();
+    expect(f.clipboard()).not.toContain("─".repeat(3));
+    expect(f.clipboard()).toContain("failed output");
+  } finally {
+    await f.close();
+  }
+});
+
+it("copies wrapped user content through Visual reflow without adding padding or soft-wrap newlines", async () => {
+  const text = "alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima 世界 end";
+  const f = await fixture(100, 34, { rows: 40, text, user: true });
+  try {
+    for (const key of ["\u000b", "g", "g", "j", "^", "v", "G", "$"]) f.terminal.sendInput(key);
+    await f.terminal.waitForRender();
+    f.terminal.setSize(52, 40);
+    await f.terminal.waitForRender();
+    f.terminal.sendInput("y");
+    await f.terminal.waitForRender();
+    expect(f.clipboard()).toBe(text);
+  } finally {
+    await f.close();
+  }
+});
+
+it("keeps expanded tool output on its surface when folded and updated", async () => {
+  const f = await fixture(140, 34, { rows: 40, text: "User body", user: true });
+  const item = {
+    id: "longtool",
+    type: "tool" as const,
+    callId: "longtool",
+    name: "read_file",
+    status: "running" as const,
+    summary: "Reading source",
+    output: `first line\n${"Expanded tool output.\n".repeat(12)}`,
+  };
+  try {
+    f.gateway.emitTimeline("a", {
+      type: "event",
+      agentId: "a",
+      event: { epoch: "e", sequence: 2, item },
+    });
+    await f.terminal.waitForRender();
+    expect(f.terminal.viewport().join("\n")).not.toContain("Expanded tool output.");
+    for (const key of ["\u000b", "G", "z", "a"]) f.terminal.sendInput(key);
+    await f.terminal.waitForRender();
+    const row = f.terminal.viewport().findIndex((line) => line.includes("Expanded tool output."));
+    expect(row).toBeGreaterThan(0);
+    const cells = f.terminal.viewportBackgrounds()[row]?.slice(37, 139);
+    expect(cells?.every((cell) => cell && cell === cells[0])).toBe(true);
+    for (const key of ["g", "g", "G", "z", "a"]) f.terminal.sendInput(key);
+    await f.terminal.waitForRender();
+    expect(f.terminal.viewport().join("\n")).not.toContain("Expanded tool output.");
   } finally {
     await f.close();
   }

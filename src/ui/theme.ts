@@ -21,6 +21,8 @@ export type BackgroundTone =
   | "tab-active"
   | "active-session"
   | "composer"
+  | "user-message"
+  | "tool"
   | "selection";
 
 export type DeckGlyph =
@@ -88,6 +90,8 @@ const emberBackground: Readonly<Record<BackgroundTone, readonly [number, number,
   "tab-active": [101, 69, 43],
   "active-session": [45, 42, 37],
   composer: [39, 36, 33],
+  "user-message": [43, 39, 35],
+  tool: [34, 32, 30],
   selection: [51, 46, 39],
 };
 const emberBackground256: Readonly<Record<BackgroundTone, number>> = {
@@ -96,6 +100,8 @@ const emberBackground256: Readonly<Record<BackgroundTone, number>> = {
   "tab-active": 240,
   "active-session": 238,
   composer: 237,
+  "user-message": 238,
+  tool: 236,
   selection: 239,
 };
 const emberBackground16: Readonly<Record<BackgroundTone, number>> = {
@@ -104,6 +110,8 @@ const emberBackground16: Readonly<Record<BackgroundTone, number>> = {
   "tab-active": 43,
   "active-session": 40,
   composer: 100,
+  "user-message": 100,
+  tool: 40,
   selection: 100,
 };
 const surfaceOpacity: Readonly<Record<BackgroundTone, number>> = {
@@ -112,6 +120,8 @@ const surfaceOpacity: Readonly<Record<BackgroundTone, number>> = {
   "tab-active": 0.32,
   "active-session": 0.075,
   composer: 0.06,
+  "user-message": 0.085,
+  tool: 0.045,
   selection: 0.1,
 };
 

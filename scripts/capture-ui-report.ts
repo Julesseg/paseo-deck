@@ -119,6 +119,47 @@ const shots: Array<{
   appearance?: TerminalAppearance;
   input?: readonly string[];
 }> = [
+  ...(
+    [
+      ["long-settings", 100, 28, sampledTerminalAppearance],
+      ["wide", 160, 36, sampledTerminalAppearance],
+      ["narrow", 52, 18, sampledTerminalAppearance],
+      ["short", 30, 12, sampledTerminalAppearance],
+      ["scrolling", 30, 12, sampledTerminalAppearance],
+      ["light", 100, 28, { ...sampledTerminalAppearance, background: [240, 230, 220] }],
+      ["plain", 100, 28, { color: "none", unicode: true, theme: "plain", symbols: "unicode" }],
+      ["ascii", 100, 28, { color: "none", unicode: false, theme: "plain", symbols: "ascii" }],
+    ] satisfies Array<[string, number, number, TerminalAppearance]>
+  ).map(([name, columns, rows, appearance]) => ({
+    name: `composer-layout-${name}`,
+    columns,
+    rows,
+    appearance,
+    state: {
+      ...baseState,
+      focus: "composer" as const,
+      composerMode: "insert" as const,
+      directory: {
+        ...baseState.directory,
+        agents: baseState.directory.agents.map((agent) =>
+          agent.id === "agent-atlas-1234"
+            ? {
+                ...agent,
+                modelId: "model-with-a-long-configuration-name",
+                thinkingLevel: "high",
+                modeId: "plan",
+              }
+            : agent,
+        ),
+      },
+      timeline: { ...baseState.timeline, usage: { contextTokens: 123456789 } },
+    },
+    input: [
+      name === "scrolling"
+        ? `\u001b[200~${Array.from({ length: 15 }, (_, index) => `line ${index}`).join("\n")}\u001b[201~`
+        : "\u001b[200~Review the Composer layout.\nKeep this prompt intact.\nCursor stays here.\u001b[201~",
+    ],
+  })),
   {
     name: "command-palette-appearance",
     columns: 100,
@@ -1507,6 +1548,73 @@ for (const [placement, state] of [
   });
 }
 
+const timelineStructureState = withTimeline(baseState, "timeline-structure", [
+  {
+    id: "structure-user",
+    type: "user-message",
+    text: "Please check **Timeline** messages and preserve wrapped content while resizing the terminal.",
+  },
+  {
+    id: "structure-assistant",
+    type: "assistant-message",
+    messageId: "structure-assistant",
+    text: "I will check the conversation and tool boundaries.\n\n- Preserve Markdown\n- Preserve copying",
+  },
+  {
+    id: "structure-tool",
+    type: "tool",
+    callId: "structure-tool",
+    name: "read_file",
+    status: "completed",
+    summary: "src/ui/views.ts",
+    output: `First output line\n${"Long tool output with wrapping and content.\n".repeat(5)}`,
+  },
+  {
+    id: "structure-failure",
+    type: "tool",
+    callId: "structure-failure",
+    name: "npm test",
+    status: "failed",
+    failureSummary: "exit 1",
+    output: "Assertion failed: expected readable boundaries.",
+  },
+  {
+    id: "structure-stream",
+    type: "assistant-message",
+    messageId: "structure-stream",
+    text: "The tool boundaries now remain clear while updates stream.",
+    streaming: true,
+  },
+]);
+for (const [name, columns, rows, appearance, input] of [
+  ["conversation", 140, 40, sampledTerminalAppearance, []],
+  ["expanded", 140, 40, sampledTerminalAppearance, ["\u000b", "g", "g", "j", "z", "a", "\u001b"]],
+  ["narrow", 52, 28, sampledTerminalAppearance, []],
+  ["plain", 100, 36, { color: "none", unicode: true, theme: "plain", symbols: "unicode" }, []],
+  ["ascii", 100, 36, { color: "ansi16", unicode: false, theme: "ember", symbols: "ascii" }, []],
+  ["light", 140, 40, { ...sampledTerminalAppearance, background: [245, 245, 244] }, []],
+] as const) {
+  shots.push({
+    name: `timeline-structure-${name}`,
+    columns,
+    rows,
+    state: {
+      ...(name === "expanded"
+        ? withTimeline(
+            baseState,
+            "timeline-structure-expanded",
+            timelineStructureState.timeline.items
+              .filter((event) => event.item.type === "tool")
+              .map((event) => event.item),
+          )
+        : timelineStructureState),
+      focus: "composer",
+    },
+    appearance: appearance as TerminalAppearance,
+    input,
+  });
+}
+
 // Populate interactive Composer selections through actual editing so cursor history is reproducible.
 for (const shot of shots) {
   if (!shot.name.startsWith("composer-visual")) continue;
@@ -1653,6 +1761,8 @@ for (const shot of shots.filter(
 await writeFile(join(outputDirectory, "manifest.json"), JSON.stringify(manifest, null, 2));
 
 function captureRequirements(name: string): string {
+  if (name.startsWith("composer-layout"))
+    return "#102; Composer spacing, removed bottom status row, complete padded token count and editor sizing";
   if (name.includes("search")) return "#72 appendix 2/14; bottom Main query and retained settings";
   if (name.includes("new-workspace") || name.startsWith("launch"))
     return "#72 appendix 19; Project/placement/Base/first Tab and partial-success states";

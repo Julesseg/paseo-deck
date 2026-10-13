@@ -629,7 +629,7 @@ describe("composer controls", () => {
     const terminalView = terminal.viewport().join("\n");
     expect(terminalView).toContain("build");
     expect(terminalView).toContain("terminal sample");
-    expect(terminalView).toContain("terminal build");
+    expect(terminalView).not.toContain("terminal build");
     expect(terminalView).not.toContain("session sample");
     expect(terminalView).not.toContain("Prompt →");
     expect(terminalView).not.toContain("Session activity");
@@ -970,7 +970,7 @@ describe("composer controls", () => {
         .viewport()
         .findIndex((line) => line.includes(`${mode.toUpperCase()} Prompt`));
       expect(headingRow).toBeGreaterThanOrEqual(0);
-      expect(terminal.viewportInverseCells()[headingRow + 1]?.some(Boolean)).toBe(true);
+      expect(terminal.viewportInverseCells()[headingRow + 2]?.some(Boolean)).toBe(true);
     }
     await deck.stop();
   });
@@ -1314,7 +1314,7 @@ describe("terminal appearance", () => {
     expect(terminal.viewport().every((line) => terminalDisplayWidth(line) <= 52)).toBe(true);
   });
 
-  it("preserves remote tree, status, composer, and notification labels in ASCII mode", async () => {
+  it("preserves remote tree and Composer labels while omitting removed status details in ASCII mode", async () => {
     const terminal = new RecordingTerminal(100, 18);
     const base = state();
     const uiState: AppState = {
@@ -1355,8 +1355,9 @@ describe("terminal appearance", () => {
 
     expect(rendered).toContain("Workspace → •");
     expect(rendered).toContain("Agent → •");
-    expect(rendered).toContain("Provider →/Model •");
-    expect(rendered).toContain("Notic");
+    expect(rendered).toContain("[mm] Model *");
+    expect(rendered).not.toContain("Provider →/Model •");
+    expect(rendered).not.toContain("Notice");
     expect(terminal.viewport().every((line) => terminalDisplayWidth(line) <= 100)).toBe(true);
   });
 
@@ -1740,7 +1741,7 @@ describe("creation prompt", () => {
 });
 
 describe("DeckTui viewport and focus", () => {
-  it("renders reconnect attempts and elapsed time from the injected render clock", async () => {
+  it("keeps stale Timeline presentation during reconnect without a bottom status row", async () => {
     const terminal = new RecordingTerminal();
     const clock = new FakeRenderClock();
     clock.current = 1_000;
@@ -1756,10 +1757,12 @@ describe("DeckTui viewport and focus", () => {
     );
     deck.start();
     await terminal.waitForRender();
-    expect(terminal.viewport().join("\n")).toContain("reconnecting #2 · 0s · stale");
+    expect(terminal.viewport().join("\n")).toContain("Timeline is stale while Paseo reconnects");
+    expect(terminal.viewport().join("\n")).not.toContain("reconnecting #2");
     clock.advance(1_000);
     await terminal.waitForRender();
-    expect(terminal.viewport().join("\n")).toContain("reconnecting #2 · 1s · stale");
+    expect(terminal.viewport().join("\n")).toContain("Timeline is stale while Paseo reconnects");
+    expect(terminal.viewport().join("\n")).not.toContain("reconnecting #2");
     await deck.stop();
     const writesAfterStop = terminal.writes.length;
     clock.advance(5_000);
@@ -2538,6 +2541,8 @@ describe("DeckTui viewport and focus", () => {
     await terminal.waitForRender();
     expect(terminal.writes.join("")).toContain("\u001b[2 q");
     expect(terminal.writes.join("")).toContain("\u001b[?25h");
+    for (const key of ["g", "g", "j", "^"]) terminal.sendInput(key);
+    await terminal.waitForRender();
     const row = terminal.viewport().findIndex((line) => line.includes("docs"));
     expect(row).toBeGreaterThan(0);
     expect(terminal.viewportBackgrounds()[row]).toContain("#332e27");
@@ -3075,6 +3080,9 @@ describe("DeckTui viewport and focus", () => {
     expect(terminal.viewport().every((line) => terminalDisplayWidth(line) <= 30)).toBe(true);
     terminal.setSize(30, 12);
     await terminal.waitForRender();
+    expect(terminal.viewport().join("\n")).toContain("[mm]");
+    deck.update({ ...state(), focus: "composer", composerMode: "normal" });
+    await terminal.waitForRender();
     expect(terminal.viewport().join("\n")).toContain("Prompt");
     await deck.stop();
   });
@@ -3313,7 +3321,7 @@ describe("DeckTui viewport and focus", () => {
     await deck.stop();
     expect(intents).toEqual([{ type: "close-modal" }]);
   });
-  it("shows mode and token context in the status line when space allows", async () => {
+  it("keeps Session settings and token context in the Composer without bottom status extras", async () => {
     const terminal = new RecordingTerminal(120, 18);
     const base = state();
     const deck = new DeckTui(
@@ -3358,8 +3366,10 @@ describe("DeckTui viewport and focus", () => {
     await terminal.waitForRender();
     await deck.stop();
 
-    expect(terminal.viewport().join("\n")).toContain(
-      "ready/one · plan · low · context 15/100 · in 12 · out 3",
+    expect(terminal.viewport().join("\n")).toContain("[mm] one  [mt] low  [mo] plan");
+    expect(terminal.viewport().join("\n")).toContain("context 15");
+    expect(terminal.viewport().join("\n")).not.toMatch(
+      /ready\/one|context 15\/100|in 12|out 3|Directory refreshed/u,
     );
     expect(terminal.viewport().join("\n")).not.toContain("Sidebar:");
   });
@@ -3410,7 +3420,7 @@ describe("DeckTui viewport and focus", () => {
     const lines = terminal.viewport();
     expect(lines.join("\n")).toContain("Projects");
     expect(lines.join("\n")).not.toContain("Tabs");
-    expect(lines.join("\n")).toContain("Prompt");
+    expect(lines.join("\n")).toContain("[mm]");
     expect(lines.every((line) => line.length <= 30)).toBe(true);
   });
 
@@ -3508,7 +3518,7 @@ describe("DeckTui viewport and focus", () => {
     const lines = terminal.viewport();
     expect(lines.join("\n")).toContain("Projects");
     expect(lines.join("\n")).toContain("Prompt");
-    expect(lines.join("\n")).toContain("conne");
+    expect(lines.join("\n")).not.toContain("connected");
     expect(lines.join("\n")).toContain("␛[2J");
     expect(lines.every((line) => terminalDisplayWidth(line) <= 30)).toBe(true);
   });

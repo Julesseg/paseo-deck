@@ -30,7 +30,7 @@ import {
   selectedComposerDraft,
 } from "../state/composer.js";
 import { activeLaunchWorkspaceId, launchDraft } from "../state/launch.js";
-import { activeNotification, pendingPermissions } from "../state/store.js";
+import { pendingPermissions } from "../state/store.js";
 import { defaultTerminalAppearance, type TerminalAppearance } from "./capabilities.js";
 import { type ClipboardAdapter, SharedClipboard, systemClipboard } from "./clipboard.js";
 import {
@@ -968,17 +968,21 @@ class TimelineView implements Component {
           this.eventIndexAtBodyLine(start + index)
         ];
         const mapping = event?.positions[start + index - (event?.start ?? 0)];
+        if (mapping?.region === "gap" || mapping?.region === "group") return undefined;
         const item = this.events[this.eventIndexAtBodyLine(start + index)]?.item;
         const primary = item?.type === "user-message" || item?.type === "assistant-message";
-        const padding = !primary && line.startsWith("    ") ? 4 : 2;
+        const gutter = mapping?.gutter ?? 0;
+        const text = line.slice(gutter);
+        const padding = !primary && text.startsWith("    ") ? 4 : 2;
         return (
-          mapping?.region === "body" && line.startsWith("  ")
-            ? line.slice(padding)
-            : mapping?.region === "header" && !primary && line.startsWith("  ")
-              ? line.slice(2)
-              : line
+          mapping?.region === "body" && text.startsWith("  ")
+            ? text.slice(padding)
+            : mapping?.region === "header" && !primary && text.startsWith("  ")
+              ? text.slice(2)
+              : text
         ).trimEnd();
       })
+      .filter((line) => line !== undefined)
       .join("\n");
   }
   private copyCharacterRange(start: number, end: number): string {
@@ -994,9 +998,18 @@ class TimelineView implements Component {
       const line = this.buffer.lines[row] ?? "";
       const lo = row === first.line ? first.column : 0;
       const hi = row === last.line ? last.column + 1 : line.length;
-      if (!event || !mapping) continue;
+      if (!event || !mapping || mapping.region === "gap" || mapping.region === "group") continue;
       if (mapping.region === "body") {
-        const from = mapping.offsets[Math.min(lo, mapping.offsets.length - 1)] ?? 0;
+        const from =
+          mapping.offsets[
+            Math.min(
+              Math.max(
+                lo,
+                mapping.offsets.findIndex((offset) => offset >= 0),
+              ),
+              mapping.offsets.length - 1,
+            )
+          ] ?? 0;
         const tail =
           mapping.offsets[Math.min(Math.max(lo, hi - 1), mapping.offsets.length - 1)] ?? from;
         const to = hi > lo && line.length ? Math.min(event.content.length, tail + 1) : from;
@@ -1015,7 +1028,11 @@ class TimelineView implements Component {
       } else {
         const item = this.events[eventIndex]?.item;
         const primary = item?.type === "user-message" || item?.type === "assistant-message";
-        const padding = mapping.region === "header" && !primary && line.startsWith("  ") ? 2 : 0;
+        const padding =
+          mapping.gutter +
+          (mapping.region === "header" && !primary && line.slice(mapping.gutter).startsWith("  ")
+            ? 2
+            : 0);
         pieces.push({
           event: eventIndex,
           region: "header",
@@ -1289,6 +1306,11 @@ class TimelineView implements Component {
       this.state.timelineNavigation[this.state.selectedAgentId]?.following !== false
     )
       this.buffer = { ...moveTimelineBuffer(this.buffer, "G"), column: 0 };
+    const cursorEvent = layout.events[this.eventIndexAtBodyLine(this.buffer.line)];
+    const cursorRow = cursorEvent?.positions[this.buffer.line - cursorEvent.start];
+    const cursorStart = cursorRow?.offsets.findIndex((offset) => offset >= 0) ?? 0;
+    if (cursorRow && this.buffer.column < cursorStart)
+      this.buffer = { ...this.buffer, column: cursorStart };
     this.syncSelectedIndex();
     if (wasVisual && this.buffer.mode !== "visual")
       this.selectionFeedback = "Selection cleared: timeline changed";
@@ -1377,6 +1399,21 @@ class TimelineView implements Component {
         rendered = `${query ? highlightBufferMatches(plain.slice(0, range.start), query, this.buffer.search?.wholeWord) : plain.slice(0, range.start)}${selected}${query ? highlightBufferMatches(plain.slice(range.end), query, this.buffer.search?.wholeWord) : plain.slice(range.end)}`;
       }
     }
+    if (rendered !== line && !active) {
+      const eventIndex = this.eventIndexAtBodyLine(bodyLine);
+      const event = layout.events[eventIndex];
+      const mapping = event?.positions[bodyLine - event.start];
+      const item = this.events[eventIndex]?.item;
+      if (item?.type === "tool")
+        rendered = this.theme.styleRenderedBackground(
+          "tool",
+          `${rendered}${" ".repeat(Math.max(0, width - terminalDisplayWidth(rendered)))}`,
+        );
+      if (item?.type === "user-message" && mapping) {
+        const body = sliceByColumn(rendered, mapping.gutter, width - mapping.gutter);
+        rendered = `${" ".repeat(mapping.gutter)}${this.theme.styleRenderedBackground("user-message", `${body}${" ".repeat(Math.max(0, width - mapping.gutter - terminalDisplayWidth(body)))}`)}`;
+      }
+    }
     const clipped = clipTerminalLine(rendered, width, this.theme.glyph("ellipsis"));
     if (!active) return clipped;
     const padded = `${clipped}${" ".repeat(Math.max(0, width - terminalDisplayWidth(clipped)))}`;
@@ -1386,7 +1423,13 @@ class TimelineView implements Component {
       Math.max(0, width - 1),
     );
     const withCursor = `${sliceByColumn(padded, 0, cursorColumn)}${CURSOR_MARKER}${sliceByColumn(padded, cursorColumn, width - cursorColumn)}`;
-    return this.theme.styleRenderedBackground("selection", withCursor);
+    return this.theme.styleRenderedBackground(
+      "selection",
+      withCursor.replace(
+        new RegExp(`${String.fromCharCode(27)}\\[(?:48;[\\d;]+|4[0-7]|10[0-7])m`, "gu"),
+        "",
+      ),
+    );
   }
 
   private eventBodyLine(index: number): number {
@@ -1435,7 +1478,16 @@ class TimelineView implements Component {
             eventIndex,
             eventOrder: layout.events.map((entry) => entry.itemId),
             region: row.region,
-            offset: row.offsets[Math.min(column, row.offsets.length - 1)] ?? 0,
+            offset:
+              row.offsets[
+                Math.min(
+                  Math.max(
+                    column,
+                    row.offsets.findIndex((offset) => offset >= 0),
+                  ),
+                  row.offsets.length - 1,
+                )
+              ] ?? 0,
             content: event.content,
             folded: event.folded,
           }
@@ -1500,6 +1552,7 @@ class TimelineView implements Component {
     for (const [rowIndex, row] of event.positions.entries()) {
       if (row.region !== anchor.region) continue;
       for (const [column, offset] of row.offsets.entries()) {
+        if (offset < 0) continue;
         const delta = Math.abs(offset - anchor.offset);
         if (delta < distance) {
           nearest = { line: event.start + rowIndex, column };
@@ -1551,7 +1604,7 @@ class TimelineView implements Component {
     let priorGroup: string | undefined;
     let ordinal = 0;
     let start = 0;
-    const events = this.events.map((event) => {
+    const events = this.events.map((event, eventIndex) => {
       const item = event.item;
       if (item.type === "user-message") group = `user:${item.id}`;
       else if (item.type === "turn") group = `turn:${item.turnId ?? item.id}`;
@@ -1560,21 +1613,44 @@ class TimelineView implements Component {
       // Explicit turn records are the visual boundaries between turns. Avoid
       // inflating long streamed message histories with separator rows for
       // every provider-assigned turn id.
-      const gap = firstInGroup && priorGroup && item.type === "turn" ? [""] : [];
+      const gap =
+        item.type === "tool" && this.events[eventIndex - 1]?.item.type === "tool"
+          ? [
+              this.theme.styleRenderedBackground(
+                "tool",
+                this.theme.styleRendered("border", this.theme.glyph("divider").repeat(width)),
+              ),
+            ]
+          : firstInGroup && priorGroup && item.type === "turn"
+            ? [""]
+            : [];
       if (firstInGroup) ordinal += 1;
       priorGroup = group;
       const primary = item.type === "user-message" || item.type === "assistant-message";
       const prominent = item.type === "error" || (item.type === "tool" && item.status === "failed");
+      const userWidth =
+        item.type === "user-message" ? Math.max(1, Math.floor(width * 0.75)) : width;
+      const gutter = item.type === "user-message" ? width - userWidth : 0;
       const itemLines =
         this.itemViews
           .get(item.id)
-          ?.render(primary || prominent ? width : Math.max(1, width - 2)) ?? [];
-      const children =
+          ?.render(primary || prominent ? userWidth : Math.max(1, width - 2)) ?? [];
+      const contentLines =
         primary || prominent
           ? itemLines
           : itemLines.map((line) =>
               clipTerminalLine(`  ${line}`, width, this.theme.glyph("ellipsis")),
             );
+      const children = contentLines.map((line) => {
+        if (item.type === "user-message")
+          return `${" ".repeat(gutter)}${this.theme.styleRenderedBackground("user-message", `${line}${" ".repeat(Math.max(0, userWidth - terminalDisplayWidth(line)))}`)}`;
+        if (item.type === "tool")
+          return this.theme.styleRenderedBackground(
+            "tool",
+            `${line}${" ".repeat(Math.max(0, width - terminalDisplayWidth(line)))}`,
+          );
+        return line;
+      });
       const header =
         firstInGroup && !primary && item.type !== "turn"
           ? [
@@ -1614,10 +1690,17 @@ class TimelineView implements Component {
         if (region !== "body")
           return {
             region,
-            offsets: Array.from({ length: Math.max(1, text.length) }, (_, column) => column),
+            gutter: region === "header" ? gutter : 0,
+            offsets: Array.from({ length: Math.max(1, text.length) }, (_, column) =>
+              column < gutter ? -1 : column - gutter,
+            ),
           };
         const offsets: number[] = [];
         for (let column = 0; column < text.length; column++) {
+          if (column < gutter + (item.type === "user-message" ? 2 : 0)) {
+            offsets.push(-1);
+            continue;
+          }
           const character = text[column] ?? "";
           if (!/\s/u.test(character)) {
             while (source < canonicalText.length && /\s/u.test(canonicalText[source] ?? ""))
@@ -1630,7 +1713,7 @@ class TimelineView implements Component {
           offsets.push(source);
           if (canonicalText[source] === "\n") source++;
         }
-        return { region, offsets };
+        return { region, offsets, gutter };
       });
       const layout = {
         itemId: item.id,
@@ -1673,6 +1756,7 @@ type TimelineLayout = {
     positions: readonly {
       region: "gap" | "group" | "header" | "body";
       offsets: readonly number[];
+      gutter: number;
     }[];
     start: number;
     bodyStart: number;
@@ -1795,7 +1879,7 @@ class ComposerView implements Component, Focusable {
   private inputRevision = 0;
   private visibleEditorLines = 3;
   constructor(
-    tui: TUI,
+    private readonly tui: TUI,
     state: AppState,
     private readonly emit: (intent: UiIntent) => void,
     private readonly theme: DeckTheme,
@@ -1928,23 +2012,46 @@ class ComposerView implements Component, Focusable {
     const heading =
       `${this.state.focus === "composer" ? mode.toUpperCase() : ""} ${destination}${status}${selectionCue}`.trim();
     const innerWidth = Math.max(1, width);
-    const controlRow = composerControlRow(this.state, this.theme, innerWidth);
-    const controls =
-      innerWidth < 55 ? this.theme.clipRendered(`Prompt ${controlRow}`, innerWidth) : controlRow;
-    const body = this.highlightVisualSelection(this.editor.render(innerWidth), innerWidth).map(
-      (line) =>
+    const contentWidth = Math.max(1, innerWidth - 2);
+    const controls = composerControlRow(this.state, this.theme, contentWidth);
+    const editorLines = this.highlightVisualSelection(this.editor.render(innerWidth), innerWidth);
+    const composerChromeHeight = 4;
+    const minimumTimelineHeight = 3;
+    const tabHeight =
+      !activeLaunchWorkspaceId(this.state) && workspaceTabs(this.state).length > 0 ? 1 : 0;
+    const editorHeight = Math.max(
+      1,
+      this.tui.terminal.rows -
+        composerChromeHeight -
+        minimumTimelineHeight -
+        tabHeight -
+        workspaceControlRows(this.state, this.theme, innerWidth).length,
+    );
+    const cursorRow = Math.max(
+      0,
+      editorLines.findIndex((line) => line.includes(CURSOR_MARKER) || line.includes("\u001b[7m")),
+    );
+    const editorStart = Math.max(
+      0,
+      Math.min(cursorRow - editorHeight + 1, editorLines.length - editorHeight),
+    );
+    const body = editorLines
+      .slice(editorStart, editorStart + editorHeight)
+      .map((line) =>
         this.vim.searchQuery
           ? highlightBufferMatches(line, this.vim.searchQuery, this.vim.searchWholeWord)
           : line,
-    );
+      );
     this.visibleEditorLines = Math.max(1, body.length);
     const lines = [
       this.theme.styleRendered(
         this.focused ? "focus" : "muted",
         ` ${this.theme.clipRendered(heading, Math.max(1, innerWidth - 1))}`,
       ),
+      "",
       ...body,
-      ` ${this.theme.clipRendered(controls, Math.max(1, innerWidth - 1))}`,
+      "",
+      ` ${controls}`,
     ];
     return lines.map((line) =>
       this.theme.styleRenderedBackground(
@@ -2293,18 +2400,23 @@ export function composerControlRow(state: AppState, theme: DeckTheme, width: num
       : "";
   const usage = state.timeline.usage ?? agent?.lastUsage;
   const tokenUsage = usage?.contextTokens === undefined ? "" : `context ${usage.contextTokens}`;
-  const right = [activity, tokenUsage].filter(Boolean).join(` ${theme.glyph("bullet")} `);
-  const plainLength = terminalDisplayWidth;
-  if (plainLength(left) > width) {
-    if (!right || plainLength(cues) + plainLength(right) + 1 >= width)
-      return theme.clipRendered(cues, width);
-    const gap = " ".repeat(Math.max(1, width - plainLength(cues) - plainLength(right)));
-    return theme.clipRendered(`${cues}${gap}${right}`, width);
-  }
-  if (!right || plainLength(left) + plainLength(right) + 1 >= width)
-    return theme.clipRendered(left, width);
-  const gap = " ".repeat(Math.max(1, width - plainLength(left) - plainLength(right)));
-  return theme.clipRendered(`${left}${gap}${right}`, width);
+  const details = [activity, tokenUsage].filter(Boolean).join(` ${theme.glyph("bullet")} `);
+  const right =
+    terminalDisplayWidth(details) <= width
+      ? details
+      : terminalDisplayWidth(tokenUsage) <= width
+        ? tokenUsage
+        : "";
+  if (!right) return theme.clipRendered(terminalDisplayWidth(left) <= width ? left : cues, width);
+  const leftWidth = Math.max(0, width - terminalDisplayWidth(right) - 1);
+  const settings = theme.clipRendered(
+    terminalDisplayWidth(left) <= leftWidth ? left : cues,
+    leftWidth,
+  );
+  const gap = " ".repeat(
+    Math.max(0, width - terminalDisplayWidth(settings) - terminalDisplayWidth(right)),
+  );
+  return `${settings}${gap}${right}`;
 }
 
 class SessionActivityView implements Component {
@@ -2355,88 +2467,6 @@ class SessionActivityView implements Component {
       ),
     ];
   }
-}
-
-class StatusView implements Component {
-  constructor(
-    private state: AppState,
-    private readonly theme: DeckTheme,
-    private readonly now: () => number = Date.now,
-  ) {}
-  update(state: AppState): void {
-    this.state = state;
-  }
-  invalidate(): void {}
-  render(width: number): string[] {
-    const separator = ` ${this.theme.glyph("bullet")} `;
-    const selected = this.state.directory.agents.find(
-      (agent) => agent.id === this.state.selectedAgentId,
-    );
-    const activeTerminal = this.state.selectedWorkspaceId
-      ? (this.state.workspaceTerminals?.[this.state.selectedWorkspaceId] ?? []).find(
-          (terminal) => terminal.id === this.state.activeTerminalId,
-        )
-      : undefined;
-    const usage = this.state.timeline.usage ?? selected?.lastUsage;
-    const usageDetails = usage
-      ? [
-          usage.contextTokens !== undefined
-            ? `context ${usage.contextTokens}${usage.contextWindow ? `/${usage.contextWindow}` : ""}`
-            : undefined,
-          usage.inputTokens !== undefined ? `in ${usage.inputTokens}` : undefined,
-          usage.outputTokens !== undefined ? `out ${usage.outputTokens}` : undefined,
-        ]
-          .filter(Boolean)
-          .join(separator)
-      : undefined;
-    const details = this.state.newWorkspace
-      ? "new workspace draft"
-      : selected
-        ? [selected.providerId ?? "unknown", selected.modelId ?? "unknown"]
-            .map((value) => sanitizeTerminalText(value))
-            .join("/")
-            .concat(
-              selected.modeId ? `${separator}${sanitizeTerminalText(selected.modeId)}` : "",
-              selected.thinkingLevel
-                ? `${separator}${sanitizeTerminalText(selected.thinkingLevel)}`
-                : "",
-              usageDetails ? `${separator}${usageDetails}` : "",
-            )
-        : activeTerminal
-          ? `terminal ${sanitizeTerminalText(activeTerminal.name)}`
-          : activeSessionDraftWorkspaceId(this.state)
-            ? "session draft"
-            : "no active resource";
-    const permissions = this.state.directory.agents.reduce(
-      (total, agent) => total + agent.pendingPermissions.length,
-      0,
-    );
-    const compact = width < 70;
-    const recovery = this.state.recovery;
-    const connection =
-      this.state.connection === "reconnecting"
-        ? `reconnecting #${recovery.attempt}${recovery.since === undefined ? "" : ` ${this.theme.glyph("bullet")} ${elapsed(recovery.since, this.now())}`}${recovery.directoryStale ? ` ${this.theme.glyph("bullet")} stale` : ""}`
-        : this.state.connection;
-    const active = activeNotification(this.state);
-    const notification = active
-      ? ` ${this.theme.glyph("bullet")} ${active.kind}${active.failureKind ? `/${active.failureKind}` : ""}: ${sanitizeTerminalText(active.message)}${active.detail ? ` ${this.theme.glyph("bullet")} palette details` : ""}${active.retry ? ` ${this.theme.glyph("bullet")} palette retry` : ""}${this.state.notifications.length > 1 ? ` ${this.theme.glyph("bullet")} ${this.state.notifications.length} notices ${this.theme.glyph("bullet")} palette notifications` : ""}`
-      : "";
-    const line = this.theme.clipRendered(
-      `${details}${separator}${connection}${compact ? "" : `${separator}permissions ${permissions}`}${notification}`,
-      width,
-    );
-    const tone =
-      this.state.connection === "reconnecting"
-        ? "stale"
-        : active?.kind === "error"
-          ? "failure"
-          : "muted";
-    return [this.theme.styleRendered(tone, line)];
-  }
-}
-
-function elapsed(since: number, now: number): string {
-  return `${Math.max(0, Math.floor((now - since) / 1_000))}s`;
 }
 
 type DialogLine = string | { value: string; owned: boolean };
@@ -2896,10 +2926,8 @@ export class DeckTui {
   private readonly tabs: SessionTabsView;
   private readonly timeline: TimelineView;
   private readonly composer: ComposerView;
-  private readonly status: StatusView;
   private readonly renderScheduler: RenderScheduler;
   private readonly reconnectClock: RenderClock;
-  private reconnectTicker: unknown;
   private started = false;
   private readonly treeTranscript: ScrollView;
   private sidebarOverlay: OverlayHandle | undefined;
@@ -3018,7 +3046,6 @@ export class DeckTui {
       this.theme,
       this.clipboard,
     );
-    this.status = new StatusView(initialState, this.theme, () => this.reconnectClock.now());
     this.minimumSize = new MinimumSizeView(this.theme);
     this.treeTranscript = new SidebarScrollView(this.tree, { follow: "none", scrollbar: "auto" });
     this.transcript = new TimelineScrollView(
@@ -3240,7 +3267,7 @@ export class DeckTui {
             {
               component: this.composer,
               basis: "auto",
-              minSize: 4,
+              minSize: 5,
               visible: () => !this.state.activeTerminalId || Boolean(this.state.newWorkspace),
             },
             {
@@ -3259,7 +3286,6 @@ export class DeckTui {
         grow: 1,
         minSize: 7,
       },
-      { component: this.status, basis: 1, minSize: 1 },
     ]);
     this.tui.setLayoutRoot(
       new VStack([
@@ -3329,7 +3355,6 @@ export class DeckTui {
     this.onVisibilityChanged?.(true);
     this.syncTimelineCursor();
     void this.sampleTerminalBackground();
-    this.syncReconnectTicker();
   }
   async stop(): Promise<void> {
     this.started = false;
@@ -3337,7 +3362,6 @@ export class DeckTui {
     this.terminal.write("\u001b[?1004l");
     this.sidebarOverlay?.hide();
     this.sidebarOverlay = undefined;
-    this.stopReconnectTicker();
     this.renderScheduler.stop();
     await this.lifecycle.stop();
     this.terminal.write("\u001b[0 q");
@@ -3380,13 +3404,11 @@ export class DeckTui {
     this.state = state;
     this.tabs.update(state);
     this.contentPane.update(state);
-    this.syncReconnectTicker();
     this.tree.update(state);
     this.timeline.update(state.timeline.items);
     this.timeline.updateSelection(state);
     this.syncTimelineCursor();
     this.composer.update(state);
-    this.status.update(state);
     this.tui.setFocus(
       this.bufferQuery
         ? this.bufferQuery.field
@@ -3422,29 +3444,6 @@ export class DeckTui {
     else this.renderScheduler.requestImmediate();
   }
 
-  private syncReconnectTicker(): void {
-    const shouldTick =
-      this.started &&
-      this.state.connection === "reconnecting" &&
-      this.state.recovery.since !== undefined;
-    if (!shouldTick) {
-      this.stopReconnectTicker();
-      return;
-    }
-    if (this.reconnectTicker !== undefined) return;
-    this.reconnectTicker = this.reconnectClock.setTimeout(() => {
-      this.reconnectTicker = undefined;
-      if (!this.started) return;
-      this.renderScheduler.requestImmediate();
-      this.syncReconnectTicker();
-    }, 1_000);
-  }
-
-  private stopReconnectTicker(): void {
-    if (this.reconnectTicker === undefined) return;
-    this.reconnectClock.clearTimeout(this.reconnectTicker);
-    this.reconnectTicker = undefined;
-  }
   toggleTimelineItem(itemId: string): void {
     this.timeline.toggle(itemId);
     this.emit({ type: "toggle-timeline-item", itemId });
