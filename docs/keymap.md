@@ -17,6 +17,7 @@ The following tables are part of this spec. They enumerate direct bindings, alia
 | Ctrl-U / Ctrl-D | Every Deck context | Scroll Timeline up/down half a visible page. Terminal input passes these through. No editor deletion fallback at boundaries or without a Timeline. |
 | Ctrl-C | Every Deck context | Quit; confirm if unsent drafts are dirty. From an overlay, cancellation of quit restores that overlay. Repeated Ctrl-C cannot confirm quitting. Terminal input passes it through. |
 | g? | CN, CV, TN, TV, Sidebar | Open Help. In text entry these characters are text; in terminal input they pass through. |
+| i, idle | Sidebar, TN | Focus the displayed Workspace's Composer in Insert at its saved cursor. Sidebar highlight does not activate another Workspace. Unavailable Composer targets are inert. |
 
 Actual focus changes and opening overlays cancel pending counts/operators/prefixes and cancel unconfirmed buffer searches using their Esc restoration rules. Preserve established buffer state within its own draft/Session. Unavailable focus targets and already-focused targets do not reset state.
 
@@ -223,7 +224,7 @@ Inherits the relevant globals, shared motion/object/selection tables and Normal 
 | Esc | TN | Cancel query/unfinished command first; otherwise return to composer with its saved mode/cursor. |
 | Enter | TN, TV | Confirm query when entering one; otherwise no action. Never send composer. |
 | Native paste | TN, TV | Consume as a single payload; no editing, command execution or forwarding to composer. |
-| Editing commands | TN, TV | No insert/delete/change/replace/paste/case/join/indent/undo actions. i/a remain object prefixes only in Visual/operator context; o/O remain Visual endpoint controls only. |
+| Editing commands | TN, TV | No edits to Timeline text. Idle TN i focuses Composer Insert; i/a remain object prefixes in Visual/operator context. Pending character finds own i. o/O remain Visual endpoint controls only. |
 
 Cursor is a block with a distinct current-row background. Preserve centered layout, content indentation and stable anchors through streaming, history loading, folds and resize. Characterwise copies rejoin soft wraps and retain real line breaks; rowwise copies keep selected displayed rows as separate lines and record linewise clipboard type. Neither includes terminal styling or decorative padding.
 
@@ -236,7 +237,8 @@ Rows are Projects and Workspaces. Moving the highlight does not activate another
 | j / k, Down / Up | Highlight next/previous visible row. |
 | h / l, Left / Right | Collapse/expand selected branch. |
 | gg / G | First/last visible row. Bare g is only a prefix. |
-| Enter | Activate highlighted Workspace. Project rows use collapse/expand controls. |
+| Enter | Activate highlighted Workspace, clear the Sidebar text query and focus its saved Session Composer, direct Terminal input or empty Workspace Launch composer. Preserve saved Composer mode/cursor. Project rows use collapse/expand controls. |
+| i, idle | Focus the currently displayed Workspace Composer in Insert; do not activate the highlighted row. |
 | Esc | Return to composer or active terminal. |
 | n | Open/resume New workspace composer. |
 | c | Open/reuse Session draft in the target existing Workspace. |
@@ -250,6 +252,8 @@ Rows are Projects and Workspaces. Moving the highlight does not activate another
 | o | Toggle alphabetical/needs-attention ordering. |
 
 The three filters combine without changing the Active workspace/Tab; retain parent Projects for matching Workspaces. Keep ordering stable while Sidebar is focused. Sidebar has no tab navigation, Session Stop/Archive/Rename/Detach or Session setting shortcuts. Ctrl-X is unassigned here.
+
+Workspace activation clears only the text query; movement and bare i preserve it. Attention-only and archived visibility toggles survive activation. Search/filter input and native paste own literal i.
 
 ## 12. Terminal direct input
 

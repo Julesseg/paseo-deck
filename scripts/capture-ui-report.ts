@@ -1682,6 +1682,76 @@ for (const [name, columns, rows, appearance, input] of [
   });
 }
 
+const workspaceFocusState: AppState = {
+  ...baseState,
+  focus: "composer",
+  composerMode: "normal",
+  activeSessionId: "agent-atlas-1234",
+};
+for (const [name, input] of [
+  [
+    "enter-normal",
+    ["i", "Saved prompt cursor", "\u001b", "0", "l", "l", "\u0013", "/", "Main", "\r", "G", "\r"],
+  ],
+  [
+    "enter-insert",
+    [
+      "i",
+      "Saved prompt cursor",
+      "\u0001",
+      "\u001b[C",
+      "\u001b[C",
+      "\u0013",
+      "/",
+      "Main",
+      "\r",
+      "G",
+      "\r",
+    ],
+  ],
+  [
+    "sidebar-i-highlight",
+    [
+      "i",
+      "Keep the displayed Atlas draft",
+      "\u001b",
+      "0",
+      "l",
+      "\u0013",
+      "/",
+      "Theme",
+      "\r",
+      "G",
+      "i",
+    ],
+  ],
+  ["timeline-i", ["i", "Keep the displayed Atlas draft", "\u001b", "0", "l", "\u000b", "i"]],
+] as const) {
+  shots.push({
+    name: `workspace-focus-${name}`,
+    columns: 110,
+    rows: 35,
+    state: workspaceFocusState,
+    input,
+  });
+}
+shots.push({
+  name: "workspace-focus-empty-launch",
+  columns: 110,
+  rows: 35,
+  state: launchState,
+  input: ["\u0013", "/", "Main", "\r", "G", "\r"],
+});
+const focusTerminalShot = shots.find((shot) => shot.name === "terminal-direct-input");
+if (focusTerminalShot)
+  shots.push({
+    ...focusTerminalShot,
+    name: "workspace-focus-terminal-literal",
+    columns: 110,
+    rows: 35,
+    input: ["i", "\u001b[200~literal i\u001b[201~"],
+  });
+
 // Populate interactive Composer selections through actual editing so cursor history is reproducible.
 for (const shot of shots) {
   if (!shot.name.startsWith("composer-visual")) continue;
@@ -1795,6 +1865,15 @@ for (const shot of shots.filter(
     focus: app.state.focus,
     composerMode: app.state.composerMode ?? "normal",
     timelineMode: app.state.timelineMode ?? "normal",
+    ...(shot.name.startsWith("workspace-focus")
+      ? {
+          activeTabIds: app.state.activeTabIds,
+          selectedWorkspaceId: app.state.selectedWorkspaceId,
+          sidebarSelection: app.state.sidebarSelection,
+          filter: app.state.filter,
+          terminalInput: gateway.terminalInput,
+        }
+      : {}),
     emittedCursor,
     cursor: cursor ?? null,
     limitations:
@@ -1831,6 +1910,8 @@ await writeFile(join(outputDirectory, "manifest.json"), JSON.stringify(manifest,
 function captureRequirements(name: string): string {
   if (name.startsWith("provider-completion-"))
     return "#103 provider-scoped Insert completion; eligibility, selection, anchoring and constrained layouts";
+  if (name.startsWith("workspace-focus"))
+    return "#100; Workspace activation focus, saved Composer cursor/mode, displayed versus highlighted Workspace and Terminal passthrough";
   if (name.startsWith("composer-layout"))
     return "#102; Composer spacing, removed bottom status row, complete padded token count and editor sizing";
   if (name.includes("search")) return "#72 appendix 2/14; bottom Main query and retained settings";

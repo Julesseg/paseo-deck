@@ -505,6 +505,19 @@ export class ApplicationController {
         if (intent.focus === "tree") this.beginSidebarNavigation();
         else this.apply({ type: "set-focus", focus: intent.focus });
         return;
+      case "focus-composer-insert":
+        if (
+          !this.#state.activeTerminalId &&
+          (activeLaunchWorkspaceId(this.#state) ||
+            activeSessionDraftWorkspaceId(this.#state) ||
+            this.#state.directory.agents.some(
+              (agent) => agent.id === this.#state.activeSessionId && !agent.archived,
+            ))
+        ) {
+          this.apply({ type: "set-focus", focus: "composer" });
+          this.apply({ type: "set-composer-mode", mode: "insert" });
+        }
+        return;
       case "set-composer-mode":
         this.apply({ type: "set-composer-mode", mode: intent.mode });
         return;
@@ -1515,14 +1528,20 @@ export class ApplicationController {
   private async openSelection(): Promise<void> {
     const selection = this.#state.sidebarSelection;
     if (selection?.kind === "workspace") {
+      if (!this.#state.directory.workspaces.some((workspace) => workspace.id === selection.id))
+        return;
       this.#focusGeneration += 1;
       const previous = this.#timelineObservation;
       this.#timelineObservation = undefined;
       this.#observedAgentId = undefined;
       void previous?.release();
       this.apply({ type: "activate-workspace", workspaceId: selection.id });
+      this.apply({ type: "set-filter", filter: "" });
       await this.showActiveResource();
-      this.apply({ type: "set-focus", focus: "tree" });
+      this.apply({
+        type: "set-focus",
+        focus: this.#state.activeTerminalId ? "timeline" : "composer",
+      });
       return;
     }
   }
