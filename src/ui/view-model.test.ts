@@ -26,7 +26,14 @@ function state(): AppState {
       ...emptyDirectory(),
       projects: [{ id: "p", name: "Deck" }],
       workspaces: [
-        { id: "w", projectId: "p", title: "Main", directory: "/deck", archived: false },
+        {
+          id: "w",
+          projectId: "p",
+          title: "Main",
+          status: "attention",
+          directory: "/deck",
+          archived: false,
+        },
         { id: "other", title: "Loose", directory: "/tmp", archived: false },
       ],
       agents: [
@@ -50,7 +57,8 @@ function state(): AppState {
     selectedAgentId: "agent-123456",
     selectedWorkspaceId: "w",
     filter: "",
-    treeOrder: "attention",
+    treeOrder: "recent",
+    treeGrouping: "project",
     showArchived: false,
     attentionOnly: false,
     focus: "tree",
@@ -122,7 +130,7 @@ describe("tree view model", () => {
     ).toBe("done");
   });
 
-  it("contains project and workspace rows only, sorted by activity and title", () => {
+  it("contains project and workspace rows only, sorted by native recency and title", () => {
     const base = state();
     const agent = base.directory.agents[0];
     if (!agent) throw new Error("fixture requires an agent");
@@ -136,15 +144,32 @@ describe("tree view model", () => {
           { id: "a", name: "Alpha" },
         ],
         workspaces: [
-          { id: "idle", projectId: "a", title: "A idle", directory: "/idle", archived: false },
+          {
+            id: "idle",
+            projectId: "a",
+            title: "A idle",
+            status: "done",
+            activityAt: "2026-10-13T12:00:00Z",
+            directory: "/idle",
+            archived: false,
+          },
           {
             id: "working",
             projectId: "a",
             title: "Z working",
+            status: "running",
+            activityAt: "2026-10-13T13:00:00Z",
             directory: "/working",
             archived: false,
           },
-          { id: "done", projectId: "z", title: "Done", directory: "/done", archived: false },
+          {
+            id: "done",
+            projectId: "z",
+            title: "Done",
+            status: "done",
+            directory: "/done",
+            archived: false,
+          },
         ],
         agents: [
           { ...agent, workspaceId: "working", needsAttention: false },
@@ -160,7 +185,7 @@ describe("tree view model", () => {
       "project:z",
       "workspace:done",
     ]);
-    expect(rows.find((row) => row.id === "idle")?.activity).toBe("idle");
+    expect(rows.find((row) => row.id === "idle")?.activity).toBe("done");
     expect(rows.find((row) => row.id === "done")?.activity).toBe("done");
   });
 
@@ -179,7 +204,14 @@ describe("tree view model", () => {
     const base = state();
     const agent = base.directory.agents[0];
     if (!agent) throw new Error("fixture requires an agent");
-    const workspace = { id: "b", projectId: "p", title: "Beta", directory: "/b", archived: false };
+    const workspace = {
+      id: "b",
+      projectId: "p",
+      title: "Beta",
+      activityAt: "2026-10-13T13:00:00Z",
+      directory: "/b",
+      archived: false,
+    };
     const changed: AppState = {
       ...base,
       sidebarOrder: ["p", "w", "b", "other"],

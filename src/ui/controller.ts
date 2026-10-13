@@ -79,6 +79,7 @@ export type UiIntent =
   | { type: "invoke-command"; id: string }
   | { type: "open-filter" }
   | { type: "toggle-tree-order" }
+  | { type: "toggle-tree-grouping" }
   | { type: "toggle-archived" }
   | { type: "toggle-attention-only" }
   | { type: "adjust-tree-width"; delta: -2 | 2 }

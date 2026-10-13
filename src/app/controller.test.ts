@@ -4,7 +4,7 @@ import type { Observation } from "../contracts/gateway.js";
 import { PaseoGatewayError } from "../paseo/errors.js";
 import { FakePaseoGateway } from "../paseo/fake-gateway.js";
 import { selectedComposerDraft } from "../state/composer.js";
-import { activeNotification } from "../state/store.js";
+import { activeNotification, createInitialState } from "../state/store.js";
 import { RecordingTerminal } from "../ui/terminal.js";
 import { DeckTui } from "../ui/views.js";
 import { ApplicationController } from "./controller.js";
@@ -203,7 +203,9 @@ describe("ApplicationController", () => {
   });
 
   it("navigates remote and orphan workspaces without activating them", async () => {
-    const app = new ApplicationController(new FakePaseoGateway(remoteSnapshot));
+    const app = new ApplicationController(new FakePaseoGateway(remoteSnapshot), {
+      initialState: { ...createInitialState(), treeGrouping: "project", expandedIds: new Set() },
+    });
     await app.start();
     await app.handleIntent({ type: "set-focus", focus: "tree" });
     expect(app.state.sidebarSelection).toEqual({ kind: "workspace", id: "workspace-remote" });
@@ -215,7 +217,9 @@ describe("ApplicationController", () => {
   });
 
   it("uses visible project and workspace rows for boundaries", async () => {
-    const app = new ApplicationController(new FakePaseoGateway(remoteSnapshot));
+    const app = new ApplicationController(new FakePaseoGateway(remoteSnapshot), {
+      initialState: { ...createInitialState(), treeGrouping: "project", expandedIds: new Set() },
+    });
     await app.start();
     await app.handleIntent({ type: "select-boundary", boundary: "end" });
     expect(app.state.sidebarSelection).toEqual({ kind: "workspace", id: "workspace-orphan" });
@@ -228,7 +232,9 @@ describe("ApplicationController", () => {
 
   it("keeps the main pane until Enter activates a highlighted workspace", async () => {
     const gateway = new FakePaseoGateway(remoteSnapshot);
-    const app = new ApplicationController(gateway);
+    const app = new ApplicationController(gateway, {
+      initialState: { ...createInitialState(), treeGrouping: "project", expandedIds: new Set() },
+    });
     await app.start();
     await app.selectAgent("agent-remote");
     gateway.emitTimeline("agent-remote", {
@@ -247,20 +253,24 @@ describe("ApplicationController", () => {
     expect(app.state.activeSessionId).toBe("agent-orphan");
   });
 
-  it("Project Enter leaves expansion and active workspace content unchanged", async () => {
-    const app = new ApplicationController(new FakePaseoGateway(remoteSnapshot));
+  it("Project Enter toggles expansion and leaves active workspace content unchanged", async () => {
+    const app = new ApplicationController(new FakePaseoGateway(remoteSnapshot), {
+      initialState: { ...createInitialState(), treeGrouping: "project", expandedIds: new Set() },
+    });
     await app.start();
     await app.selectAgent("agent-remote");
     await app.handleIntent({ type: "select-boundary", boundary: "start" });
     const expanded = app.state.expandedIds.has("remote:github.com/acme/paseo-deck");
     await app.handleIntent({ type: "select-or-open" });
-    expect(app.state.expandedIds.has("remote:github.com/acme/paseo-deck")).toBe(expanded);
+    expect(app.state.expandedIds.has("remote:github.com/acme/paseo-deck")).toBe(!expanded);
     expect(app.state.selectedWorkspaceId).toBe("workspace-remote");
     expect(app.state.activeSessionId).toBe("agent-remote");
   });
 
   it("opens sessions from the active workspace tab row", async () => {
-    const app = new ApplicationController(new FakePaseoGateway(remoteSnapshot));
+    const app = new ApplicationController(new FakePaseoGateway(remoteSnapshot), {
+      initialState: { ...createInitialState(), treeGrouping: "project", expandedIds: new Set() },
+    });
     await app.start();
     await app.handleIntent({ type: "select-boundary", boundary: "end" });
     await app.handleIntent({ type: "select-or-open" });
@@ -287,7 +297,9 @@ describe("ApplicationController", () => {
 
   it("keeps a highlighted workspace stable during a directory reorder", async () => {
     const gateway = new FakePaseoGateway(remoteSnapshot);
-    const app = new ApplicationController(gateway);
+    const app = new ApplicationController(gateway, {
+      initialState: { ...createInitialState(), treeGrouping: "project", expandedIds: new Set() },
+    });
     await app.start();
     await app.handleIntent({ type: "select-boundary", boundary: "end" });
     const order = app.state.sidebarOrder;
@@ -467,7 +479,9 @@ describe("ApplicationController", () => {
 
   it("preserves selected tree context through refresh and reconnect snapshots", async () => {
     const gateway = new FakePaseoGateway(snapshot);
-    const app = new ApplicationController(gateway);
+    const app = new ApplicationController(gateway, {
+      initialState: { ...createInitialState(), treeGrouping: "project", expandedIds: new Set() },
+    });
     await app.start();
     await app.selectAgent("agent-1");
     expect(app.state.expandedIds).toEqual(new Set(["workspace-1", "project-1"]));
@@ -487,7 +501,9 @@ describe("ApplicationController", () => {
 
   it("creates an agent only after provider, model, mode, thinking, and prompt choices", async () => {
     const gateway = new FakePaseoGateway(snapshot);
-    const app = new ApplicationController(gateway);
+    const app = new ApplicationController(gateway, {
+      initialState: { ...createInitialState(), treeGrouping: "project", expandedIds: new Set() },
+    });
     await app.start();
 
     await app.handleIntent({
@@ -1864,7 +1880,9 @@ describe("New workspace retained state", () => {
       ...snapshot,
       projects: [{ id: "project-1", name: "Deck", path: "/original" }],
     });
-    const app = new ApplicationController(gateway);
+    const app = new ApplicationController(gateway, {
+      initialState: { ...createInitialState(), treeGrouping: "project", expandedIds: new Set() },
+    });
     await app.start();
     await app.handleIntent({ type: "set-focus", focus: "tree" });
     await app.handleIntent({ type: "select-boundary", boundary: "start" });

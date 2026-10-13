@@ -227,14 +227,14 @@ Cursor is a block with a distinct current-row background. Preserve centered layo
 
 ## 11. Sidebar
 
-Rows are Projects and Workspaces. Moving the highlight does not activate another Workspace. Globals and g? apply.
+Rows are activity groups and Workspaces by default; `s` switches to Project headings. Moving the highlight does not activate another Workspace. Globals and g? apply.
 
 | Keys | Action |
 | --- | --- |
 | j / k, Down / Up | Highlight next/previous visible row. |
 | h / l, Left / Right | Collapse/expand selected branch. |
 | gg / G | First/last visible row. Bare g is only a prefix. |
-| Enter | Activate highlighted Workspace. Project rows use collapse/expand controls. |
+| Enter | Activate highlighted Workspace; toggle expansion on a grouping heading. |
 | Esc | Return to composer or active terminal. |
 | n | Open/resume New workspace composer. |
 | c | Open/reuse Session draft in the target existing Workspace. |
@@ -242,12 +242,13 @@ Rows are Projects and Workspaces. Moving the highlight does not activate another
 | Ctrl-A | Archive highlighted Workspace after confirmation. Unavailable on Project rows; no fallback to Active workspace. |
 | / | Open Project/Workspace name filter. |
 | v | Show/hide archived Workspaces. |
-| ! | Toggle needs-attention filter using combined Workspace activity. |
+| ! | Toggle needs-attention filter, retaining native Waiting for user input, Failed and Ready to review Workspaces, plus attention in their Sessions/Terminals. |
 | p | Open permission requests. |
 | [ / ] | Narrow/widen Sidebar. |
-| o | Toggle alphabetical/needs-attention ordering. |
+| s | Toggle Status/Project grouping; persists across launches. |
+| o | Toggle recent activity/alphabetical ordering; persists across launches. |
 
-The three filters combine without changing the Active workspace/Tab; retain parent Projects for matching Workspaces. Keep ordering stable while Sidebar is focused. Sidebar has no tab navigation, Session Stop/Archive/Rename/Detach or Session setting shortcuts. Ctrl-X is unassigned here.
+The three filters combine without changing the Active workspace/Tab; retain grouping headings for matching Workspaces. Name filtering treats `s` and `o` as text. Automatic group positions and within-group ordering stay frozen while Sidebar navigation owns keyboard input, with live badges and stable highlighted Workspace identity; pending positions apply on leaving. Explicit grouping/ordering changes apply immediately. Status groups are Waiting for user input, Failed, Ready to review, Working, then Done, using Paseo's native bucket selection. Within each group the default is most recent native `activityAt`, with missing timestamps last and title/identity as tie-breakers. Missing buckets stay ungrouped with a `?` indicator. Sidebar has no tab navigation, Session Stop/Archive/Rename/Detach or Session setting shortcuts. Ctrl-X is unassigned here.
 
 ## 12. Terminal direct input
 

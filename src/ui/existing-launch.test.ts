@@ -2,6 +2,7 @@ import { expect, it } from "vitest";
 import { ApplicationController } from "../app/controller.js";
 import type { AgentCommand } from "../contracts/commands.js";
 import { FakePaseoGateway } from "../paseo/fake-gateway.js";
+import { createInitialState } from "../state/store.js";
 import { RecordingTerminal } from "./terminal.js";
 import { DeckTui } from "./views.js";
 
@@ -72,7 +73,9 @@ async function fixture(empty = false, settings = false) {
           },
         ],
   });
-  const app = new ApplicationController(gateway);
+  const app = new ApplicationController(gateway, {
+    initialState: { ...createInitialState(), treeGrouping: "project", expandedIds: new Set() },
+  });
   await app.start();
   const terminal = new RecordingTerminal(100, 30);
   const pending: Promise<void>[] = [];

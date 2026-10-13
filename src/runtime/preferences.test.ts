@@ -265,6 +265,7 @@ describe("preferences", () => {
       targets: {
         scope: {
           treeWidth: 33,
+          treeGrouping: "status",
           treeOrder: "alphabetical",
           showArchived: true,
           expandedIds: ["project", "workspace"],

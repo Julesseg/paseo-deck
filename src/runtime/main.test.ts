@@ -631,13 +631,31 @@ describe("runCli", () => {
       treeWidth: 36,
       treeOrder: "alphabetical",
       showArchived: true,
-      expandedIds: ["project", "workspace"],
+      treeGrouping: "project",
+      expandedIds: [
+        "activity:attention",
+        "activity:done",
+        "activity:failed",
+        "activity:needs_input",
+        "activity:running",
+        "project",
+        "workspace",
+      ],
     });
     expect(parsed.targets[targetScope({ type: "host", value: "b:1" })]).toMatchObject({
       treeWidth: 32,
-      treeOrder: "attention",
+      treeOrder: "recent",
       showArchived: false,
-      expandedIds: ["project", "workspace"],
+      treeGrouping: "project",
+      expandedIds: [
+        "activity:attention",
+        "activity:done",
+        "activity:failed",
+        "activity:needs_input",
+        "activity:running",
+        "project",
+        "workspace",
+      ],
     });
   });
 });
@@ -707,6 +725,7 @@ async function mutateTreePreferences(terminal: RecordingTerminal, widen: boolean
   terminal.sendInput("\u001b");
   await terminal.waitForRender();
   terminal.sendInput("\u0013");
+  terminal.sendInput("s");
   if (widen) {
     terminal.sendInput("o");
     terminal.sendInput("v");
