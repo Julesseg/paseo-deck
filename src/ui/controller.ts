@@ -71,6 +71,7 @@ export type UiIntent =
   | { type: "collapse-or-expand"; direction: -1 | 1 }
   | { type: "select-or-open" }
   | { type: "set-focus"; focus: FocusArea }
+  | { type: "focus-composer-insert" }
   | { type: "set-composer-mode"; mode: "normal" | "insert" | "visual" }
   | { type: "set-timeline-mode"; mode: "normal" | "visual" }
   | { type: "scroll-timeline"; direction: -1 | 1 }
@@ -373,6 +374,7 @@ export class DeckController {
         direction: data === "n" ? 1 : -1,
       });
     if (hasCount) return done();
+    if (data === "i" && !visual) return done({ type: "focus-composer-insert" });
     if (["\u0006", "\u0002", "\u001b[5~", "\u001b[6~"].includes(data))
       return done({
         type: "timeline-page",
@@ -463,6 +465,7 @@ export class DeckController {
         this.#tabPrefix = "g";
         return true;
       }
+      if (data === "i") return this.send({ type: "focus-composer-insert" });
     }
     const normalBuffer =
       state.modal.type === "none" &&

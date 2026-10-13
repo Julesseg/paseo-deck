@@ -176,7 +176,7 @@ it("activity and directory updates keep focused Workspace ordering and highlight
     f.terminal.sendInput("\r");
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(f.app.state.selectedWorkspaceId).toBe("b");
-    expect(f.app.state.focus).toBe("tree");
+    expect(f.app.state.focus).toBe("composer");
   } finally {
     await f.stop();
   }
