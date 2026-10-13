@@ -454,67 +454,46 @@ export class ProductionPaseoGateway implements PaseoGateway {
     // ApplicationController establishes its initial connected state after the
     // snapshot. Forward only later transitions so startup does not refetch the
     // directory a second time.
-    // Pinned 0.11.2 exposes the server-issued subscriptionId but no public release
-    // handle. Local listeners below are released here; server demand ends on close().
-    releases.push(client.agents.subscribe((message) => emitDirectoryMessage(message, listener)));
     try {
-      await client.agents.list({ subscribe: {} });
+      releases.push(client.agents.subscribe((message) => emitDirectoryMessage(message, listener)));
+      const agents = await client.agents.list({ subscribe: {} });
+      if (agents.subscription) releases.push(() => agents.subscription.release());
       releases.push(
         client.workspaces.subscribe((message) => emitDirectoryMessage(message, listener)),
       );
+      const workspaces = await client.workspaces.list({ subscribe: {} });
+      if (workspaces.subscription) releases.push(() => workspaces.subscription.release());
+      releases.push(
+        client.projects.subscribe((message) => emitDirectoryMessage(message, listener)),
+      );
+      releases.push(
+        client.providers.subscribe((message) => void emitProviderUpdate(client, message, listener)),
+      );
+      if (typeof client.getConnectionState === "function") {
+        let previous = client.getConnectionState().status;
+        const timer = setInterval(() => {
+          const current = client.getConnectionState();
+          if (current.status === previous) return;
+          previous = current.status;
+          listener({
+            type: "connection-changed",
+            state:
+              current.status === "connected"
+                ? "connected"
+                : current.status === "connecting"
+                  ? "reconnecting"
+                  : "disconnected",
+            ...(current.status === "connecting" ? { attempt: current.attempt } : {}),
+          });
+        }, 200);
+        timer.unref();
+        releases.push(() => clearInterval(timer));
+      }
+      return observation(releases);
     } catch (error) {
       await releaseAll(releases);
       throw paseoFailure(error, "subscription");
     }
-    try {
-      await client.workspaces.list({ subscribe: {} });
-    } catch (error) {
-      await releaseAll(releases);
-      throw paseoFailure(error, "subscription");
-    }
-    releases.push(client.projects.subscribe((message) => emitDirectoryMessage(message, listener)));
-    releases.push(
-      client.providers.subscribe((message) => void emitProviderUpdate(client, message, listener)),
-    );
-    if (typeof client.getConnectionState === "function") {
-      let previous = client.getConnectionState().status;
-      let active = true;
-      const timer = setInterval(() => {
-        const current = client.getConnectionState();
-        if (current.status === previous) return;
-        previous = current.status;
-        if (current.status === "connected") {
-          void Promise.all([
-            client.agents.list({ subscribe: {} }),
-            client.workspaces.list({ subscribe: {} }),
-          ])
-            .then(() => {
-              if (active && client.getConnectionState().status === "connected")
-                listener({ type: "connection-changed", state: "connected" });
-            })
-            .catch((error) => {
-              if (active)
-                listener({
-                  type: "connection-changed",
-                  state: "disconnected",
-                  detail: errorDetail(error),
-                });
-            });
-          return;
-        }
-        listener({
-          type: "connection-changed",
-          state: current.status === "connecting" ? "reconnecting" : "disconnected",
-          ...(current.status === "connecting" ? { attempt: current.attempt } : {}),
-        });
-      }, 200);
-      timer.unref();
-      releases.push(() => {
-        active = false;
-        clearInterval(timer);
-      });
-    }
-    return observation(releases);
   }
 
   public async focusAgent(
