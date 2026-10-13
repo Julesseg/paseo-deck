@@ -370,3 +370,95 @@ it("retains a mixed Working Workspace in the attention filter without changing i
     await f.close();
   }
 });
+
+it.each(["status", "project"] as const)(
+  "freezes collapsed %s children from Sidebar entry through expansion and applies updates on exit",
+  async (grouping) => {
+    const snapshot: DirectorySnapshot = {
+      ...directory,
+      agents: [],
+      workspaces: [
+        {
+          id: "a",
+          title: "Alpha",
+          status: "running",
+          activityAt: "2026-10-13T12:00:00Z",
+          projectId: "p",
+          directory: "/a",
+          archived: false,
+        },
+        {
+          id: "z",
+          title: "Zulu",
+          status: "running",
+          activityAt: "2026-10-13T13:00:00Z",
+          projectId: "p",
+          directory: "/z",
+          archived: false,
+        },
+      ],
+    };
+    const f = await fixture(snapshot, {
+      ...createInitialState(),
+      treeGrouping: grouping,
+      expandedIds: new Set(),
+    });
+    const before = (frame: string, left: string, right: string) => {
+      expect(frame).toContain(left);
+      expect(frame).toContain(right);
+      expect(frame.indexOf(left)).toBeLessThan(frame.indexOf(right));
+    };
+    try {
+      await f.input("\u0013");
+      const alpha = snapshot.workspaces[0];
+      const zulu = snapshot.workspaces[1];
+      if (!alpha || !zulu) throw new Error("fixture missing workspaces");
+      f.gateway.emitDirectory({
+        type: "workspace-upserted",
+        workspace: {
+          ...alpha,
+          activityAt: "2026-10-13T14:00:00Z",
+        },
+      });
+      await f.input("g");
+      await f.input("g");
+      await f.input("l");
+      await f.input("j");
+      before(await f.frame(), "Zulu", "Alpha");
+      expect(f.app.state.sidebarSelection?.id).toBe("z");
+      f.gateway.emitDirectory({
+        type: "workspace-upserted",
+        workspace: {
+          ...zulu,
+          status: "attention",
+          projectId: "missing-project",
+        },
+      });
+      const frozen = await f.frame();
+      before(frozen, "Zulu", "Alpha");
+      expect(frozen).toContain("A Zulu");
+      expect(frozen).not.toContain("v Ready to review");
+      expect(frozen).not.toContain("> Ready to review");
+      expect(f.app.state.sidebarSelection?.id).toBe("z");
+      await f.input("k");
+      await f.input("h");
+      await f.input("l");
+      before(await f.frame(), "Zulu", "Alpha");
+      await f.input("\u001b");
+      const resumed = await f.frame();
+      if (grouping === "status") {
+        expect(resumed).toContain("Ready to review");
+        expect(resumed).not.toContain("Zulu");
+        await f.input("\u0013");
+        await f.input("g");
+        await f.input("g");
+        await f.input("l");
+        before(await f.frame(), "Zulu", "Working");
+      } else {
+        before(resumed, "Alpha", "Zulu");
+      }
+    } finally {
+      await f.close();
+    }
+  },
+);

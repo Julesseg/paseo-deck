@@ -30,15 +30,23 @@ async function fixture() {
   const app = new ApplicationController(gateway);
   await app.start();
   const terminal = new RecordingTerminal(110, 35);
+  const pending: Promise<void>[] = [];
   let clipboard = "";
-  const tui = new DeckTui(terminal, app.state, (intent) => void app.handleIntent(intent), {
-    clipboard: {
-      read: () => clipboard,
-      write: (text) => {
-        clipboard = text;
+  const tui = new DeckTui(
+    terminal,
+    app.state,
+    (intent) => {
+      pending.push(app.handleIntent(intent));
+    },
+    {
+      clipboard: {
+        read: () => clipboard,
+        write: (text) => {
+          clipboard = text;
+        },
       },
     },
-  });
+  );
   const unsubscribe = app.subscribe((state) => tui.update(state));
   tui.start();
   await terminal.waitForRender();
@@ -55,6 +63,7 @@ async function fixture() {
     terminal,
     keys,
     clipboard: () => clipboard,
+    settle: () => Promise.all(pending.splice(0)),
     async open(title: string) {
       await keys("\u0013", "/", "\u0005");
       for (const _ of app.state.filter) await keys("\u007f");
@@ -67,6 +76,53 @@ async function fixture() {
     },
   };
 }
+
+it.each([
+  ["Shell", "Sidebar"],
+  ["Empty", "Sidebar"],
+  ["Shell", "another Workspace Timeline"],
+  ["Empty", "another Workspace Timeline"],
+] as const)("late %s activation preserves a newer %s", async (workspace, destination) => {
+  const f = await fixture();
+  let release!: () => void;
+  const delayed = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  if (workspace === "Shell") {
+    const observe = f.gateway.observeTerminal.bind(f.gateway);
+    f.gateway.observeTerminal = async (...args) => {
+      await delayed;
+      return observe(...args);
+    };
+  } else {
+    const profiles = f.gateway.listTerminalProfiles.bind(f.gateway);
+    f.gateway.listTerminalProfiles = async () => {
+      await delayed;
+      return profiles();
+    };
+  }
+  try {
+    await f.open(workspace);
+    await f.keys("\u0013");
+    if (destination === "another Workspace Timeline") {
+      await f.open("Beta");
+      await f.keys("\u000b");
+    }
+    release();
+    await f.settle();
+    await f.terminal.waitForRender();
+    expect(f.app.state.focus).toBe(destination === "Sidebar" ? "tree" : "timeline");
+    expect(f.app.state.selectedWorkspaceId).toBe(
+      destination === "Sidebar" ? workspace.toLowerCase() : "beta",
+    );
+    await f.keys("j");
+    expect(f.gateway.terminalInput).toEqual([]);
+  } finally {
+    release();
+    await f.settle();
+    await f.stop();
+  }
+});
 
 it("Workspace Enter returns to its Session Composer with its saved mode, cursor and prompt", async () => {
   const f = await fixture();
