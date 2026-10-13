@@ -176,13 +176,22 @@ try {
     // A known visible interior row gives observable one-row movement without scrolling.
     for (const key of ["g", "g", "j", "j", "j", "j"]) terminal.sendInput(key);
     await terminal.waitForRender();
+    const deadline = performance.now() + 5_000;
+    while (
+      terminal
+        .viewportCells()
+        .some((row) => row.some((cell) => ["│", "┃", "█"].includes(cell.text)))
+    ) {
+      assert(performance.now() < deadline, "Initial auto scrollbar must settle before idle timing");
+      await terminal.waitForRender();
+    }
   }
   if (focus === "composer") {
     terminal.sendInput("i");
     await terminal.waitForRender();
   }
   const initialCursor = terminal.viewportCursor();
-  const initialViewport = terminal.viewport();
+  const initialViewport = terminal.viewportCells();
   const keyToWrite: number[] = [];
   const dispatch: number[] = [];
   for (let index = 0; index < warmupCount + keyCount; index++) {
@@ -200,8 +209,8 @@ try {
         "Timeline must move one visible row and return",
       );
       assert.deepEqual(
-        terminal.viewport().map((line) => line.slice(0, 112).trimEnd()),
-        initialViewport.map((line) => line.slice(0, 112).trimEnd()),
+        terminal.viewportCells(),
+        initialViewport,
         "Cursor movement must preserve visible content",
       );
     } else if (focus === "composer") {
