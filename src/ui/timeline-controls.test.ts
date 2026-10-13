@@ -97,7 +97,7 @@ it("copies counted displayed rows and shared motion ranges directly without edit
     expect(f.clipboard()).toBe("alpha bravo\n");
     await f.keys("y", "i", "v");
     expect(f.clipboard()).toBe("alpha bravo\n");
-    await f.keys("i", "x", "p", "\r");
+    await f.keys("x", "p", "\r");
     expect(f.app.state.composer.drafts.a ?? "").toBe("");
   } finally {
     await f.close();
@@ -348,7 +348,7 @@ it("failed counted finds and missing objects preserve cursor, selection, mode an
       ["y", "%"],
     ]) {
       await f.keys(...keys);
-      expect(f.terminal.viewportCursor()).toEqual(cursor);
+      expect(f.terminal.viewportCursor(), keys.join(" ")).toEqual(cursor);
       expect(f.clipboard()).toBe("outside");
     }
     await f.keys("l", "v", "y");

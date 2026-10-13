@@ -351,7 +351,10 @@ export const deckCommands: readonly DeckCommand[] = [
     group: "Application",
     shortcuts: ["i"],
     palette: false,
-    intent: () => ({ type: "set-composer-mode", mode: "insert" }),
+    intent: (state) =>
+      state.focus === "composer"
+        ? { type: "set-composer-mode", mode: "insert" }
+        : { type: "focus-composer-insert" },
   },
   {
     id: "sidebar-navigation",
@@ -989,6 +992,13 @@ export function resolvedCommands(
           : buffer
             ? (bufferShortcuts[command.id] ?? command.shortcuts)
             : command.shortcuts;
+      if (
+        command.id === "focus-composer" &&
+        context === "timeline" &&
+        !state.activeTerminalId &&
+        (state.timelineMode ?? "normal") === "normal"
+      )
+        shortcuts = ["i"];
       if (
         ["new-tab", "tab-next", "tab-previous", "stop-agent", "archive-agent"].includes(
           command.id,

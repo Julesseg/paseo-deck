@@ -4,6 +4,7 @@ import {
   parseOsc11BackgroundColor,
   type Terminal,
 } from "@earendil-works/pi-tui";
+import { isCharacter } from "./text-buffer.js";
 
 // Only exact Ctrl-letter chords collapse to their legacy bytes. Shift/Alt chords
 // (including distinct Ctrl-Shift-Z redo) retain their enhanced identity.
@@ -106,7 +107,9 @@ export function ownedInputTerminal(
                 const text = escapeIndex < 0 ? pending : pending.slice(0, escapeIndex);
                 pending = escapeIndex < 0 ? "" : pending.slice(escapeIndex);
                 // Native multiline delivery is a payload, never a sequence of commands.
-                input(text.length > 1 ? `\u001b[200~${text}\u001b[201~` : text);
+                input(
+                  text.length > 1 && !isCharacter(text) ? `\u001b[200~${text}\u001b[201~` : text,
+                );
               }
             }
           };
@@ -120,7 +123,7 @@ export function ownedInputTerminal(
               input(data);
               return;
             }
-            if (!pending && !data.startsWith("\u001b") && data.length > 1) {
+            if (!pending && !data.startsWith("\u001b") && data.length > 1 && !isCharacter(data)) {
               input(`\u001b[200~${data}\u001b[201~`);
               return;
             }
