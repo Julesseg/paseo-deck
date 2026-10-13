@@ -5,6 +5,8 @@ import { PaseoGatewayError } from "../paseo/errors.js";
 import { FakePaseoGateway } from "../paseo/fake-gateway.js";
 import { selectedComposerDraft } from "../state/composer.js";
 import { activeNotification } from "../state/store.js";
+import { RecordingTerminal } from "../ui/terminal.js";
+import { DeckTui } from "../ui/views.js";
 import { ApplicationController } from "./controller.js";
 
 const snapshot: DirectorySnapshot = {
@@ -2126,4 +2128,131 @@ it("guards captured confirmation duplication and late completion", async () => {
   finish();
   await request;
   expect(app.state.modal).toMatchObject({ type: "rename", agentId: "agent-2" });
+});
+
+it("sees displayed completion during Sidebar navigation only while the terminal reports visibility", async () => {
+  const gateway = new FakePaseoGateway(snapshot);
+  const app = new ApplicationController(gateway);
+  await app.start();
+  const terminal = new RecordingTerminal(120, 35);
+  const deck = new DeckTui(
+    terminal,
+    app.state,
+    (intent) => {
+      void app.handleIntent(intent);
+    },
+    {
+      onVisibilityChanged: (visible) => app.setVisible(visible),
+    },
+  );
+  const unsubscribe = app.subscribe((state) => deck.update(state));
+  deck.start();
+  try {
+    await terminal.waitForRender();
+    terminal.sendInput("\u0013");
+    terminal.sendInput("\u001b[O");
+    const completed = {
+      ...snapshot,
+      agents: snapshot.agents.map((agent) => ({
+        ...agent,
+        status: "idle" as const,
+        needsAttention: true,
+        attentionReason: "finished" as const,
+      })),
+    };
+    gateway.emitDirectory({ type: "snapshot", snapshot: completed });
+    await terminal.waitForRender();
+    expect(app.state.focus).toBe("tree");
+    expect(app.state.directory.agents.map((agent) => agent.needsAttention)).toEqual([true, true]);
+    terminal.sendInput("\u001b[I");
+    await terminal.waitForRender();
+    expect(app.state.directory.agents.map((agent) => agent.needsAttention)).toEqual([false, true]);
+    expect(app.state.focus).toBe("tree");
+    expect(selectedComposerDraft(app.state)).toBe("");
+  } finally {
+    unsubscribe();
+    await deck.stop();
+    await app.releaseObservations();
+    await gateway.close();
+  }
+});
+
+it("keeps fragmented terminal focus reports out of literal Terminal input and defers review while hidden", async () => {
+  const gateway = new FakePaseoGateway(snapshot);
+  gateway.terminals = [{ id: "shell", workspaceId: "workspace-1", cwd: "/deck", name: "Shell" }];
+  const app = new ApplicationController(gateway);
+  await app.start();
+  const terminal = new RecordingTerminal(120, 35);
+  const deck = new DeckTui(
+    terminal,
+    app.state,
+    (intent) => {
+      void app.handleIntent(intent);
+    },
+    { onVisibilityChanged: (visible) => app.setVisible(visible) },
+  );
+  const unsubscribe = app.subscribe((state) => deck.update(state));
+  deck.start();
+  try {
+    await app.handleIntent({ type: "open-terminal", terminalId: "shell" });
+    terminal.sendInput("\u001b[");
+    terminal.sendInput("O");
+    await terminal.waitForRender();
+    expect(gateway.terminalInput).toEqual([]);
+    gateway.emitDirectory({
+      type: "snapshot",
+      snapshot: {
+        ...snapshot,
+        agents: snapshot.agents.map((agent) => ({
+          ...agent,
+          needsAttention: true,
+          attentionReason: "finished" as const,
+        })),
+      },
+    });
+    await app.selectAgent("agent-1");
+    await terminal.waitForRender();
+    expect(app.state.directory.agents[0]?.needsAttention).toBe(true);
+    terminal.sendInput("\u001b[");
+    terminal.sendInput("I");
+    await terminal.waitForRender();
+    expect(app.state.directory.agents[0]?.needsAttention).toBe(false);
+  } finally {
+    unsubscribe();
+    await deck.stop();
+    await app.releaseObservations();
+    await gateway.close();
+  }
+});
+
+it("passes pasted focus-shaped text literally to the Active terminal", async () => {
+  const gateway = new FakePaseoGateway(snapshot);
+  gateway.terminals = [{ id: "shell", workspaceId: "workspace-1", cwd: "/deck", name: "Shell" }];
+  const app = new ApplicationController(gateway);
+  await app.start();
+  const terminal = new RecordingTerminal(120, 35);
+  const deck = new DeckTui(
+    terminal,
+    app.state,
+    (intent) => {
+      void app.handleIntent(intent);
+    },
+    { onVisibilityChanged: (visible) => app.setVisible(visible) },
+  );
+  const unsubscribe = app.subscribe((state) => deck.update(state));
+  deck.start();
+  try {
+    await app.handleIntent({ type: "open-terminal", terminalId: "shell" });
+    terminal.sendInput("\u001b[200~");
+    terminal.sendInput("\u001b[O");
+    terminal.sendInput("\u001b[201~");
+    expect(gateway.terminalInput.map((input) => input.data).join("")).toBe(
+      "\u001b[200~\u001b[O\u001b[201~",
+    );
+  } finally {
+    unsubscribe();
+    await deck.stop();
+    await app.releaseObservations();
+    await gateway.close();
+  }
 });

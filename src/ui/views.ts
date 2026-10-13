@@ -151,6 +151,7 @@ export interface DeckTuiOptions {
   appearance?: TerminalAppearance;
   treeWidth?: number;
   requestedTheme?: "ember" | "plain";
+  onVisibilityChanged?: (visible: boolean) => void;
   onPreferencesChanged?: (preference: { treeWidth: number; theme?: "ember" | "plain" }) => void;
   paseoHost?: string;
 }
@@ -2951,6 +2952,7 @@ export class DeckTui {
   private state: AppState;
   private readonly theme: DeckTheme;
   private readonly detectedAppearance: TerminalAppearance;
+  private readonly onVisibilityChanged?: DeckTuiOptions["onVisibilityChanged"];
   private readonly onPreferencesChanged?: DeckTuiOptions["onPreferencesChanged"];
   private requestedTheme: "ember" | "plain" | undefined;
   private terminalBackground: TerminalAppearance["background"];
@@ -2966,6 +2968,7 @@ export class DeckTui {
     this.detectedAppearance = options.appearance ?? defaultTerminalAppearance;
     this.requestedTheme = options.requestedTheme;
     this.onPreferencesChanged = options.onPreferencesChanged;
+    this.onVisibilityChanged = options.onVisibilityChanged;
     this.theme = new DeckTheme(this.effectiveAppearance());
     this.reconnectClock = options.renderClock ?? systemRenderClock;
     this.tui = new TuiAltScreen(
@@ -2977,6 +2980,7 @@ export class DeckTui {
           this.state.modal.type === "none" &&
           !this.localOverlayKey,
         (data) => this.handleOwnedInput(data)?.consume ?? false,
+        (visible) => this.onVisibilityChanged?.(visible),
       ),
       undefined,
       undefined,
@@ -3321,12 +3325,16 @@ export class DeckTui {
   start(): void {
     this.started = true;
     this.lifecycle.start();
+    this.terminal.write("\u001b[?1004h");
+    this.onVisibilityChanged?.(true);
     this.syncTimelineCursor();
     void this.sampleTerminalBackground();
     this.syncReconnectTicker();
   }
   async stop(): Promise<void> {
     this.started = false;
+    this.onVisibilityChanged?.(false);
+    this.terminal.write("\u001b[?1004l");
     this.sidebarOverlay?.hide();
     this.sidebarOverlay = undefined;
     this.stopReconnectTicker();

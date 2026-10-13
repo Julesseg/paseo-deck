@@ -34,6 +34,7 @@ export interface WorkspaceCreateOptions {
 export interface PaseoGateway extends TerminalGateway {
   getWorkspacePlacement(directory: string): Promise<WorkspacePlacement>;
   createWorkspace(options: WorkspaceCreateOptions): Promise<WorkspaceRecord>;
+  acknowledgeAgentCompletion(agentId: string): Promise<void>;
   connect(): Promise<void>;
   close(): Promise<void>;
   getDirectorySnapshot(): Promise<DirectorySnapshot>;

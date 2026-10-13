@@ -18,6 +18,7 @@ import type {
   ToolDetail,
   ToolDetailKind,
   UsageSummary,
+  WorkspaceActivity,
   WorkspaceRecord,
 } from "../contracts/domain.js";
 import type {
@@ -35,6 +36,7 @@ import type {
   TerminalStreamUpdate,
 } from "../contracts/terminal.js";
 import { existingModelSwitchReason } from "../domain/session-settings.js";
+import { type AttentionClient, createAttentionClient } from "./attention.js";
 import { type CliRunner, createCliRunner, runJson } from "./cli.js";
 import { PaseoGatewayError, paseoFailure } from "./errors.js";
 import { createSessionSettingsClient, type SessionSettingsClient } from "./session-settings.js";
@@ -64,6 +66,7 @@ type ClientSurface = PaseoClient;
 export interface PaseoGatewayOptions extends PaseoTargetInput {
   cliRunner?: CliRunner;
   fetchRemote?: (directory: string, branch: string) => Promise<void>;
+  createAttentionClient?: (target: PaseoTarget) => AttentionClient;
   createSettingsClient?: (target: PaseoTarget) => SessionSettingsClient;
   createMetadataClient?: (target: PaseoTarget) => WorkspaceMetadataClient;
   createClient?: (target: PaseoTarget) => ClientSurface;
@@ -76,6 +79,7 @@ export class ProductionPaseoGateway implements PaseoGateway {
   private target: PaseoTarget | undefined;
   private focused: Observation | undefined;
   private focusGeneration = 0;
+  private attention: Promise<AttentionClient> | undefined;
   private settings: Promise<SessionSettingsClient> | undefined;
   private metadata: Promise<WorkspaceMetadataClient> | undefined;
 
@@ -185,6 +189,8 @@ export class ProductionPaseoGateway implements PaseoGateway {
   }
 
   public async close(): Promise<void> {
+    const attention = this.attention;
+    this.attention = undefined;
     const settings = this.settings;
     this.settings = undefined;
     this.focusGeneration += 1;
@@ -194,6 +200,7 @@ export class ProductionPaseoGateway implements PaseoGateway {
     this.focused = undefined;
     this.metadata = undefined;
     const outcomes = await Promise.allSettled([
+      attention?.then((connection) => connection.close()),
       settings?.then((connection) => connection.close()),
       focused?.release(),
       metadata?.then((connection) => connection.close()),
@@ -217,6 +224,43 @@ export class ProductionPaseoGateway implements PaseoGateway {
       return directorySnapshot(client, projects, workspaces, agents, providers);
     } catch (error) {
       throw paseoFailure(error, "protocol");
+    }
+  }
+
+  public async acknowledgeAgentCompletion(agentId: string): Promise<void> {
+    let active: Promise<AttentionClient> | undefined;
+    try {
+      this.requireClient();
+      if (!this.attention) {
+        const target = this.target;
+        if (!target) throw new PaseoGatewayError("Paseo Deck is not connected.");
+        const connection = (this.options.createAttentionClient ?? createAttentionClient)(target);
+        this.attention = connection
+          .connect()
+          .then(() => connection)
+          .catch(async (error) => {
+            this.attention = undefined;
+            await connection.close().catch(() => undefined);
+            throw error;
+          });
+      }
+      active = this.attention;
+      const connection = await active;
+      const latest = await this.requireClient().agents.ref(agentId).refresh();
+      const agent = asRecord(latest?.agent);
+      if (
+        agent?.requiresAttention !== true ||
+        agent.attentionReason !== "finished" ||
+        (Array.isArray(agent.pendingPermissions) && agent.pendingPermissions.length > 0)
+      )
+        return;
+      await connection.clearAgentAttention(agentId);
+    } catch (error) {
+      if (active && this.attention === active) {
+        this.attention = undefined;
+        await active.then((connection) => connection.close()).catch(() => undefined);
+      }
+      throw paseoFailure(error, "command");
     }
   }
 
@@ -374,6 +418,44 @@ export class ProductionPaseoGateway implements PaseoGateway {
     releases.push(
       client.providers.subscribe((message) => void emitProviderUpdate(client, message, listener)),
     );
+    if (typeof client.getConnectionState === "function") {
+      let previous = client.getConnectionState().status;
+      let active = true;
+      const timer = setInterval(() => {
+        const current = client.getConnectionState();
+        if (current.status === previous) return;
+        previous = current.status;
+        if (current.status === "connected") {
+          void Promise.all([
+            client.agents.list({ subscribe: {} }),
+            client.workspaces.list({ subscribe: {} }),
+          ])
+            .then(() => {
+              if (active && client.getConnectionState().status === "connected")
+                listener({ type: "connection-changed", state: "connected" });
+            })
+            .catch((error) => {
+              if (active)
+                listener({
+                  type: "connection-changed",
+                  state: "disconnected",
+                  detail: errorDetail(error),
+                });
+            });
+          return;
+        }
+        listener({
+          type: "connection-changed",
+          state: current.status === "connecting" ? "reconnecting" : "disconnected",
+          ...(current.status === "connecting" ? { attempt: current.attempt } : {}),
+        });
+      }, 200);
+      timer.unref();
+      releases.push(() => {
+        active = false;
+        clearInterval(timer);
+      });
+    }
     return observation(releases);
   }
 
@@ -866,6 +948,12 @@ function workspaceRecord(value: UnknownRecord): WorkspaceRecord {
     directory,
     archived:
       value.status === "archived" || (value.archivedAt !== null && value.archivedAt !== undefined),
+    ...(["needs_input", "failed", "running", "attention", "done"].includes(String(value.status))
+      ? { status: value.status as WorkspaceActivity }
+      : {}),
+    ...(value.activityAt === null || typeof value.activityAt === "string"
+      ? { activityAt: value.activityAt }
+      : {}),
   };
 }
 
@@ -902,6 +990,13 @@ function agentRecord(value: UnknownRecord): AgentRecord {
     availableThinkingLevels: thinking,
     pendingPermissions: pending,
     needsAttention: value.requiresAttention === true || pending.length > 0,
+    ...(["finished", "error", "permission"].includes(String(value.attentionReason))
+      ? { attentionReason: value.attentionReason as "finished" | "error" | "permission" }
+      : {}),
+    ...(typeof value.attentionTimestamp === "string"
+      ? { attentionTimestamp: value.attentionTimestamp }
+      : {}),
+    ...(typeof value.parentAgentId === "string" ? { parentAgentId: value.parentAgentId } : {}),
     archived: value.archivedAt !== null && value.archivedAt !== undefined,
     ...(stringValue(value.updatedAt) === undefined
       ? {}

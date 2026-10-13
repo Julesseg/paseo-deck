@@ -14,12 +14,16 @@ export interface ProjectRecord {
   path?: string;
 }
 
+export type WorkspaceActivity = "needs_input" | "failed" | "running" | "attention" | "done";
+
 export interface WorkspaceRecord {
   id: string;
   projectId?: string;
   title: string;
   directory: string;
   archived: boolean;
+  status?: WorkspaceActivity;
+  activityAt?: string | null;
 }
 
 export type AgentStatus =
@@ -60,6 +64,8 @@ export interface AgentRecord {
   availableThinkingLevels: readonly string[];
   pendingPermissions: readonly PermissionRequest[];
   needsAttention: boolean;
+  attentionReason?: "finished" | "error" | "permission";
+  attentionTimestamp?: string;
   parentAgentId?: string;
   archived: boolean;
   /** The daemon's most recent agent update timestamp, when it provides one. */
