@@ -1,10 +1,11 @@
 import { expect, it } from "vitest";
 import { ApplicationController } from "../app/controller.js";
+import type { ProviderCommand } from "../contracts/gateway.js";
 import { FakePaseoGateway } from "../paseo/fake-gateway.js";
 import { RecordingTerminal } from "./terminal.js";
 import { DeckTui } from "./views.js";
 
-async function fixture(columns = 100, rows = 28) {
+async function fixture(columns = 100, rows = 28, catalog?: readonly ProviderCommand[]) {
   const gateway = new FakePaseoGateway({
     projects: [],
     providers: [],
@@ -30,6 +31,7 @@ async function fixture(columns = 100, rows = 28) {
     { name: "research", description: "Research a topic", kind: "skill" },
     { name: "unknown", description: "Unclassified item" },
   ];
+  if (catalog) gateway.providerCommands = catalog;
   const app = new ApplicationController(gateway);
   await app.start();
   const terminal = new RecordingTerminal(columns, rows);
@@ -217,6 +219,26 @@ it("dismisses suggestions across global overlays and Sidebar focus while preserv
     expect(f.app.state.composerMode).toBe("normal");
     expect(f.terminal.viewport().join("\n")).not.toContain("Review changes");
     expect(f.app.state.composer.drafts.a).toBe("/rv /rv");
+    expect(f.gateway.commands).toEqual([]);
+  } finally {
+    await f.close();
+  }
+});
+
+it("keeps a token split across wrapped rows anchored above its first visible segment", async () => {
+  const name = "abcdefghijklmnopqrstuvwxyz0123456789-workflow";
+  const f = await fixture(30, 12, [{ name, description: "Long workflow", kind: "skill" }]);
+  try {
+    await f.keys("i", `/${name.slice(0, 34)}`);
+    const lines = f.terminal.viewport();
+    const firstSegment = lines.findIndex((line) =>
+      line.trimStart().startsWith("/abcdefghijklmnop"),
+    );
+    const menu = lines.findIndex((line) => line.includes("> /abcdef"));
+    expect(menu).toBe(firstSegment - 1);
+    expect(f.terminal.viewportCursor().row).toBeGreaterThan(firstSegment);
+    await f.keys("\t");
+    expect(f.app.state.composer.drafts.a).toBe(`/${name} `);
     expect(f.gateway.commands).toEqual([]);
   } finally {
     await f.close();

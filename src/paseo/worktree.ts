@@ -5,7 +5,7 @@ import { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import type { WorkspacePlacement } from "../contracts/gateway.js";
 import type { PaseoTarget } from "./target.js";
 
-/** Narrow exception to ADR-0002: SDK 0.8.0 has no public Git metadata API. */
+/** Narrow exception to ADR-0002: SDK 0.11.2 has no public Git metadata API. */
 export interface WorkspaceMetadataClient {
   connect(): Promise<void>;
   close(): Promise<void>;

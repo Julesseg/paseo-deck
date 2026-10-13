@@ -324,7 +324,7 @@ export class ProductionPaseoGateway implements PaseoGateway {
 
   public async listTerminals(workspaceId: string): Promise<readonly TerminalRecord[]> {
     try {
-      // SDK 0.8's public TerminalSchema strips title/activity. Keep the exception
+      // SDK 0.11.2's public TerminalSchema strips title/activity. Keep the exception
       // on the same owned internal connection as rename; never cache a guessed title.
       const entries = await (await this.mutationClient()).listTerminals(undefined, undefined, {
         workspaceId,
@@ -454,7 +454,7 @@ export class ProductionPaseoGateway implements PaseoGateway {
     // ApplicationController establishes its initial connected state after the
     // snapshot. Forward only later transitions so startup does not refetch the
     // directory a second time.
-    // Stable 0.8.0 exposes the server-issued subscriptionId but no public release
+    // Pinned 0.11.2 exposes the server-issued subscriptionId but no public release
     // handle. Local listeners below are released here; server demand ends on close().
     releases.push(client.agents.subscribe((message) => emitDirectoryMessage(message, listener)));
     try {

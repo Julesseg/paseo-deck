@@ -67,7 +67,7 @@ jobs:
           cache: npm
       - run: npm ci
       - name: Install compatible Paseo CLI
-        run: npm install --global @getpaseo/cli@0.8.0
+        run: npm install --global @getpaseo/cli@0.11.2
       - name: Connect through the production gateway
         shell: bash
         run: |
