@@ -55,6 +55,7 @@ export interface PaseoGateway extends TerminalGateway {
   getProviderCommands(context: ProviderCommandContext): Promise<readonly ProviderCommand[]>;
   getWorkspacePlacement(directory: string): Promise<WorkspacePlacement>;
   createWorkspace(options: WorkspaceCreateOptions): Promise<WorkspaceRecord>;
+  acknowledgeAgentCompletion(agentId: string): Promise<void>;
   connect(): Promise<void>;
   close(): Promise<void>;
   getDirectorySnapshot(): Promise<DirectorySnapshot>;

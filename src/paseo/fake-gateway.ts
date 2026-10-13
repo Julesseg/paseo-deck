@@ -83,6 +83,19 @@ export class FakePaseoGateway implements PaseoGateway {
     this.timelineListeners.clear();
   }
 
+  public async acknowledgeAgentCompletion(agentId: string): Promise<void> {
+    this.assertConnected();
+    const agent = this.snapshot.agents.find((item) => item.id === agentId);
+    if (agent?.attentionReason !== "finished") return;
+    const { attentionReason: _reason, attentionTimestamp: _timestamp, ...seen } = agent;
+    const updated = { ...seen, needsAttention: seen.pendingPermissions.length > 0 };
+    this.snapshot = {
+      ...this.snapshot,
+      agents: this.snapshot.agents.map((item) => (item.id === agentId ? updated : item)),
+    };
+    this.emitDirectory({ type: "agent-upserted", agent: updated });
+  }
+
   public async getDirectorySnapshot(): Promise<DirectorySnapshot> {
     this.assertConnected();
     return this.snapshot;

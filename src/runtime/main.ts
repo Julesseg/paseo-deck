@@ -139,6 +139,7 @@ export async function runInteractive(
       treeWidth: preferenceSession.treeWidth(),
       ...(target.type === "host" ? { paseoHost: target.value } : {}),
       ...(requestedTheme ? { requestedTheme } : {}),
+      onVisibilityChanged: (visible) => app.setVisible(visible),
       onPreferencesChanged: (value) => {
         preferenceSession.present(value);
       },

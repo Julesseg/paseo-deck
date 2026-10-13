@@ -46,6 +46,7 @@ export function ownedInputTerminal(
   terminal: Terminal,
   direct: () => boolean = () => false,
   owns: (data: string) => boolean = () => false,
+  onVisibilityChanged: (visible: boolean) => void = () => {},
 ): Terminal {
   let pending = "";
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -70,6 +71,10 @@ export function ownedInputTerminal(
       if (property === "start")
         return (inheritedInput: (data: string) => void, resize: () => void) => {
           const input = (data: string) => {
+            if (!pasteActive && (data === "\u001b[I" || data === "\u001b[O")) {
+              onVisibilityChanged(data === "\u001b[I");
+              return;
+            }
             if (!owns(data)) inheritedInput(data);
           };
           const drain = () => {
@@ -143,12 +148,32 @@ export function ownedInputTerminal(
           };
           const receive = (data: string) => {
             const prefix = "\u001b]11;";
-            if (!reply && (pasteActive || (!prefix.startsWith(data) && !data.startsWith(prefix)))) {
+            const focusPrefixes = ["\u001b[I", "\u001b[O"];
+            if (
+              !reply &&
+              (pasteActive ||
+                (!prefix.startsWith(data) &&
+                  !data.startsWith(prefix) &&
+                  !focusPrefixes.some((focus) => focus.startsWith(data) || data.startsWith(focus))))
+            ) {
               deliver(data);
               return;
             }
             reply += data;
             replyChunks.push(data);
+            const focus = focusPrefixes.find((value) => reply.startsWith(value));
+            if (focus) {
+              const remainder = reply.slice(focus.length);
+              clearReply();
+              onVisibilityChanged(focus === "\u001b[I");
+              if (remainder) receive(remainder);
+              return;
+            }
+            if (focusPrefixes.some((value) => value.startsWith(reply)) && reply !== "\u001b") {
+              clearTimeout(replyTimer);
+              replyTimer = setTimeout(flushReply, 120);
+              return;
+            }
             if (!prefix.startsWith(reply) && !reply.startsWith(prefix)) {
               flushReply();
               return;

@@ -89,7 +89,7 @@ function testClient(
           agentDirectoryListener = listener;
           return () => undefined;
         }),
-        ref: vi.fn(() => agent),
+        ref: vi.fn((_id?: string) => agent),
       },
       providers: {
         waitForReady: vi.fn(async () => ({
@@ -1870,6 +1870,332 @@ it("ignores superseded catalog requests when the user returns to the original pr
     expect(app.state.providerCommands?.items).toEqual([
       { name: "fresh", description: "Current", kind: "skill" },
     ]);
+  } finally {
+    await app.releaseObservations();
+    await gateway.close();
+  }
+});
+
+it("preserves native Workspace activity and Session attention through the gateway into the store", async () => {
+  const fixture = testClient();
+  fixture.client.workspaces.list.mockResolvedValue({
+    entries: [
+      {
+        id: "workspace-1",
+        workspaceDirectory: "/repo",
+        name: "Main",
+        status: "running",
+        activityAt: "2026-10-13T09:00:00Z",
+      },
+    ],
+  } as never);
+  fixture.client.agents.list.mockResolvedValue({
+    entries: [
+      {
+        agent: {
+          id: "agent-1",
+          workspaceId: "workspace-1",
+          status: "running",
+          requiresAttention: true,
+          attentionReason: "permission",
+          attentionTimestamp: "2026-10-13T08:00:00Z",
+          availableModes: [],
+          pendingPermissions: [],
+        },
+      },
+    ],
+  } as never);
+  const gateway = new ProductionPaseoGateway({
+    host: "127.0.0.1:6767",
+    createClient: () => fixture.client as never,
+  });
+  const app = new ApplicationController(gateway);
+  await app.start();
+  try {
+    expect(app.state.directory.workspaces[0]).toMatchObject({
+      status: "running",
+      activityAt: "2026-10-13T09:00:00Z",
+    });
+    expect(app.state.directory.agents[0]).toMatchObject({
+      attentionReason: "permission",
+      attentionTimestamp: "2026-10-13T08:00:00Z",
+    });
+    for (const status of ["attention", "failed", "needs_input", "done"]) {
+      fixture.emitWorkspaceDirectory({
+        type: "workspace_update",
+        payload: {
+          workspace: {
+            id: "workspace-1",
+            workspaceDirectory: "/repo",
+            name: "Main",
+            status,
+            activityAt: null,
+          },
+        },
+      });
+      expect(app.state.directory.workspaces[0]).toMatchObject({ status, activityAt: null });
+    }
+  } finally {
+    await app.releaseObservations();
+    await gateway.close();
+  }
+});
+
+it("acknowledges only the opened Session's finished attention and retains unopened review attention", async () => {
+  const fixture = testClient();
+  let agents = ["agent-1", "agent-2"].map((id) => ({
+    id,
+    workspaceId: "workspace-1",
+    title: id,
+    status: "idle",
+    requiresAttention: true,
+    attentionReason: "finished",
+    availableModes: [],
+    pendingPermissions: [],
+  }));
+  fixture.client.agents.list.mockImplementation(
+    async () => ({ entries: agents.map((agent) => ({ agent })) }) as never,
+  );
+  fixture.client.agents.ref.mockImplementation(
+    (id?: string) =>
+      ({
+        ...fixture.agent,
+        refresh: async () => ({ agent: agents.find((agent) => agent.id === id) }),
+      }) as never,
+  );
+  const attention = {
+    connect: async () => {},
+    close: async () => {},
+    clearAgentAttention: async (agentId: string) => {
+      agents = agents.map((agent) =>
+        agent.id === agentId
+          ? { ...agent, requiresAttention: false, attentionReason: undefined as never }
+          : agent,
+      );
+      fixture.emitAgentDirectory({
+        type: "agent_update",
+        payload: { agent: agents.find((agent) => agent.id === agentId) },
+      });
+    },
+  };
+  const gateway = new ProductionPaseoGateway({
+    host: "127.0.0.1:6767",
+    createClient: () => fixture.client as never,
+    createAttentionClient: () => attention,
+  });
+  const app = new ApplicationController(gateway);
+  await app.start();
+  try {
+    await vi.waitFor(() =>
+      expect(app.state.directory.agents.map((agent) => agent.needsAttention)).toEqual([
+        false,
+        true,
+      ]),
+    );
+    await app.handleIntent({ type: "set-focus", focus: "tree" });
+    expect(app.state.directory.agents[1]?.needsAttention).toBe(true);
+    await app.selectAgent("agent-2");
+    await vi.waitFor(() =>
+      expect(app.state.directory.agents.map((agent) => agent.needsAttention)).toEqual([
+        false,
+        false,
+      ]),
+    );
+    await app.releaseObservations();
+    const reopened = new ApplicationController(gateway);
+    await reopened.start();
+    expect(reopened.state.directory.agents.map((agent) => agent.needsAttention)).toEqual([
+      false,
+      false,
+    ]);
+    await reopened.releaseObservations();
+  } finally {
+    await app.releaseObservations();
+    await gateway.close();
+  }
+});
+
+it("recovers native activity and unread review attention after the SDK reconnects", async () => {
+  const fixture = testClient();
+  let connection: { status: "connected" | "disconnected" } = { status: "connected" };
+  let demanded = false;
+  const client = {
+    ...fixture.client,
+    getConnectionState: () => connection,
+    workspaces: {
+      ...fixture.client.workspaces,
+      list: async (options?: { subscribe?: object }) => {
+        if (options?.subscribe) demanded = true;
+        return fixture.client.workspaces.list();
+      },
+    },
+  };
+  const gateway = new ProductionPaseoGateway({
+    host: "127.0.0.1:6767",
+    createClient: () => client as never,
+  });
+  const app = new ApplicationController(gateway);
+  await app.start();
+  try {
+    connection = { status: "disconnected" };
+    demanded = false;
+    await vi.waitFor(() => expect(app.state.connection).toBe("disconnected"));
+    fixture.client.workspaces.list.mockResolvedValue({
+      entries: [
+        {
+          id: "workspace-1",
+          name: "Main",
+          workspaceDirectory: "/repo",
+          status: "running",
+          activityAt: "2026-10-13T10:00:00Z",
+        },
+      ],
+    } as never);
+    fixture.client.agents.list.mockResolvedValue({
+      entries: [
+        {
+          agent: {
+            id: "agent-1",
+            workspaceId: "workspace-1",
+            status: "running",
+            availableModes: [],
+            pendingPermissions: [],
+          },
+        },
+        {
+          agent: {
+            id: "unopened",
+            workspaceId: "workspace-1",
+            status: "idle",
+            requiresAttention: true,
+            attentionReason: "finished",
+            availableModes: [],
+            pendingPermissions: [],
+          },
+        },
+      ],
+    } as never);
+    connection = { status: "connected" };
+    await vi.waitFor(() =>
+      expect(app.state.directory.workspaces[0]).toMatchObject({
+        status: "running",
+        activityAt: "2026-10-13T10:00:00Z",
+      }),
+    );
+    expect(app.state.directory.agents.find((agent) => agent.id === "unopened")).toMatchObject({
+      needsAttention: true,
+      attentionReason: "finished",
+    });
+    if (demanded)
+      fixture.emitWorkspaceDirectory({
+        type: "workspace_update",
+        payload: {
+          workspace: {
+            id: "workspace-1",
+            workspaceDirectory: "/repo",
+            name: "Main",
+            status: "failed",
+          },
+        },
+      });
+    expect(app.state.directory.workspaces[0]?.status).toBe("failed");
+  } finally {
+    await app.releaseObservations();
+    await gateway.close();
+  }
+});
+
+it("preserves permission attention that supersedes a completion while acknowledgement connects", async () => {
+  const fixture = testClient();
+  const connected = deferred<void>();
+  let agent = {
+    id: "agent-1",
+    workspaceId: "workspace-1",
+    status: "idle",
+    requiresAttention: true,
+    attentionReason: "finished",
+    availableModes: [],
+    pendingPermissions: [],
+  };
+  fixture.client.agents.list.mockImplementation(async () => ({ entries: [{ agent }] }) as never);
+  fixture.client.agents.ref.mockImplementation(
+    () => ({ ...fixture.agent, refresh: async () => ({ agent }) }) as never,
+  );
+  const attention = {
+    connect: () => connected.promise,
+    close: async () => {},
+    clearAgentAttention: async () => {
+      agent = { ...agent, requiresAttention: false };
+      fixture.emitAgentDirectory({ type: "agent_update", payload: { agent } });
+    },
+  };
+  const gateway = new ProductionPaseoGateway({
+    host: "127.0.0.1:6767",
+    createClient: () => fixture.client as never,
+    createAttentionClient: () => attention,
+  });
+  const app = new ApplicationController(gateway);
+  await app.start();
+  try {
+    await vi.waitFor(() => expect(fixture.timeline.refetch).toHaveBeenCalled());
+    agent = { ...agent, attentionReason: "permission" };
+    fixture.emitAgentDirectory({ type: "agent_update", payload: { agent } });
+    connected.resolve();
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(app.state.directory.agents[0]).toMatchObject({
+      needsAttention: true,
+      attentionReason: "permission",
+    });
+  } finally {
+    await app.releaseObservations();
+    await gateway.close();
+  }
+});
+
+it("can acknowledge a visible completion after its attention transport fails and recovers", async () => {
+  const fixture = testClient();
+  let agent = {
+    id: "agent-1",
+    workspaceId: "workspace-1",
+    status: "idle",
+    requiresAttention: true,
+    attentionReason: "finished",
+    availableModes: [],
+    pendingPermissions: [],
+  };
+  fixture.client.agents.list.mockImplementation(async () => ({ entries: [{ agent }] }) as never);
+  fixture.client.agents.ref.mockImplementation(
+    () => ({ ...fixture.agent, refresh: async () => ({ agent }) }) as never,
+  );
+  let available = false;
+  const gateway = new ProductionPaseoGateway({
+    host: "127.0.0.1:6767",
+    createClient: () => fixture.client as never,
+    createAttentionClient: () => {
+      const connected = available;
+      return {
+        connect: async () => {},
+        close: async () => {},
+        clearAgentAttention: async () => {
+          if (!connected) throw new Error("attention transport offline");
+          agent = { ...agent, requiresAttention: false };
+          fixture.emitAgentDirectory({ type: "agent_update", payload: { agent } });
+        },
+      };
+    },
+  });
+  const app = new ApplicationController(gateway);
+  await app.start();
+  try {
+    await vi.waitFor(() =>
+      expect(
+        app.state.notifications.some((item) => item.message.includes("Could not acknowledge")),
+      ).toBe(true),
+    );
+    expect(app.state.directory.agents[0]?.needsAttention).toBe(true);
+    available = true;
+    await app.handleIntent({ type: "refresh" });
+    await vi.waitFor(() => expect(app.state.directory.agents[0]?.needsAttention).toBe(false));
   } finally {
     await app.releaseObservations();
     await gateway.close();
