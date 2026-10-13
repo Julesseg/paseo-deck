@@ -1,6 +1,6 @@
 # Timeline, sidebar, and composer refinements
 
-Accepted design for the Timeline, Sidebar, Composer, and provider suggestions. This describes intended behavior, not implemented behavior. The design interview is complete; the verification checklist below defines the evidence still needed from implementation.
+Accepted design for the Timeline, Sidebar, Composer, and provider suggestions. This preserves the design decisions and capability evidence from the interview. See [implementation verification](ui-refinement-verification.md) for the implemented behavior, checks and remaining acceptance limits.
 
 ## Settled decisions
 
@@ -53,7 +53,7 @@ Accepted design for the Timeline, Sidebar, Composer, and provider suggestions. T
 
 Native bucket selection remains Waiting for user input → Failed → Working → Ready to review → Done. Preserve that aggregation priority while displaying the groups in the order above: a mixed Workspace can be classified Working even when the Ready to review group precedes Working in the Sidebar.
 
-## Verified Paseo capabilities
+## Capability evidence from the design interview
 
 The inspected Paseo CLI is 0.11.2. Inspection of @getpaseo/client and @getpaseo/protocol 0.8.0, matching this repository's declared dependency versions, confirms Agent `requiresAttention`, `attentionReason` (`finished`, `error`, or `permission`), and `attentionTimestamp`; Workspace summaries expose `status` (`needs_input`, `failed`, `running`, `attention`, or `done`) and nullable `activityAt`. The client exposes `clearAgentAttention` and `clearWorkspaceAttention`.
 
@@ -82,4 +82,4 @@ The existing pi-tui completion defaults do not match this design: their menu app
 
 ## Documentation boundary
 
-The agreed terminology is recorded in CONTEXT.md and source-of-truth ownership in ADR-0003. docs/keymap.md remains the reference for current behavior until implementation; this design record explicitly documents the intended changes. No application behavior has changed during the interview.
+The agreed terminology is recorded in CONTEXT.md and source-of-truth ownership in ADR-0003. docs/keymap.md documents current behavior. This design record preserves the accepted decisions; [implementation verification](ui-refinement-verification.md) records the evidence and its boundaries.
