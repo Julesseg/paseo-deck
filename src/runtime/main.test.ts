@@ -628,7 +628,7 @@ describe("runCli", () => {
     expect(parsed.targets).toHaveProperty(targetScope({ type: "host", value: "a:1" }));
     expect(parsed.targets).toHaveProperty(targetScope({ type: "host", value: "b:1" }));
     expect(parsed.targets[targetScope({ type: "host", value: "a:1" })]).toMatchObject({
-      treeWidth: 36,
+      treeWidth: 53,
       treeOrder: "alphabetical",
       showArchived: true,
       treeGrouping: "project",
@@ -643,7 +643,7 @@ describe("runCli", () => {
       ],
     });
     expect(parsed.targets[targetScope({ type: "host", value: "b:1" })]).toMatchObject({
-      treeWidth: 32,
+      treeWidth: 49,
       treeOrder: "recent",
       showArchived: false,
       treeGrouping: "project",

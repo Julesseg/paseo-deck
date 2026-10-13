@@ -32,6 +32,7 @@ import {
 import { activeLaunchWorkspaceId, launchDraft } from "../state/launch.js";
 import { providerCommandContextKey } from "../state/provider-commands.js";
 import { pendingPermissions } from "../state/store.js";
+import { projectForWorkspace } from "../state/tree.js";
 import { defaultTerminalAppearance, type TerminalAppearance } from "./capabilities.js";
 import { type ClipboardAdapter, SharedClipboard, systemClipboard } from "./clipboard.js";
 import {
@@ -59,6 +60,7 @@ import { DeckController, type UiIntent } from "./controller.js";
 import { ownedInputTerminal } from "./input.js";
 import {
   adjustTreeWidth,
+  DEFAULT_TREE_WIDTH,
   MIN_TERMINAL_COLUMNS,
   MIN_TERMINAL_ROWS,
   MIN_TREE_WIDTH,
@@ -109,6 +111,7 @@ import {
   timelineItemDisplay,
   toolBodyText,
   workspaceActivityGlyph,
+  workspaceActivityGroups,
   workspaceTabs,
 } from "./view-model.js";
 
@@ -177,6 +180,7 @@ class TreeView implements Component {
     private state: AppState,
     private readonly theme: DeckTheme,
     paseoHost?: string,
+    private readonly now: () => number = () => Date.now(),
   ) {
     this.paseoHost = hostLabel(paseoHost);
   }
@@ -193,7 +197,7 @@ class TreeView implements Component {
   }
   invalidate(): void {}
   render(width: number): string[] {
-    const innerWidth = Math.max(1, width);
+    const innerWidth = Math.max(1, width - 1);
     const rows = deriveTreeRows(this.state);
     const header = this.theme.style(
       this.state.focus === "tree" ? "focus" : "header",
@@ -256,8 +260,10 @@ class TreeView implements Component {
             background
               ? this.theme.styleRenderedBackground(background, fill(line))
               : `${this.theme.styleRendered(tone, line)}${" ".repeat(Math.max(0, innerWidth - terminalDisplayWidth(line)))}`;
-          const rowLines = row.gapBefore ? [""] : [];
+          const rowLines = row.kind === "workspace" ? [] : [""];
           rowLines.push(styleRow(primary));
+          if (row.kind === "workspace") rowLines.push(styleRow(this.metadataLine(row, innerWidth)));
+          else rowLines.push("");
           return rowLines;
         }),
       );
@@ -272,11 +278,57 @@ class TreeView implements Component {
     );
   }
 
+  private metadataLine(row: ReturnType<typeof deriveTreeRows>[number], width: number): string {
+    const workspace = this.state.directory.workspaces.find((item) => item.id === row.id);
+    const label =
+      (this.state.treeGrouping ?? "status") === "project"
+        ? (workspaceActivityGroups.find(([activity]) => activity === row.activity)?.[1] ??
+          "Unavailable")
+        : workspace
+          ? (projectForWorkspace(this.state.directory.projects, workspace)?.name ?? "No project")
+          : "No project";
+    const timestamp = workspace?.activityAt ? Date.parse(workspace.activityAt) : Number.NaN;
+    const minutes = Math.floor(Math.max(0, this.now() - timestamp) / 60_000);
+    const age = !Number.isFinite(timestamp)
+      ? this.theme.glyph("unavailable")
+      : minutes < 1
+        ? "now"
+        : minutes < 60
+          ? `${minutes}m`
+          : minutes < 1440
+            ? `${Math.floor(minutes / 60)}h`
+            : `${Math.floor(minutes / 1440)}d`;
+    const right = `${this.theme.glyph("clock")} ${age}`;
+    const indent = " ".repeat(1 + row.depth * 2);
+    const folder = this.theme.glyph("folder");
+    const available = Math.max(0, width - terminalDisplayWidth(indent + right) - 1);
+    const labelWidth = Math.max(0, available - terminalDisplayWidth(folder) - 5);
+    const clippedLabel = this.theme.clipRemoteText(label, labelWidth);
+    const tone =
+      row.activity === "failed"
+        ? "failure"
+        : row.activity === "needs_input"
+          ? "permission"
+          : row.activity === "attention"
+            ? "attention"
+            : row.activity === "running"
+              ? "running"
+              : "muted";
+    const left =
+      available >= terminalDisplayWidth(folder) + 5
+        ? `${folder} ${this.theme.styleTabBody("tab-inactive", tone, `[ ${clippedLabel} ]`)}`
+        : this.theme.clipRendered(`${folder} ${sanitizeTerminalText(label)}`, available);
+    return `${indent}${left}${" ".repeat(Math.max(1, width - terminalDisplayWidth(indent + left + right)))}${this.theme.style("muted", right)}`;
+  }
+
   selectedLineRange(_width: number): { start: number; end: number } | undefined {
     let line = 2;
     for (const row of deriveTreeRows(this.state)) {
-      const height = (row.gapBefore ?? 0) + 1;
-      if (row.selected) return { start: line, end: line + height - 1 };
+      const height = row.kind === "workspace" ? 2 : 3;
+      if (row.selected)
+        return row.kind === "workspace"
+          ? { start: line, end: line + 1 }
+          : { start: line + 1, end: line + 1 };
       line += height;
     }
     return undefined;
@@ -3073,6 +3125,7 @@ export class DeckTui {
   private readonly renderScheduler: RenderScheduler;
   private readonly reconnectClock: RenderClock;
   private started = false;
+  private sidebarAgeTimer: unknown;
   private readonly treeTranscript: ScrollView;
   private sidebarOverlay: OverlayHandle | undefined;
   private readonly transcript: TimelineScrollView;
@@ -3135,7 +3188,7 @@ export class DeckTui {
     private readonly emit: (intent: UiIntent) => void,
     options: DeckTuiOptions = {},
   ) {
-    this.treeWidth = adjustTreeWidth(options.treeWidth ?? 34, 0);
+    this.treeWidth = adjustTreeWidth(options.treeWidth ?? DEFAULT_TREE_WIDTH, 0);
     this.state = initialState;
     this.detectedAppearance = options.appearance ?? defaultTerminalAppearance;
     this.requestedTheme = options.requestedTheme;
@@ -3177,7 +3230,9 @@ export class DeckTui {
       () => this.state,
       (intent) => this.handleControllerIntent(intent),
     );
-    this.tree = new TreeView(initialState, this.theme, options.paseoHost);
+    this.tree = new TreeView(initialState, this.theme, options.paseoHost, () =>
+      this.reconnectClock.now(),
+    );
     this.tabs = new SessionTabsView(initialState, this.theme);
     this.timeline = new TimelineView(this.theme, () => this.transcript?.scrollTop ?? 0);
     this.timeline.update(initialState.timeline.items);
@@ -3500,6 +3555,7 @@ export class DeckTui {
   start(): void {
     this.started = true;
     this.lifecycle.start();
+    this.scheduleSidebarAgeRefresh();
     this.terminal.write("\u001b[?1004h");
     this.onVisibilityChanged?.(true);
     this.syncTimelineCursor();
@@ -3507,6 +3563,8 @@ export class DeckTui {
   }
   async stop(): Promise<void> {
     this.started = false;
+    if (this.sidebarAgeTimer !== undefined) this.reconnectClock.clearTimeout(this.sidebarAgeTimer);
+    this.sidebarAgeTimer = undefined;
     this.onVisibilityChanged?.(false);
     this.terminal.write("\u001b[?1004l");
     this.sidebarOverlay?.hide();
@@ -3514,6 +3572,14 @@ export class DeckTui {
     this.renderScheduler.stop();
     await this.lifecycle.stop();
     this.terminal.write("\u001b[0 q");
+  }
+  private scheduleSidebarAgeRefresh(): void {
+    this.sidebarAgeTimer = this.reconnectClock.setTimeout(() => {
+      this.sidebarAgeTimer = undefined;
+      if (!this.started) return;
+      this.renderScheduler.requestImmediate();
+      this.scheduleSidebarAgeRefresh();
+    }, 60_000);
   }
   private syncTimelineCursor(): void {
     const visible =
@@ -3533,7 +3599,8 @@ export class DeckTui {
     const treeSelectionChanged =
       state.selectedAgentId !== this.state.selectedAgentId ||
       state.selectedWorkspaceId !== this.state.selectedWorkspaceId ||
-      state.selectedProjectId !== this.state.selectedProjectId;
+      state.selectedProjectId !== this.state.selectedProjectId ||
+      state.sidebarSelection?.id !== this.state.sidebarSelection?.id;
     const previousAgentId = this.state.selectedAgentId;
     const recoveryChanged =
       state.timeline.recoveryRevision !== this.state.timeline.recoveryRevision;
