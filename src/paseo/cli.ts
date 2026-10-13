@@ -1,4 +1,6 @@
 import { spawn } from "node:child_process";
+import { existsSync } from "node:fs";
+import { homedir } from "node:os";
 import { PaseoCliError } from "./errors.js";
 
 export interface CliResult {
@@ -13,6 +15,7 @@ export function createCliRunner(executable = "paseo"): CliRunner {
   return async (arguments_) =>
     new Promise<CliResult>((resolve, reject) => {
       const child = spawn(executable, [...arguments_], {
+        cwd: cliWorkingDirectory(),
         shell: false,
         stdio: ["ignore", "pipe", "pipe"],
       });
@@ -29,6 +32,18 @@ export function createCliRunner(executable = "paseo"): CliRunner {
       child.once("error", reject);
       child.once("close", (exitCode) => resolve({ stdout, stderr, exitCode }));
     });
+}
+
+function cliWorkingDirectory(): string {
+  // Deck can outlive its launch worktree. Preserve relative CLI paths while it
+  // exists, but never start Paseo in an unlinked directory (uv_cwd/ENOENT).
+  try {
+    const directory = process.cwd();
+    if (existsSync(directory)) return directory;
+  } catch {
+    // process.cwd() itself fails when the launch directory has been removed.
+  }
+  return homedir();
 }
 
 export async function runJson(runner: CliRunner, arguments_: readonly string[]): Promise<unknown> {
