@@ -2018,14 +2018,12 @@ it("acknowledges only the opened Session's finished attention and retains unopen
 it("recovers native activity and unread review attention after the SDK reconnects", async () => {
   const fixture = testClient();
   let connection: { status: "connected" | "disconnected" } = { status: "connected" };
-  let demanded = false;
   const client = {
     ...fixture.client,
     getConnectionState: () => connection,
     workspaces: {
       ...fixture.client.workspaces,
-      list: async (options?: { subscribe?: object }) => {
-        if (options?.subscribe) demanded = true;
+      list: async () => {
         return fixture.client.workspaces.list();
       },
     },
@@ -2038,7 +2036,6 @@ it("recovers native activity and unread review attention after the SDK reconnect
   await app.start();
   try {
     connection = { status: "disconnected" };
-    demanded = false;
     await vi.waitFor(() => expect(app.state.connection).toBe("disconnected"));
     fixture.client.workspaces.list.mockResolvedValue({
       entries: [
@@ -2086,18 +2083,17 @@ it("recovers native activity and unread review attention after the SDK reconnect
       needsAttention: true,
       attentionReason: "finished",
     });
-    if (demanded)
-      fixture.emitWorkspaceDirectory({
-        type: "workspace_update",
-        payload: {
-          workspace: {
-            id: "workspace-1",
-            workspaceDirectory: "/repo",
-            name: "Main",
-            status: "failed",
-          },
+    fixture.emitWorkspaceDirectory({
+      type: "workspace_update",
+      payload: {
+        workspace: {
+          id: "workspace-1",
+          workspaceDirectory: "/repo",
+          name: "Main",
+          status: "failed",
         },
-      });
+      },
+    });
     expect(app.state.directory.workspaces[0]?.status).toBe("failed");
   } finally {
     await app.releaseObservations();
@@ -2196,6 +2192,164 @@ it("can acknowledge a visible completion after its attention transport fails and
     available = true;
     await app.handleIntent({ type: "refresh" });
     await vi.waitFor(() => expect(app.state.directory.agents[0]?.needsAttention).toBe(false));
+  } finally {
+    await app.releaseObservations();
+    await gateway.close();
+  }
+});
+
+it("releases public directory query subscriptions when controller observations end", async () => {
+  const fixture = testClient();
+  const agentSnapshot = await fixture.client.agents.list();
+  const workspaceSnapshot = await fixture.client.workspaces.list();
+  const liveQueries = new Set<string>();
+  fixture.client.agents.list.mockImplementation(async (options?: { subscribe?: object }) => {
+    if (!options?.subscribe) return agentSnapshot;
+    liveQueries.add("agents");
+    return {
+      ...agentSnapshot,
+      subscription: {
+        release: async () => {
+          liveQueries.delete("agents");
+        },
+      },
+    } as never;
+  });
+  fixture.client.workspaces.list.mockImplementation(async (options?: { subscribe?: object }) => {
+    if (!options?.subscribe) return workspaceSnapshot;
+    liveQueries.add("workspaces");
+    return {
+      ...workspaceSnapshot,
+      subscription: {
+        release: async () => {
+          liveQueries.delete("workspaces");
+        },
+      },
+    } as never;
+  });
+  const gateway = new ProductionPaseoGateway({
+    host: "127.0.0.1:6767",
+    createClient: () => fixture.client as never,
+  });
+  const app = new ApplicationController(gateway);
+  try {
+    await app.start();
+    expect([...liveQueries]).toEqual(["agents", "workspaces"]);
+    await app.releaseObservations();
+    expect([...liveQueries]).toEqual([]);
+    await app.releaseObservations();
+    expect([...liveQueries]).toEqual([]);
+  } finally {
+    await app.releaseObservations();
+    await gateway.close();
+  }
+});
+
+it("keeps one SDK-owned query per directory through reconnect and delivers each update once", async () => {
+  const fixture = testClient();
+  const agentSnapshot = await fixture.client.agents.list();
+  const workspaceSnapshot = await fixture.client.workspaces.list();
+  const liveQueries = new Map<object, "agents" | "workspaces">();
+  const own = (kind: "agents" | "workspaces") => {
+    const token = {};
+    liveQueries.set(token, kind);
+    return {
+      release: async () => {
+        liveQueries.delete(token);
+      },
+    };
+  };
+  fixture.client.agents.list.mockImplementation(async (options?: { subscribe?: object }) =>
+    options?.subscribe
+      ? ({ ...agentSnapshot, subscription: own("agents") } as never)
+      : agentSnapshot,
+  );
+  fixture.client.workspaces.list.mockImplementation(async (options?: { subscribe?: object }) =>
+    options?.subscribe
+      ? ({ ...workspaceSnapshot, subscription: own("workspaces") } as never)
+      : workspaceSnapshot,
+  );
+  let connection: { status: "connected" | "disconnected" } = { status: "connected" };
+  const client = { ...fixture.client, getConnectionState: () => connection };
+  const gateway = new ProductionPaseoGateway({
+    host: "127.0.0.1:6767",
+    createClient: () => client as never,
+  });
+  const app = new ApplicationController(gateway);
+  let updates = 0;
+  let previous = app.state.directory.workspaces[0];
+  const stop = app.subscribe((state) => {
+    const workspace = state.directory.workspaces[0];
+    if (workspace !== previous && workspace?.title === "After reconnect") updates++;
+    previous = workspace;
+  });
+  try {
+    await app.start();
+    for (let reconnect = 0; reconnect < 2; reconnect++) {
+      connection = { status: "disconnected" };
+      await vi.waitFor(() => expect(app.state.connection).toBe("disconnected"));
+      connection = { status: "connected" };
+      await vi.waitFor(() => expect(app.state.connection).toBe("connected"));
+      expect([...liveQueries.values()]).toEqual(["agents", "workspaces"]);
+    }
+    for (const kind of liveQueries.values())
+      if (kind === "workspaces")
+        fixture.emitWorkspaceDirectory({
+          type: "workspace_update",
+          payload: {
+            workspace: { id: "workspace-1", workspaceDirectory: "/repo", name: "After reconnect" },
+          },
+        });
+    expect(app.state.directory.workspaces[0]?.title).toBe("After reconnect");
+    expect(updates).toBe(1);
+  } finally {
+    stop();
+    await app.releaseObservations();
+    await gateway.close();
+  }
+});
+
+it("releases directory queries if a later observation fails during startup", async () => {
+  const fixture = testClient();
+  const agentSnapshot = await fixture.client.agents.list();
+  const workspaceSnapshot = await fixture.client.workspaces.list();
+  const liveQueries = new Set<string>();
+  fixture.client.agents.list.mockImplementation(async (options?: { subscribe?: object }) => {
+    if (!options?.subscribe) return agentSnapshot;
+    liveQueries.add("agents");
+    return {
+      ...agentSnapshot,
+      subscription: {
+        release: async () => {
+          liveQueries.delete("agents");
+        },
+      },
+    } as never;
+  });
+  fixture.client.workspaces.list.mockImplementation(async (options?: { subscribe?: object }) => {
+    if (!options?.subscribe) return workspaceSnapshot;
+    liveQueries.add("workspaces");
+    return {
+      ...workspaceSnapshot,
+      subscription: {
+        release: async () => {
+          liveQueries.delete("workspaces");
+        },
+      },
+    } as never;
+  });
+  fixture.client.projects.subscribe.mockImplementation(() => {
+    throw new Error("Project observation unavailable");
+  });
+  const gateway = new ProductionPaseoGateway({
+    host: "127.0.0.1:6767",
+    createClient: () => fixture.client as never,
+  });
+  const app = new ApplicationController(gateway);
+  try {
+    await app.start();
+    expect(app.state.connection).toBe("disconnected");
+    expect([...liveQueries]).toEqual([]);
   } finally {
     await app.releaseObservations();
     await gateway.close();
