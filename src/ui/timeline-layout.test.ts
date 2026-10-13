@@ -110,7 +110,7 @@ it.each([
     );
     try {
       const lines = f.terminal.viewport();
-      const mainStart = columns < 70 ? 0 : treeWidth + 2;
+      const mainStart = columns < 70 || columns - treeWidth - 2 < 40 ? 0 : treeWidth + 2;
       const row = lines.findIndex((line) => line.includes("Prompt"));
       const backgrounds = f.terminal.viewportBackgrounds()[row] ?? [];
       const painted = backgrounds.flatMap((color, column) =>

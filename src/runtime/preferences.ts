@@ -5,7 +5,7 @@ import { dirname, join, normalize, resolve } from "node:path";
 import type { AppState, SidebarGrouping, TreeOrder } from "../contracts/app-state.js";
 import { createInitialState } from "../state/store.js";
 import type { ThemeId } from "../ui/capabilities.js";
-import { adjustTreeWidth } from "../ui/layout.js";
+import { adjustTreeWidth, DEFAULT_TREE_WIDTH } from "../ui/layout.js";
 import type { TargetArgument } from "./arguments.js";
 
 export interface TargetPreferences {
@@ -178,7 +178,7 @@ export class PreferenceSession {
       createInitialState(),
       this.preferences.targets[this.scope],
     );
-    this.#treeWidth = this.preferences.targets[this.scope]?.treeWidth ?? 34;
+    this.#treeWidth = this.preferences.targets[this.scope]?.treeWidth ?? DEFAULT_TREE_WIDTH;
     this.#global = this.preferences.global;
     this.#saved = this.encoded();
   }

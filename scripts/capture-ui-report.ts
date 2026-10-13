@@ -5,7 +5,7 @@ import { ApplicationController } from "../src/app/controller.js";
 import type { AppState, SessionDraft } from "../src/contracts/app-state.js";
 import { FakePaseoGateway } from "../src/paseo/fake-gateway.js";
 import type { TerminalAppearance } from "../src/ui/capabilities.js";
-import { NARROW_SIDEBAR_BREAKPOINT } from "../src/ui/layout.js";
+import { DEFAULT_TREE_WIDTH, shellLayout } from "../src/ui/layout.js";
 import { RecordingTerminal } from "../src/ui/terminal.js";
 import { terminalDisplayWidth } from "../src/ui/text-safety.js";
 import { DeckTui } from "../src/ui/views.js";
@@ -125,6 +125,7 @@ const shots: Array<{
   state: AppState;
   appearance?: TerminalAppearance;
   input?: readonly string[];
+  treeWidth?: number;
 }> = [
   ...(
     [
@@ -1752,6 +1753,122 @@ if (focusTerminalShot)
     input: ["i", "\u001b[200~literal i\u001b[201~"],
   });
 
+const sidebarCaptureState: AppState = {
+  ...emptyState,
+  connection: "connected",
+  focus: "tree",
+  treeGrouping: "status",
+  treeOrder: "recent",
+  directory: {
+    ...baseState.directory,
+    projects: [{ id: "sidebar-project", name: "Design systems 界界 with long project metadata" }],
+    workspaces: (["needs_input", "failed", "attention", "running", "done"] as const).map(
+      (status, index) => ({
+        id: `sidebar-${status}`,
+        projectId: "sidebar-project",
+        title:
+          [
+            "Waiting workspace",
+            "Failed workspace",
+            "Unread workspace",
+            "Mixed Working and unread",
+            "Done workspace",
+          ][index] ?? status,
+        status,
+        activityAt:
+          index === 4
+            ? null
+            : new Date(12_000 - ([0, 180_000, 7_200_000, 345_600_000][index] ?? 0)).toISOString(),
+        directory: `/demo/${status}`,
+        archived: false,
+      }),
+    ),
+    agents: [
+      {
+        ...overflowTemplate,
+        id: "sidebar-unread",
+        workspaceId: "sidebar-running",
+        status: "idle",
+        needsAttention: true,
+        attentionReason: "finished",
+      },
+    ],
+  },
+  selectedWorkspaceId: "sidebar-needs_input",
+  sidebarSelection: { kind: "workspace", id: "sidebar-needs_input" },
+  expandedIds: new Set([
+    "sidebar-project",
+    ...["needs_input", "failed", "attention", "running", "done"].map(
+      (status) => `activity:${status}`,
+    ),
+  ]),
+};
+for (const grouping of ["status", "project"] as const) {
+  for (const mode of [
+    "populated",
+    "collapsed",
+    "empty-filter",
+    "long-metadata",
+    "drawer",
+    "short",
+    "plain",
+    "ascii",
+    "light",
+    "frozen-badge",
+  ] as const) {
+    shots.push({
+      name: `sidebar-metadata-${grouping}-${mode}`,
+      columns: mode === "drawer" ? 92 : mode === "long-metadata" ? 90 : 130,
+      rows: mode === "short" ? 12 : 45,
+      ...(mode === "long-metadata" ? { treeWidth: 18 } : {}),
+      appearance:
+        mode === "ascii"
+          ? { color: "none", unicode: false, theme: "plain", symbols: "ascii" }
+          : mode === "plain"
+            ? { color: "none", unicode: true, theme: "plain", symbols: "unicode" }
+            : mode === "light"
+              ? { ...sampledTerminalAppearance, background: [240, 230, 220] }
+              : sampledTerminalAppearance,
+      state: {
+        ...sidebarCaptureState,
+        treeGrouping: grouping,
+        ...(mode === "collapsed"
+          ? {
+              expandedIds: new Set<string>(),
+              sidebarSelection: {
+                kind: grouping === "status" ? ("activity" as const) : ("project" as const),
+                id: grouping === "status" ? "activity:needs_input" : "sidebar-project",
+              },
+            }
+          : {}),
+        ...(mode === "empty-filter" ? { filter: "no matching workspace" } : {}),
+        ...(mode === "frozen-badge"
+          ? {
+              directory: {
+                ...sidebarCaptureState.directory,
+                workspaces: sidebarCaptureState.directory.workspaces.map((workspace) =>
+                  workspace.id === "sidebar-running"
+                    ? { ...workspace, status: "failed" as const }
+                    : workspace,
+                ),
+              },
+              sidebarGroups: Object.fromEntries(
+                sidebarCaptureState.directory.workspaces.map((workspace) => [
+                  workspace.id,
+                  grouping === "status" ? `activity:${workspace.status}` : "sidebar-project",
+                ]),
+              ),
+              sidebarOrder: sidebarCaptureState.directory.workspaces.map(
+                (workspace) => workspace.id,
+              ),
+            }
+          : {}),
+      },
+      ...(mode === "short" ? { input: ["G"] } : {}),
+    });
+  }
+}
+
 // Populate interactive Composer selections through actual editing so cursor history is reproducible.
 for (const shot of shots) {
   if (!shot.name.startsWith("composer-visual")) continue;
@@ -1794,6 +1911,7 @@ for (const shot of shots.filter(
     },
     {
       appearance: shot.appearance ?? sampledTerminalAppearance,
+      ...(shot.treeWidth === undefined ? {} : { treeWidth: shot.treeWidth }),
       renderClock: {
         now: () => clockMilliseconds,
         setTimeout: (callback) => {
@@ -1896,8 +2014,9 @@ for (const shot of shots.filter(
       shot.columns,
       shot.rows,
       `Paseo Deck ${shot.name.replaceAll("-", " ")}`,
-      shot.columns >= NARROW_SIDEBAR_BREAKPOINT && (shot.appearance?.theme ?? "ember") === "ember"
-        ? { columns: 34, color: "#1f1d1b" }
+      !shellLayout(shot.columns, shot.rows, shot.treeWidth ?? DEFAULT_TREE_WIDTH).narrow &&
+        (shot.appearance?.theme ?? "ember") === "ember"
+        ? { columns: shot.treeWidth ?? DEFAULT_TREE_WIDTH, color: "#1f1d1b" }
         : undefined,
       cursor,
     ),
@@ -1908,6 +2027,8 @@ for (const shot of shots.filter(
 await writeFile(join(outputDirectory, "manifest.json"), JSON.stringify(manifest, null, 2));
 
 function captureRequirements(name: string): string {
+  if (name.startsWith("sidebar-metadata-"))
+    return "#98/#99; native buckets, two-line metadata, folder pills, compact age, decorative spacing, frozen positions and responsive Sidebar";
   if (name.startsWith("provider-completion-"))
     return "#103 provider-scoped Insert completion; eligibility, selection, anchoring and constrained layouts";
   if (name.startsWith("workspace-focus"))

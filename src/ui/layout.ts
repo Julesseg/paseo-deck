@@ -1,7 +1,8 @@
 export const MIN_TERMINAL_COLUMNS = 30;
 export const MIN_TERMINAL_ROWS = 12;
 export const MIN_TREE_WIDTH = 18;
-export const MAX_TREE_WIDTH = 48;
+export const DEFAULT_TREE_WIDTH = 51;
+export const MAX_TREE_WIDTH = 72;
 export const NARROW_SIDEBAR_BREAKPOINT = 70;
 export const NARROW_SIDEBAR_WIDTH = "90%";
 
@@ -20,7 +21,9 @@ export function shellLayout(
   return {
     supported: columns >= MIN_TERMINAL_COLUMNS && rows >= MIN_TERMINAL_ROWS,
     treeWidth: adjustTreeWidth(requestedTreeWidth, 0),
-    narrow: columns < NARROW_SIDEBAR_BREAKPOINT,
+    narrow:
+      columns < NARROW_SIDEBAR_BREAKPOINT ||
+      columns - adjustTreeWidth(requestedTreeWidth, 0) - 2 < 40,
   };
 }
 

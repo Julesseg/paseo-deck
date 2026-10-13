@@ -43,6 +43,7 @@ async function fixture(text = "", events?: TimelineEvent[], columns = 90) {
       void app.handleIntent(intent);
     },
     {
+      treeWidth: 34,
       openLink: (url) => {
         opened.push(url);
       },
