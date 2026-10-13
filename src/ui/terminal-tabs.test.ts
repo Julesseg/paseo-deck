@@ -16,14 +16,12 @@ describe("workspace terminal tabs", () => {
     expect(tabs.active?.terminal.name).toBe("build");
   });
 
-  it("forwards only insert-mode input and keeps close separate from kill", async () => {
+  it("immediately forwards literal input and keeps close separate from kill", async () => {
     const gateway = new FakePaseoGateway(emptyDirectory());
     await gateway.connect();
     const terminal = await gateway.createTerminal("workspace-1");
     const tabs = new TerminalTabs();
     await tabs.open(gateway, terminal);
-    tabs.input(gateway, "ignored");
-    tabs.setMode("insert");
     tabs.input(gateway, "literal\u001b[A");
     expect(gateway.terminalInput).toEqual([{ terminalId: terminal.id, data: "literal\u001b[A" }]);
     tabs.close();

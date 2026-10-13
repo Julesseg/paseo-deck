@@ -56,7 +56,8 @@ export function targetFromDaemonStatus(input: PaseoTargetInput, status: DaemonSt
   return {
     websocketUrl: websocketUrlForTcpTarget(status.listen),
     ...(input.password === undefined ? {} : { password: input.password }),
-    cliArguments: home === undefined ? [] : ["--home", home],
+    // Installed 0.8 resource commands accept --host; --home belongs to daemon commands.
+    cliArguments: ["--host", status.listen],
     originalTarget: home === undefined ? status.listen : home,
   };
 }

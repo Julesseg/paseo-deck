@@ -180,9 +180,15 @@ export class DeckTheme {
   /** Adds a background behind trusted Deck-rendered output. */
   styleRenderedBackground(tone: BackgroundTone, value: string): string {
     const safe = value;
-    // A terminal palette belongs to its owner. Do not turn semantic surfaces
-    // into bright ANSI swatches on a background we cannot inspect.
-    if (!this.supportsBackground()) return safe;
+    // Unknown terminal colours still need visible focus/selection. Reverse video
+    // uses the host's own foreground/background; underline distinguishes a Visual
+    // span from its enclosing current row without guessing a light/dark scheme.
+    if (this.appearance.color === "none" || this.appearance.theme === "plain") return safe;
+    if (!this.supportsBackground()) {
+      if (tone !== "selection" && tone !== "tab-active") return safe;
+      const prefix = `\u001b[${tone === "tab-active" ? "4;7" : "7"}m`;
+      return `${prefix}${safe.replaceAll("\u001b[0m", `\u001b[0m${prefix}`)}\u001b[0m`;
+    }
     const prefix = this.backgroundPrefix(tone);
     // Nested foreground styling resets SGR. Reapply the surface so an outer
     // panel background survives its labels without leaking beyond the line.

@@ -12,7 +12,6 @@ import type { TerminalProfile, TerminalRecord } from "./terminal.js";
 export type FocusArea = "tree" | "timeline" | "composer";
 export type ComposerMode = "normal" | "insert" | "visual";
 export type TimelineMode = "normal" | "visual";
-export type TerminalMode = "normal" | "insert";
 export type TreeOrder = "attention" | "alphabetical";
 export type SidebarSelection = { kind: "project" | "workspace"; id: string };
 export type TabId = `session:${string}` | `terminal:${string}` | `draft:${string}`;
@@ -26,6 +25,7 @@ export interface SessionDraft {
   settingsDirty?: boolean | undefined;
   error?: string | undefined;
   submitting?: boolean | undefined;
+  createdAgentId?: string;
 }
 
 export interface LaunchDraft extends SessionDraft {
@@ -33,11 +33,17 @@ export interface LaunchDraft extends SessionDraft {
   command: string;
   profileId?: string | undefined;
   profiles?: readonly TerminalProfile[];
-  createdAgentId?: string;
   createdTerminal?: TerminalRecord;
 }
 
 export interface NewWorkspaceDraft {
+  generation?: number;
+  previousView?: {
+    workspaceId?: string | undefined;
+    tabId?: TabId | undefined;
+    focus: FocusArea;
+    composerMode?: ComposerMode | undefined;
+  };
   placement?: "local" | "worktree";
   placementOptions?: WorkspacePlacement;
   placementLoading?: boolean;
@@ -56,10 +62,16 @@ export type ModalState =
   | { type: "new-workspace-placement" }
   | { type: "new-workspace-base" }
   | { type: "launch-profile"; workspaceId: string }
-  | { type: "notifications"; index: number }
+  | { type: "notifications"; index: number; noticeId?: number }
   | { type: "filter"; query: string }
   | { type: "create-terminal"; workspaceId: string; name: string; error?: string }
-  | { type: "new-tab"; workspaceId: string; profiles?: readonly TerminalProfile[] }
+  | {
+      type: "new-tab";
+      firstTab?: boolean;
+      workspaceId: string;
+      profiles?: readonly TerminalProfile[];
+      createdTerminalId?: string;
+    }
   | {
       type: "draft-setting";
       workspaceId: string;
@@ -67,11 +79,22 @@ export type ModalState =
     }
   | {
       type: "confirm";
-      action: "stop" | "archive" | "detach" | "kill-terminal" | "discard-draft" | "quit";
+      action:
+        | "archive-workspace"
+        | "stop"
+        | "archive"
+        | "detach"
+        | "kill-terminal"
+        | "discard-draft"
+        | "quit";
       agentId?: string;
       workspaceId?: string;
       terminalId?: string;
       draftWarning?: boolean;
+      id?: number;
+      label?: string;
+      busy?: boolean;
+      unavailableReason?: string;
     }
   | {
       type: "permission";
@@ -94,10 +117,32 @@ export type ModalState =
       error?: string;
       submitting?: boolean;
     }
-  | { type: "rename"; agentId: string; value: string }
+  | {
+      type: "rename";
+      agentId: string;
+      workspaceId?: string;
+      terminalId?: string;
+      value: string;
+      label?: string;
+      id?: number;
+      busy?: boolean;
+      error?: string;
+    }
+  | {
+      type: "session-setting";
+      agentId: string;
+      setting: "model" | "mode" | "thinking";
+      busy?: boolean;
+      error?: string;
+    }
   | { type: "mode"; agentId: string }
   | { type: "thinking"; agentId: string }
-  | { type: "error-details"; message: string; detail: string };
+  | {
+      type: "error-details";
+      message: string;
+      detail: string;
+      origin?: Extract<ModalState, { type: "notifications" }>;
+    };
 
 export interface FocusedTimelineState {
   agentId?: string;
@@ -202,7 +247,6 @@ export interface AppState {
   /** Workspaces observed with a resource during this run, including resources since removed. */
   workspaceHadResources?: ReadonlySet<string>;
   activeTerminalId?: string;
-  terminalMode?: TerminalMode;
   terminalLines?: Readonly<Record<string, readonly string[]>>;
   terminalScrollTop?: Readonly<Record<string, number>>;
   staleTerminalIds?: ReadonlySet<string>;

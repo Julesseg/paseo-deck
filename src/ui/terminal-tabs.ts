@@ -8,10 +8,8 @@ import type {
 } from "../contracts/terminal.js";
 import { sanitizeTerminalText } from "./text-safety.js";
 
-export type TerminalMode = "normal" | "insert";
 export interface TerminalTab {
   terminal: TerminalRecord;
-  mode: TerminalMode;
   lines: readonly string[];
   connected: boolean;
   stale: boolean;
@@ -58,7 +56,6 @@ export class TerminalTabs {
     const capture = await gateway.captureTerminal(terminal.id, { start: -2000 });
     const tab: TerminalTab = {
       terminal,
-      mode: "normal",
       lines: safeLines(capture),
       connected: true,
       stale: false,
@@ -104,13 +101,9 @@ export class TerminalTabs {
     this.close(terminalId);
   }
 
-  setMode(mode: TerminalMode): void {
-    if (this.active) this.#tabs.set(this.active.terminal.id, { ...this.active, mode });
-  }
-
   input(gateway: TerminalGateway, data: string): void {
     const tab = this.active;
-    if (tab?.mode !== "insert") return;
+    if (!tab) return;
     gateway.sendTerminalInput(tab.terminal.id, data);
   }
 

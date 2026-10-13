@@ -1,8 +1,10 @@
+import { isKeyRelease, matchesKey } from "@earendil-works/pi-tui";
 import type { AppState, FocusArea, ModalState } from "../contracts/app-state.js";
 import type { AgentCommand } from "../contracts/commands.js";
 import { activeSessionDraftWorkspaceId } from "../state/composer.js";
-import { activeLaunchWorkspaceId, launchDraft } from "../state/launch.js";
-import { commandById, commandForKey, newTabUnavailableReason } from "./commands.js";
+import { activeLaunchWorkspaceId } from "../state/launch.js";
+import { commandById, commandForKey } from "./commands.js";
+import { isCharacter } from "./text-buffer.js";
 
 const timelineTextMotionKeys = [
   "h",
@@ -18,17 +20,13 @@ const timelineTextMotionKeys = [
   "0",
   "^",
   "$",
-  "+",
-  "-",
   "_",
-  "|",
   "%",
   "(",
   ")",
   "{",
   "}",
 ] as const;
-type TimelineTextMotionKey = (typeof timelineTextMotionKeys)[number];
 
 export type UiIntent =
   | { type: "open-new-workspace" }
@@ -53,19 +51,20 @@ export type UiIntent =
   | { type: "reconnect-terminal" }
   | { type: "open-create-terminal"; workspaceId: string }
   | { type: "open-new-tab"; workspaceId: string }
+  | { type: "open-workspace-session-draft"; workspaceId: string }
   | {
       type: "new-tab-choice";
       choice: { kind: "session" } | { kind: "terminal" } | { kind: "profile"; profileId: string };
     }
   | { type: "discard-session-draft"; workspaceId: string }
   | { type: "discard-session-draft-confirmed"; workspaceId: string }
+  | { type: "open-session-setting"; setting: "provider" | "model" | "mode" | "thinking" }
   | { type: "open-draft-setting"; setting: "provider" | "model" | "mode" | "thinking" }
   | { type: "draft-setting-choice"; choice: string }
   | { type: "submit-session-draft"; workspaceId: string; prompt: string }
   | { type: "quit-confirmed" }
   | { type: "set-terminal-name"; name: string }
   | { type: "submit-terminal-name" }
-  | { type: "set-terminal-mode"; mode: "normal" | "insert" }
   | { type: "terminal-input"; data: string }
   | { type: "select-next"; direction: -1 | 1 }
   | { type: "select-boundary"; boundary: "start" | "end" }
@@ -88,11 +87,13 @@ export type UiIntent =
   | { type: "creation-back" }
   | {
       type: "open-confirmation";
-      action: "stop" | "archive" | "detach" | "kill-terminal";
+      action: "archive-workspace" | "stop" | "archive" | "detach" | "kill-terminal";
+      workspaceId?: string;
       agentId?: string;
       terminalId?: string;
     }
   | { type: "open-rename"; agentId: string }
+  | { type: "open-resource-rename"; workspaceId: string; terminalId?: string }
   | { type: "open-mode"; agentId: string }
   | { type: "open-thinking"; agentId: string }
   | { type: "open-error-details"; message: string; detail: string }
@@ -123,17 +124,15 @@ export type UiIntent =
   | { type: "timeline-repeat-find"; reverse: boolean }
   | { type: "timeline-viewport-motion"; key: "H" | "M" | "L"; count: number }
   | { type: "timeline-page"; direction: -1 | 1 }
-  | { type: "timeline-scroll-viewport"; direction: -1 | 1 }
-  | { type: "timeline-align"; position: "top" | "middle" | "bottom" }
-  | { type: "timeline-mark-set"; mark: string }
-  | { type: "timeline-mark-jump"; mark: string; linewise: boolean }
-  | { type: "timeline-jump-history"; direction: -1 | 1; count: number }
-  | { type: "timeline-word-search"; key: "*" | "#" | "g*" | "g#"; count: number }
-  | { type: "timeline-visual"; selection: "character" | "line" | "block" }
+  | { type: "timeline-word-search"; key: "*" | "#"; count: number }
+  | { type: "timeline-visual"; selection: "character" | "line" }
   | { type: "timeline-search-text"; query: string; direction: -1 | 1 }
-  | { type: "timeline-repeat-search"; direction: -1 | 1 }
-  | { type: "timeline-yank" }
-  | { type: "timeline-yank-object"; object: "line" | "event" }
+  | { type: "timeline-repeat-search"; direction: -1 | 1; count?: number }
+  | { type: "timeline-yank"; rows?: boolean }
+  | { type: "timeline-swap-endpoints" }
+  | { type: "timeline-reselect" }
+  | { type: "timeline-yank-motion"; key: string; count?: number; character?: string }
+  | { type: "timeline-yank-object"; object: "line" | "event"; count?: number }
   | {
       type: "timeline-text-object";
       object: string;
@@ -156,21 +155,239 @@ export type UiIntent =
   | { type: "submit-composer"; agentId: string; prompt: string }
   | { type: "set-composer-text"; text: string }
   | { type: "navigate-composer-history"; direction: -1 | 1 }
-  | { type: "open-timeline-search"; direction?: -1 | 1 }
+  | { type: "open-timeline-search"; direction?: -1 | 1; count?: number }
+  | { type: "open-composer-search"; direction: -1 | 1; count: number }
   | { type: "notify"; message: string; kind?: "info" | "error" }
   | { type: "create-choice"; choice: string };
 
 export class DeckController {
+  #settingsPrefix = false;
   #tabPrefix = "";
-  #tabCountPrefix = "";
+  #timelineOperatorCount: number | undefined;
   #timelinePrefix = "";
   #timelineCount = "";
-  #bufferLeader = false;
   #timelineSearchDirection: -1 | 1 = 1;
   constructor(
     private readonly getState: () => AppState,
     private readonly emit: (intent: UiIntent) => void,
   ) {}
+
+  get hasPendingTimelineInput(): boolean {
+    return Boolean(
+      this.#timelinePrefix || this.#timelineCount || this.#timelineOperatorCount !== undefined,
+    );
+  }
+
+  cancelPendingInput(): void {
+    this.#settingsPrefix = false;
+    this.#tabPrefix = "";
+    this.#timelinePrefix = "";
+    this.#timelineCount = "";
+    this.#timelineOperatorCount = undefined;
+  }
+
+  private handleTimelineKey(data: string, state: AppState): boolean {
+    const visual = state.timelineMode === "visual";
+    const pending = this.#timelinePrefix;
+    const hasCount = Boolean(this.#timelineCount) || this.#timelineOperatorCount !== undefined;
+    const repetitions = (): number | undefined => {
+      const value = hasCount
+        ? Math.max(1, Number(this.#timelineCount || 1)) * (this.#timelineOperatorCount ?? 1)
+        : undefined;
+      this.#timelineCount = "";
+      this.#timelineOperatorCount = undefined;
+      return value;
+    };
+    const done = (intent?: UiIntent): boolean => {
+      this.cancelPendingInput();
+      return intent ? this.send(intent) : true;
+    };
+    if (data === "\u001b") {
+      if (pending || hasCount) return done();
+      return done(
+        visual
+          ? { type: "set-timeline-mode", mode: "normal" }
+          : { type: "set-focus", focus: "composer" },
+      );
+    }
+    if (data === "\r" || data === "\n") return done();
+    const yank = pending.startsWith("y");
+    const prefix = yank ? pending.slice(1) : pending;
+    const motion = (key: string): boolean => {
+      if (key === "%" && hasCount) return done();
+      const count = repetitions();
+      return done(
+        yank
+          ? { type: "timeline-yank-motion", key, ...(count === undefined ? {} : { count }) }
+          : { type: "move-timeline-text", key, ...(count === undefined ? {} : { count }) },
+      );
+    };
+    if (["f", "F", "t", "T"].includes(prefix)) {
+      const count = repetitions() ?? 1;
+      if (!isCharacter(data)) return done();
+      return done(
+        yank
+          ? { type: "timeline-yank-motion", key: prefix, count, character: data }
+          : {
+              type: "timeline-find-character",
+              key: prefix as "f" | "F" | "t" | "T",
+              character: data,
+              count,
+            },
+      );
+    }
+    if (prefix === "i" || prefix === "a") {
+      if (
+        ![
+          "w",
+          "W",
+          "s",
+          "p",
+          "q",
+          "b",
+          "B",
+          '"',
+          "'",
+          "`",
+          "(",
+          ")",
+          "[",
+          "]",
+          "{",
+          "}",
+          "<",
+          ">",
+        ].includes(data)
+      )
+        return done();
+      if (hasCount) return done();
+      return done({
+        type: "timeline-text-object",
+        object: data,
+        around: prefix === "a",
+        action: yank ? "yank" : "select",
+        count: 1,
+      });
+    }
+    if (/^[0-9]$/u.test(data) && (data !== "0" || this.#timelineCount)) {
+      this.#timelineCount += data;
+      return true;
+    }
+    if (prefix === "g") {
+      if (data === "?" && !yank && !hasCount) return done({ type: "open-help" });
+      if (data === "v" && !yank && !hasCount) return done({ type: "timeline-reselect" });
+      if (data === "x" && !yank && !visual && !hasCount)
+        return done({ type: "timeline-open-link" });
+      if ((data === "t" || data === "T") && !yank && !visual) {
+        const count = repetitions();
+        return done({
+          type: "switch-tab",
+          direction: data === "t" ? 1 : -1,
+          ...(count === undefined ? {} : { count }),
+        });
+      }
+      if (["g", "e", "E", "_", "0", "$", "^", "j", "k"].includes(data)) return motion(`g${data}`);
+      return done();
+    }
+    if (prefix === "[" || prefix === "]") {
+      if ((data === "t" || data === "e") && !yank && !visual && !hasCount)
+        return done({
+          type: "move-timeline-landmark",
+          direction: prefix === "[" ? -1 : 1,
+          kind: data === "t" ? "turn" : "error",
+        });
+      if (data === "[" || data === "]") return motion(prefix + data);
+      return done();
+    }
+    if (prefix === "z")
+      return done(data === "a" && !visual && !hasCount ? { type: "timeline-fold" } : undefined);
+    if (pending && pending !== "y") return done();
+    if (["g", "[", "]", "f", "F", "t", "T"].includes(data)) {
+      this.#timelinePrefix = `${yank ? "y" : ""}${data}`;
+      return true;
+    }
+    if ((yank || visual) && (data === "i" || data === "a")) {
+      this.#timelinePrefix = `${yank ? "y" : ""}${data}`;
+      return true;
+    }
+    if ((data === "y" || data === "Y") && state.timeline.items.length) {
+      const count = repetitions() ?? 1;
+      if (visual) return done(hasCount ? undefined : { type: "timeline-yank", rows: data === "Y" });
+      if (data === "Y" || yank)
+        return done({
+          type: "timeline-yank-object",
+          object: "line",
+          ...(hasCount ? { count } : {}),
+        });
+      this.#timelineOperatorCount = hasCount ? count : undefined;
+      this.#timelinePrefix = "y";
+      return true;
+    }
+    const alias = (
+      {
+        "\u001b[A": "k",
+        "\u001b[B": "j",
+        "\u001b[C": "l",
+        "\u001b[D": "h",
+        "\u007f": "h",
+        "\b": "h",
+        " ": "l",
+      } as Record<string, string>
+    )[data];
+    if (alias) return motion(alias);
+    if (
+      (timelineTextMotionKeys as readonly string[]).includes(data) ||
+      data === "G" ||
+      data === ";" ||
+      data === ","
+    )
+      return motion(data);
+    if (yank) return done();
+    if (["H", "M", "L"].includes(data)) {
+      if (data === "M" && hasCount) return done();
+      const count = repetitions() ?? 1;
+      return done({ type: "timeline-viewport-motion", key: data as "H" | "M" | "L", count });
+    }
+    if ((data === "v" || data === "V") && !hasCount)
+      return done({ type: "timeline-visual", selection: data === "v" ? "character" : "line" });
+    if ((data === "o" || data === "O") && visual && !hasCount)
+      return done({ type: "timeline-swap-endpoints" });
+    const searchCount = repetitions() ?? 1;
+    if (data === "/" || data === "?") {
+      this.#timelineSearchDirection = data === "/" ? 1 : -1;
+      return done({
+        type: "open-timeline-search",
+        direction: this.#timelineSearchDirection,
+        ...(hasCount ? { count: searchCount } : {}),
+      });
+    }
+    if (data === "*" || data === "#") {
+      this.#timelineSearchDirection = data === "*" ? 1 : -1;
+      return done({ type: "timeline-word-search", key: data, count: searchCount });
+    }
+    if (data === "n" || data === "N")
+      return done({
+        type: "timeline-repeat-search",
+        ...(hasCount ? { count: searchCount } : {}),
+        direction: data === "n" ? 1 : -1,
+      });
+    if (hasCount) return done();
+    if (["\u0006", "\u0002", "\u001b[5~", "\u001b[6~"].includes(data))
+      return done({
+        type: "timeline-page",
+        direction: data === "\u0006" || data === "\u001b[6~" ? 1 : -1,
+      });
+    if (data === "z" && !visual) {
+      this.#timelinePrefix = "z";
+      return true;
+    }
+    if (!visual) {
+      const command = commandForKey(state, data);
+      if (command && ["stop-agent", "archive-agent"].includes(command.id))
+        return this.sendResolved(command, state);
+    }
+    return done();
+  }
 
   handleKey(data: string): boolean {
     const state = this.getState();
@@ -178,118 +395,100 @@ export class DeckController {
       this.#timelinePrefix = "";
       this.#timelineCount = "";
     }
-    // This must precede terminal passthrough as well as every editor, modal,
-    // and focus branch. In raw mode Ctrl-C is Deck's unconditional exit key.
-    if (data === "\u0003") return this.send({ type: "quit" });
-    const bufferMode =
-      state.modal.type === "none" &&
-      ((state.focus === "composer" && state.composerMode !== "insert") ||
-        (state.focus === "timeline" && !state.activeTerminalId));
-    if (!bufferMode) this.#bufferLeader = false;
-    if (bufferMode && this.#bufferLeader) {
-      this.#bufferLeader = false;
-      if (data === "\u001b") return true;
-      if (state.newWorkspace && state.focus === "composer") {
-        if (data === "j") return this.send({ type: "open-new-workspace-project" });
-        if (data === "w") return this.send({ type: "open-new-workspace-placement" });
-        if (data === "b") return this.send({ type: "open-new-workspace-base" });
-        if (data === "n") return this.send({ type: "open-new-workspace-title" });
+    if (state.activeTerminalId && state.focus === "timeline" && state.modal.type === "none") {
+      if (matchesKey(data, "ctrl+s")) {
+        if (isKeyRelease(data)) return true;
+        this.cancelPendingInput();
+        return this.send({ type: "set-focus", focus: "tree" });
       }
-      const key = `\\${data}`;
-      const launchId = activeLaunchWorkspaceId(state);
-      if (state.focus === "composer" && launchId) {
-        if (data === "c") return this.send({ type: "toggle-launch-kind" });
-        if (launchDraft(state, launchId).kind === "terminal") {
-          if (data === "p") return this.send({ type: "open-launch-profile" });
-          if (["m", "z", "o"].includes(data)) return true;
-        }
-      }
-      if (state.focus === "composer" && (activeSessionDraftWorkspaceId(state) || launchId)) {
-        const setting = ({ p: "provider", m: "model", z: "thinking", o: "mode" } as const)[
-          data as "p" | "m" | "z" | "o"
-        ];
-        if (setting) return this.send({ type: "open-draft-setting", setting });
-      }
-      return this.sendResolved(commandForKey(state, key), state) || true;
-    }
-    if (bufferMode && data === "\\") {
-      this.#bufferLeader = true;
-      return true;
-    }
-    const tabNormalMode =
-      state.modal.type === "none" &&
-      (state.focus === "tree" ||
-        (state.focus === "timeline" && state.activeTerminalId && state.terminalMode !== "insert"));
-    if (
-      data === "T" &&
-      !bufferMode &&
-      !this.#tabPrefix &&
-      !newTabUnavailableReason(state) &&
-      state.selectedWorkspaceId
-    )
-      return this.send({ type: "open-new-tab", workspaceId: state.selectedWorkspaceId });
-    if (
-      tabNormalMode &&
-      !this.#tabPrefix &&
-      /^[0-9]$/.test(data) &&
-      (this.#tabCountPrefix || data !== "0")
-    ) {
-      this.#tabCountPrefix += data;
-      return true;
-    }
-    if (tabNormalMode && data === "g" && this.#tabCountPrefix) {
-      this.#tabPrefix = `g${this.#tabCountPrefix}`;
-      this.#tabCountPrefix = "";
-      return true;
-    }
-    if (data !== "g") this.#tabCountPrefix = "";
-    if (tabNormalMode && this.#tabPrefix.startsWith("g")) {
-      if (/^[0-9]$/.test(data)) {
-        this.#tabPrefix += data;
-        return true;
-      }
-      const countText = this.#tabPrefix.slice(1);
-      this.#tabPrefix = "";
-      if (data === "t" || data === "T") {
-        this.#timelinePrefix = "";
+      if (matchesKey(data, "ctrl+tab") || matchesKey(data, "ctrl+shift+tab")) {
+        if (isKeyRelease(data)) return true;
         return this.send({
           type: "switch-tab",
-          direction: data === "t" ? 1 : -1,
-          ...(countText ? { count: Number(countText) } : {}),
+          direction: matchesKey(data, "ctrl+shift+tab") ? -1 : 1,
         });
       }
-      if (data === "c") {
-        const workspaceId = state.selectedWorkspaceId;
-        if (workspaceId && state.sessionDrafts[workspaceId])
-          return this.send({ type: "discard-session-draft", workspaceId });
+      return this.send({ type: "terminal-input", data });
+    }
+    // Outside direct Terminal input, Ctrl-C belongs to Deck before editors
+    // and overlays can interpret it.
+    if (data === "\u0003") return this.send({ type: "quit" });
+    if (data === "\u0010") return this.send({ type: "open-command-palette" });
+    if (data === "\u0013") {
+      if (state.focus !== "tree") {
+        this.cancelPendingInput();
+        return this.send({ type: "set-focus", focus: "tree" });
+      }
+      return true;
+    }
+    if (data === "\u000b" && state.modal.type === "none") {
+      if (
+        state.selectedAgentId &&
+        !activeSessionDraftWorkspaceId(state) &&
+        !activeLaunchWorkspaceId(state) &&
+        state.focus !== "timeline"
+      ) {
+        this.cancelPendingInput();
+        return this.send({ type: "set-focus", focus: "timeline" });
+      }
+      return true;
+    }
+    if ((data === "\u0015" || data === "\u0004") && !state.activeTerminalId) {
+      this.cancelPendingInput();
+      return this.send({ type: "scroll-timeline", direction: data === "\u0015" ? -1 : 1 });
+    }
+    if (state.focus === "tree" && state.modal.type === "none") {
+      // Consume removed aliases before inherited fullscreen scrolling can act.
+      if (
+        (
+          [
+            "pageUp",
+            "pageDown",
+            "ctrl+up",
+            "ctrl+down",
+            "ctrl+shift+up",
+            "ctrl+shift+down",
+          ] as const
+        ).some((key) => matchesKey(data, key))
+      )
+        return true;
+      if (this.#tabPrefix === "g") {
+        this.#tabPrefix = "";
+        if (data === "g") return this.send({ type: "select-boundary", boundary: "start" });
+        if (data === "?") return this.send({ type: "open-help" });
         return true;
       }
-      if (data === "k" && state.activeTerminalId) return this.send({ type: "kill-terminal" });
-    }
-    if (
-      state.activeTerminalId !== undefined &&
-      state.terminalMode !== undefined &&
-      state.terminalLines !== undefined &&
-      state.focus === "timeline" &&
-      state.modal.type === "none"
-    ) {
-      if (data === "\u001b")
-        return state.terminalMode === "insert"
-          ? this.send({ type: "set-terminal-mode", mode: "normal" })
-          : this.send({ type: "set-focus", focus: "tree" });
-      if (state.terminalMode === "insert") return this.send({ type: "terminal-input", data });
-      if (data === "i") return this.send({ type: "set-terminal-mode", mode: "insert" });
-      if (data === "q" || data === "n") return this.send({ type: "set-focus", focus: "tree" });
       if (data === "g") {
         this.#tabPrefix = "g";
         return true;
       }
-      if (data === "\u001b[A" || data === "\u001b[B" || data === "\u0004" || data === "\u0015")
-        return this.send({
-          type: "scroll-terminal",
-          direction: data === "\u001b[A" || data === "\u0015" ? -1 : 1,
-        });
-      if (data === "r") return this.send({ type: "reconnect-terminal" });
+    }
+    const normalBuffer =
+      state.modal.type === "none" &&
+      (!state.activeTerminalId || Boolean(state.newWorkspace)) &&
+      ((state.focus === "composer" && state.composerMode === "normal") ||
+        (state.focus === "timeline" && (state.timelineMode ?? "normal") === "normal"));
+    if (normalBuffer && ["\u0014", "\u0018", "\u0001"].includes(data)) {
+      this.cancelPendingInput();
+      return this.sendResolved(commandForKey(state, data), state);
+    }
+    if (!normalBuffer) this.#settingsPrefix = false;
+    if (normalBuffer && this.#settingsPrefix) {
+      this.#settingsPrefix = false;
+      if (state.newWorkspace && state.focus === "composer") {
+        if (data === "d") return this.send({ type: "open-new-workspace-project" });
+        if (data === "w") return this.send({ type: "open-new-workspace-placement" });
+        if (data === "b") return this.send({ type: "open-new-workspace-base" });
+      }
+      const setting = ({ p: "provider", m: "model", t: "thinking", o: "mode" } as const)[
+        data as "p"
+      ];
+      if (setting) return this.send({ type: "open-session-setting", setting });
+      return true;
+    }
+    if (normalBuffer && data === "m" && !this.hasPendingTimelineInput) {
+      this.#settingsPrefix = true;
+      return true;
     }
     // ProcessTerminal enables raw mode, so Ctrl+C is delivered as input rather
     // than raising SIGINT. It must remain a global escape hatch even while an
@@ -302,10 +501,17 @@ export class DeckController {
       (global?.id === "help" && !(state.focus === "composer" && state.composerMode === "insert"))
     )
       return this.send(global.intent(state));
+    if (
+      ["permission", "notifications", "error-details", "help"].includes(state.modal.type) &&
+      data === "\u001b"
+    )
+      return this.send({ type: "close-modal" });
     if (state.modal.type === "permission") {
-      if (state.modal.submitting) return true;
+      if (data === "\u001b") return this.send({ type: "close-modal" });
+      if (state.modal.submitting && ["a", "d", "r"].includes(data)) return true;
       return this.sendResolved(global, state);
     }
+    if (state.modal.type === "help" || state.modal.type === "error-details") return false;
     if (state.modal.type === "notifications") {
       return this.sendResolved(global, state);
     }
@@ -316,6 +522,7 @@ export class DeckController {
     if (
       state.modal.type === "new-tab" ||
       state.modal.type === "draft-setting" ||
+      state.modal.type === "session-setting" ||
       state.modal.type === "launch-profile" ||
       state.modal.type === "new-workspace-project" ||
       state.modal.type === "new-workspace-placement" ||
@@ -334,6 +541,7 @@ export class DeckController {
         return this.send({ type: "set-terminal-name", name: state.modal.name + data });
       return true;
     }
+    if (isTextEditing(state.modal)) return false;
     // Ctrl-K/Cmd-P, help, and quit are explicit global precedence paths. The
     // composer otherwise behaves like a Vim buffer: normal mode owns commands,
     // insert mode yields ordinary bytes to the editor.
@@ -345,22 +553,11 @@ export class DeckController {
         if (state.composerMode === undefined)
           return this.send({ type: "set-focus", focus: "tree" });
         if (mode !== "normal") return this.send({ type: "set-composer-mode", mode: "normal" });
-        if (state.newWorkspace) return this.send({ type: "cancel-new-workspace" });
+
         return true;
       }
       if (global?.id === "command-palette") return this.send(global.intent(state));
-      if (mode === "insert") {
-        if (global?.id === "composer-history-previous" || global?.id === "composer-history-next")
-          return this.send(global.intent(state));
-        if (data === "\u001b[5~" || data === "\u001b[6~")
-          return this.send({
-            type: "scroll-timeline",
-            direction: data === "\u001b[6~" ? 1 : -1,
-          });
-        if (data === "\u001b[1;5A" || data === "\u001b[1;5B")
-          return this.send({ type: "scroll-timeline", direction: data === "\u001b[1;5A" ? -1 : 1 });
-        return false;
-      }
+      if (mode === "insert") return false;
       // The composer owns all normal and visual bytes. Its Vim reducer handles
       // prefixes, motions, operators, selection, and edits together.
       if (mode === "visual" || mode === "normal") return false;
@@ -370,251 +567,8 @@ export class DeckController {
     // Timeline navigation is a rendered-text buffer. Keep its keys local
     // before resolving the broader command registry (where j/k/g/G/Enter/y
     // also have unrelated meanings in other regions).
-    if (state.modal.type === "none" && state.focus === "timeline") {
-      if (!this.#timelinePrefix && state.timeline.items.length && (data === "/" || data === "?")) {
-        this.#timelineSearchDirection = data === "/" ? 1 : -1;
-        return this.send({
-          type: "open-timeline-search",
-          direction: this.#timelineSearchDirection,
-        });
-      }
-      const count = (): number | undefined => {
-        const value = this.#timelineCount ? Math.max(1, Number(this.#timelineCount)) : undefined;
-        this.#timelineCount = "";
-        return value;
-      };
-      if (
-        this.#timelinePrefix === "f" ||
-        this.#timelinePrefix === "F" ||
-        this.#timelinePrefix === "t" ||
-        this.#timelinePrefix === "T"
-      ) {
-        const key = this.#timelinePrefix;
-        this.#timelinePrefix = "";
-        if (data.length === 1 && data >= " ")
-          return this.send({
-            type: "timeline-find-character",
-            key,
-            character: data,
-            count: count() ?? 1,
-          });
-        this.#timelineCount = "";
-        return true;
-      }
-      if (this.#timelinePrefix === "y" && (data === "i" || data === "a")) {
-        this.#timelinePrefix = `y${data}`;
-        return true;
-      }
-      if (this.#timelinePrefix === "yi" && data === "v") {
-        this.#timelinePrefix = "";
-        this.#timelineCount = "";
-        return this.send({ type: "timeline-yank-object", object: "event" });
-      }
-      if (this.#timelinePrefix === "y" && data === "y") {
-        this.#timelinePrefix = "";
-        this.#timelineCount = "";
-        return this.send({ type: "timeline-yank-object", object: "line" });
-      }
-      if (["yi", "ya", "i", "a"].includes(this.#timelinePrefix)) {
-        const prefix = this.#timelinePrefix;
-        this.#timelinePrefix = "";
-        const repetitions = count() ?? 1;
-        if (data.length === 1)
-          return this.send({
-            type: "timeline-text-object",
-            object: data,
-            around: prefix.endsWith("a"),
-            action: prefix.startsWith("y") ? "yank" : "select",
-            count: repetitions,
-          });
-        return true;
-      }
-      if (this.#timelinePrefix === "g" && data === "x") {
-        this.#timelinePrefix = "";
-        this.#timelineCount = "";
-        this.#tabPrefix = "";
-        return this.send({ type: "timeline-open-link" });
-      }
-      if (this.#timelinePrefix === "g") {
-        this.#timelinePrefix = "";
-        if (data === "*" || data === "#") {
-          this.#timelineSearchDirection = data === "*" ? 1 : -1;
-          return this.send({
-            type: "timeline-word-search",
-            key: `g${data}` as "g*" | "g#",
-            count: count() ?? 1,
-          });
-        }
-        if (data === "g")
-          return this.send(
-            state.timeline.items.length
-              ? {
-                  type: "move-timeline-text",
-                  key: "gg",
-                  ...(this.#timelineCount ? { count: count() } : {}),
-                }
-              : { type: "move-timeline-selection-boundary", boundary: "start" },
-          );
-        if (data === "G")
-          return this.send(
-            state.timeline.items.length
-              ? { type: "move-timeline-text", key: "G" }
-              : { type: "move-timeline-selection-boundary", boundary: "end" },
-          );
-        if (["e", "E", "_", "0", "$", "^", "j", "k", "m", "M"].includes(data))
-          return this.send({
-            type: "move-timeline-text",
-            key: `g${data}`,
-            ...(this.#timelineCount ? { count: count() } : {}),
-          });
-        if (data === "t" || data === "T")
-          return this.send({
-            type: "switch-tab",
-            direction: data === "t" ? 1 : -1,
-            ...(this.#timelineCount ? { count: count() } : {}),
-          });
-      }
-      if (this.#timelinePrefix === "[" || this.#timelinePrefix === "]") {
-        const prefix = this.#timelinePrefix;
-        this.#timelinePrefix = "";
-        if (data === "t" || data === "e")
-          return this.send({
-            type: "move-timeline-landmark",
-            direction: prefix === "[" ? -1 : 1,
-            kind: data === "t" ? "turn" : "error",
-          });
-        if (data === "[" || data === "]")
-          return this.send({ type: "move-timeline-text", key: prefix + data });
-        return true;
-      }
-      if (
-        this.#timelinePrefix === "m" ||
-        this.#timelinePrefix === "'" ||
-        this.#timelinePrefix === "`"
-      ) {
-        const prefix = this.#timelinePrefix;
-        this.#timelinePrefix = "";
-        if (data.length !== 1) return true;
-        if (prefix === "m") return this.send({ type: "timeline-mark-set", mark: data });
-        return this.send({ type: "timeline-mark-jump", mark: data, linewise: prefix === "'" });
-      }
-      if (/^[0-9]$/.test(data) && (data !== "0" || this.#timelineCount)) {
-        this.#timelineCount += data;
-        return true;
-      }
-      if (
-        data === "g" ||
-        data === "[" ||
-        data === "]" ||
-        data === "m" ||
-        data === "'" ||
-        data === "`" ||
-        (data === "z" && state.timeline.items.length)
-      ) {
-        this.#timelinePrefix = data;
-        return true;
-      }
-      if (this.#timelinePrefix === "z") {
-        this.#timelinePrefix = "";
-        if (data === "a") return this.send({ type: "timeline-fold" });
-        if (data === "z" || data === "t" || data === "b")
-          return this.send({
-            type: "timeline-align",
-            position: data === "z" ? "middle" : data === "t" ? "top" : "bottom",
-          });
-      }
-      this.#timelinePrefix = "";
-      if (state.timeline.items.length && ["f", "F", "t", "T"].includes(data)) {
-        this.#timelinePrefix = data;
-        return true;
-      }
-      if (data === ";" || data === ",")
-        return this.send({ type: "timeline-repeat-find", reverse: data === "," });
-      if (data === "*" || data === "#") {
-        this.#timelineSearchDirection = data === "*" ? 1 : -1;
-        return this.send({ type: "timeline-word-search", key: data, count: count() ?? 1 });
-      }
-      if (data === "\u000f" || data === "\t")
-        return this.send({
-          type: "timeline-jump-history",
-          direction: data === "\u000f" ? -1 : 1,
-          count: count() ?? 1,
-        });
-      if (state.timeline.items.length && ["H", "M", "L"].includes(data))
-        return this.send({
-          type: "timeline-viewport-motion",
-          key: data as "H" | "M" | "L",
-          count: count() ?? 1,
-        });
-      const arrow = (
-        { "\u001b[A": "k", "\u001b[B": "j", "\u001b[C": "l", "\u001b[D": "h" } as Record<
-          string,
-          string
-        >
-      )[data];
-      if (arrow && state.timeline.items.length)
-        return this.send({
-          type: "move-timeline-text",
-          key: arrow,
-          ...(this.#timelineCount ? { count: count() } : {}),
-        });
-      if (
-        state.timeline.items.length &&
-        (timelineTextMotionKeys as readonly string[]).includes(data)
-      )
-        return this.send({
-          type: "move-timeline-text",
-          key: data as TimelineTextMotionKey,
-          ...(this.#timelineCount ? { count: count() } : {}),
-        });
-      if (data === "G" && state.timeline.items.length)
-        return this.send({
-          type: "move-timeline-text",
-          key: "G",
-          ...(this.#timelineCount ? { count: count() } : {}),
-        });
-      if (data === "G")
-        return this.send({ type: "move-timeline-selection-boundary", boundary: "end" });
-      if (data === "\r" && state.timeline.items.length)
-        return this.send({ type: "move-timeline-text", key: "+" });
-      if (data === "y" && state.timeline.items.length) {
-        if ((state.timelineMode ?? "normal") === "visual")
-          return this.send({ type: "timeline-yank" });
-        this.#timelinePrefix = "y";
-        return true;
-      }
-      if ((state.timelineMode ?? "normal") === "visual" && (data === "i" || data === "a")) {
-        this.#timelinePrefix = data;
-        return true;
-      }
-      if (data === "Y" && state.timeline.items.length)
-        return this.send({ type: "timeline-yank-object", object: "line" });
-      if (data === "n" || data === "N")
-        return this.send({
-          type: "timeline-repeat-search",
-          direction:
-            data === "n"
-              ? this.#timelineSearchDirection
-              : this.#timelineSearchDirection === 1
-                ? -1
-                : 1,
-        });
-      if (data === "\u0015" || data === "\u0004")
-        return this.send({ type: "scroll-timeline", direction: data === "\u0015" ? -1 : 1 });
-      if (state.timeline.items.length && (data === "\u0006" || data === "\u0002"))
-        return this.send({ type: "timeline-page", direction: data === "\u0006" ? 1 : -1 });
-      if (state.timeline.items.length && (data === "\u0005" || data === "\u0019"))
-        return this.send({
-          type: "timeline-scroll-viewport",
-          direction: data === "\u0005" ? 1 : -1,
-        });
-      if (state.timeline.items.length && data === "V")
-        return this.send({ type: "timeline-visual", selection: "line" });
-      if (state.timeline.items.length && data === "v")
-        return this.send({ type: "timeline-visual", selection: "character" });
-      if (state.timeline.items.length && data === "\u0016")
-        return this.send({ type: "timeline-visual", selection: "block" });
-    }
+    if (state.modal.type === "none" && state.focus === "timeline")
+      return this.handleTimelineKey(data, state);
     if (state.modal.type === "none" && state.focus === "timeline" && data === "\u001b") {
       if ((state.timelineMode ?? "normal") === "visual")
         return this.send({ type: "set-timeline-mode", mode: "normal" });
@@ -652,13 +606,6 @@ export class DeckController {
         return this.send({ type: "open-create-terminal", workspaceId: state.selectedWorkspaceId });
       return true;
     }
-    if (data === "\u0015" || data === "\u0004" || data === "\u001b[5~" || data === "\u001b[6~")
-      return this.send({
-        type: "scroll-timeline",
-        direction: data === "\u0004" || data === "\u001b[6~" ? 1 : -1,
-      });
-    if (data === "\u001b[1;5A" || data === "\u001b[1;5B")
-      return this.send({ type: "scroll-timeline", direction: data === "\u001b[1;5A" ? -1 : 1 });
     if (state.focus === "timeline" && state.timelineMode !== undefined && data === "v")
       return this.send({ type: "timeline-visual", selection: "character" });
     if (global) {
@@ -675,6 +622,7 @@ export class DeckController {
   }
 
   confirm(modal: Extract<ModalState, { type: "confirm" }>): void {
+    if (modal.busy || modal.unavailableReason) return;
     if (modal.action === "quit") {
       this.emit({ type: "quit-confirmed" });
       return;
@@ -687,6 +635,14 @@ export class DeckController {
     if (modal.action === "kill-terminal") {
       if (modal.terminalId)
         this.emit({ type: "kill-terminal-confirmed", terminalId: modal.terminalId });
+      return;
+    }
+    if (modal.action === "archive-workspace") {
+      if (modal.workspaceId)
+        this.emit({
+          type: "command",
+          command: { type: "archive-workspace", workspaceId: modal.workspaceId },
+        });
       return;
     }
     if (!modal.agentId) return;

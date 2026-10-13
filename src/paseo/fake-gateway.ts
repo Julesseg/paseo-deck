@@ -100,6 +100,65 @@ export class FakePaseoGateway implements PaseoGateway {
   public async execute(command: AgentCommand): Promise<CommandResult> {
     this.assertConnected();
     this.commands.push(command);
+    if (command.type === "rename-terminal")
+      this.terminals = this.terminals.map((item) =>
+        item.id === command.terminalId ? { ...item, title: command.name } : item,
+      );
+    if (command.type === "rename-workspace" || command.type === "archive-workspace") {
+      this.snapshot = {
+        ...this.snapshot,
+        workspaces: this.snapshot.workspaces.map((item) =>
+          item.id !== command.workspaceId
+            ? item
+            : {
+                ...item,
+                ...(command.type === "rename-workspace"
+                  ? { title: command.name }
+                  : { archived: true }),
+              },
+        ),
+      };
+      this.emitDirectory({ type: "snapshot", snapshot: this.snapshot });
+    }
+    if (command.type === "rename-agent") {
+      this.snapshot = {
+        ...this.snapshot,
+        agents: this.snapshot.agents.map((item) =>
+          item.id === command.agentId ? { ...item, title: command.name } : item,
+        ),
+      };
+      this.emitDirectory({ type: "snapshot", snapshot: this.snapshot });
+    }
+    if (
+      command.type === "set-agent-model" ||
+      command.type === "set-agent-mode" ||
+      command.type === "set-thinking-level"
+    ) {
+      this.snapshot = {
+        ...this.snapshot,
+        agents: this.snapshot.agents.map((agent) => {
+          const { thinkingLevel: _thinkingLevel, ...withoutThinking } = agent;
+          return agent.id !== command.agentId
+            ? agent
+            : {
+                ...(command.type === "set-agent-model" && command.thinkingLevel === null
+                  ? withoutThinking
+                  : agent),
+                ...(command.type === "set-agent-model"
+                  ? {
+                      modelId: command.modelId,
+                      ...(command.thinkingLevel === null
+                        ? {}
+                        : { thinkingLevel: command.thinkingLevel }),
+                    }
+                  : command.type === "set-agent-mode"
+                    ? { modeId: command.modeId }
+                    : { thinkingLevel: command.thinkingLevel }),
+              };
+        }),
+      };
+      this.emitDirectory({ type: "snapshot", snapshot: this.snapshot });
+    }
     if (command.type === "create-agent")
       return { type: "agent-created", agentId: `fake-agent-${this.commands.length}` };
     if (command.type === "respond-permission")

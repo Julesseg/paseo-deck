@@ -69,8 +69,7 @@ describe("DeckController keyboard seam", () => {
       () => state,
       (intent) => intents.push(intent),
     );
-    controller.handleKey("\\");
-    controller.handleKey("T");
+    controller.invokeCommand("new-tab");
     expect(intents).toEqual([{ type: "open-new-tab", workspaceId: "w" }]);
     for (const variant of [
       { focus: "composer" as const, composerMode: "insert" as const },
@@ -109,13 +108,12 @@ describe("DeckController keyboard seam", () => {
     expect(intents).toEqual([]);
   });
 
-  it("keeps New Tab unavailable in terminal insert mode through the command palette", () => {
+  it("keeps New Tab unavailable during direct Terminal input through the command palette", () => {
     const intents: unknown[] = [];
     const state: AppState = {
       ...makeState(),
       focus: "timeline",
       activeTerminalId: "terminal",
-      terminalMode: "insert",
       terminalLines: { terminal: ["$ "] },
     };
     const controller = new DeckController(
@@ -127,7 +125,7 @@ describe("DeckController keyboard seam", () => {
     expect(intents).toEqual([{ type: "terminal-input", data: "T" }]);
   });
 
-  it("routes gc to the workspace draft from active or background tabs", () => {
+  it("routes palette discard to the workspace draft from active or background tabs", () => {
     const intents: unknown[] = [];
     const state = {
       ...makeState(),
@@ -140,8 +138,7 @@ describe("DeckController keyboard seam", () => {
       () => state,
       (intent) => intents.push(intent),
     );
-    controller.handleKey("\\");
-    controller.handleKey("D");
+    controller.invokeCommand("discard-draft");
     expect(intents).toEqual([{ type: "discard-session-draft", workspaceId: "w" }]);
     const backgroundState: AppState = {
       ...state,
@@ -152,56 +149,37 @@ describe("DeckController keyboard seam", () => {
       () => backgroundState,
       (intent) => intents.push(intent),
     );
-    backgroundController.handleKey("\\");
-    backgroundController.handleKey("D");
+    backgroundController.invokeCommand("discard-draft");
     expect(intents.at(-1)).toEqual({ type: "discard-session-draft", workspaceId: "w" });
   });
-  it("recognizes tab navigation sequences and counts", () => {
+  it("Sidebar does not own tab navigation sequences or counts", () => {
     const intents: unknown[] = [];
     const controller = new DeckController(
       () => makeState(),
       (intent) => intents.push(intent),
     );
-    controller.handleKey("g");
-    controller.handleKey("3");
-    controller.handleKey("t");
-    controller.handleKey("g");
-    controller.handleKey("c");
-    expect(intents).toContainEqual({ type: "switch-tab", direction: 1, count: 3 });
-    expect(intents).not.toContainEqual({ type: "close-tab" });
+    for (const key of ["3", "g", "t", "g", "T"]) controller.handleKey(key);
+    expect(intents).not.toContainEqual({ type: "switch-tab", direction: 1, count: 3 });
+    expect(intents).not.toContainEqual({ type: "switch-tab", direction: -1 });
   });
-  it("uses the same numbered tab navigation in terminal and timeline normal modes", () => {
+  it("Terminal tab sequences are literal while Timeline Normal owns them", () => {
     const intents: unknown[] = [];
-    let current: AppState = {
-      ...makeState(),
-      focus: "timeline" as const,
-      activeTerminalId: "terminal-1",
-      terminalMode: "normal" as const,
-      terminalLines: { "terminal-1": ["$ "] },
-    };
+    let current: AppState = { ...makeState(), focus: "timeline", activeTerminalId: "terminal-1" };
     const controller = new DeckController(
       () => current,
       (intent) => intents.push(intent),
     );
-    for (const key of ["3", "g", "t", "g", "T"]) controller.handleKey(key);
-    expect(intents).toEqual([
-      { type: "switch-tab", direction: 1, count: 3 },
-      { type: "switch-tab", direction: -1 },
-    ]);
+    const input = ["3", "g", "t", "g", "T"];
+    for (const key of input) controller.handleKey(key);
+    expect(intents).toEqual(input.map((data) => ({ type: "terminal-input", data })));
     const { activeTerminalId: _activeTerminalId, ...sessionState } = current;
     current = sessionState;
     for (const key of ["g", "t"]) controller.handleKey(key);
     expect(intents.at(-1)).toEqual({ type: "switch-tab", direction: 1 });
   });
-  it("leaves terminal normal mode for the sidebar and returns without a hidden composer", () => {
+  it("Ctrl-S leaves direct Terminal input and Sidebar Escape returns", () => {
     const intents: unknown[] = [];
-    let current: AppState = {
-      ...makeState(),
-      focus: "timeline",
-      activeTerminalId: "terminal-1",
-      terminalMode: "normal",
-      terminalLines: { "terminal-1": ["$ "] },
-    };
+    let current: AppState = { ...makeState(), focus: "timeline", activeTerminalId: "terminal-1" };
     const controller = new DeckController(
       () => current,
       (intent) => {
@@ -209,14 +187,14 @@ describe("DeckController keyboard seam", () => {
         if (intent.type === "set-focus") current = { ...current, focus: intent.focus };
       },
     );
-    controller.handleKey("\u001b");
+    controller.handleKey("\u0013");
     controller.handleKey("\u001b");
     expect(intents).toEqual([
       { type: "set-focus", focus: "tree" },
       { type: "set-focus", focus: "timeline" },
     ]);
   });
-  it("uses mnemonic buffer commands for region transitions", () => {
+  it("uses global controls for region transitions", () => {
     const intents: unknown[] = [];
     let current: AppState = { ...makeState(), focus: "composer", composerMode: "normal" };
     const controller = new DeckController(
@@ -229,11 +207,9 @@ describe("DeckController keyboard seam", () => {
       },
     );
     expect(controller.handleKey("i")).toBe(false);
-    controller.handleKey("\\");
-    controller.handleKey("n");
+    controller.handleKey("\u0013");
     controller.handleKey("\u001b");
-    controller.handleKey("\\");
-    controller.handleKey("t");
+    controller.handleKey("\u000b");
     expect(intents).toEqual([
       { type: "set-focus", focus: "tree" },
       { type: "set-focus", focus: "composer" },
@@ -241,7 +217,7 @@ describe("DeckController keyboard seam", () => {
     ]);
   });
 
-  it("reserves Ctrl-U for Vim in the composer and scrolls other regions", () => {
+  it("scrolls Timeline from every region with Ctrl-U", () => {
     for (const focus of ["composer", "tree", "timeline"] as const) {
       const intents: unknown[] = [];
       new DeckController(
@@ -252,9 +228,7 @@ describe("DeckController keyboard seam", () => {
         }),
         (intent) => intents.push(intent),
       ).handleKey("\u0015");
-      expect(intents).toEqual(
-        focus === "composer" ? [] : [{ type: "scroll-timeline", direction: -1 }],
-      );
+      expect(intents).toEqual([{ type: "scroll-timeline", direction: -1 }]);
     }
   });
 
@@ -308,13 +282,12 @@ describe("DeckController keyboard seam", () => {
   });
 
   it.each([
-    ["x", "stop"],
-    ["A", "archive"],
-    ["d", "detach"],
+    ["\u0018", "stop"],
+    ["\u0001", "archive"],
   ] as const)("requires confirmation before %s operation", (key, action) => {
     const intents: unknown[] = [];
     const controller = new DeckController(
-      () => makeState(),
+      () => ({ ...makeState(), focus: "composer", composerMode: "normal" }),
       (intent) => intents.push(intent),
     );
 
@@ -407,14 +380,14 @@ describe("DeckController keyboard seam", () => {
     expect(intents).toEqual([{ type: "close-modal" }]);
   });
 
-  it("opens the New workspace composer from sidebar c", () => {
+  it("opens the New workspace composer from sidebar n", () => {
     const intents: unknown[] = [];
     const controller = new DeckController(
       () => makeState(),
       (intent) => intents.push(intent),
     );
 
-    controller.handleKey("c");
+    controller.handleKey("n");
 
     expect(intents).toContainEqual({ type: "open-new-workspace" });
   });
@@ -475,21 +448,20 @@ describe("DeckController keyboard seam", () => {
     expect(intents).toEqual([{ type: "quit" }]);
   });
 
-  it("quits instead of forwarding Ctrl+C to an embedded terminal", () => {
+  it("forwards Ctrl+C to a running Terminal", () => {
     const intents: unknown[] = [];
     const controller = new DeckController(
       () => ({
         ...makeState(),
         focus: "timeline",
         activeTerminalId: "terminal-1",
-        terminalMode: "insert",
         terminalLines: { "terminal-1": ["$ "] },
       }),
       (intent) => intents.push(intent),
     );
 
     expect(controller.handleKey("\u0003")).toBe(true);
-    expect(intents).toEqual([{ type: "quit" }]);
+    expect(intents).toEqual([{ type: "terminal-input", data: "\u0003" }]);
   });
 
   it("keeps ordinary insert text local while preserving Ctrl-C quit", () => {
@@ -505,7 +477,7 @@ describe("DeckController keyboard seam", () => {
     expect(intents).toEqual([{ type: "quit" }]);
   });
 
-  it("routes timeline navigation and Enter to the rendered buffer", () => {
+  it("routes timeline navigation while consuming idle Enter", () => {
     const intents: unknown[] = [];
     const controller = new DeckController(
       () => ({
@@ -530,7 +502,7 @@ describe("DeckController keyboard seam", () => {
     controller.handleKey("\r");
 
     expect(intents).toContainEqual({ type: "move-timeline-text", key: "j" });
-    expect(intents).toContainEqual({ type: "move-timeline-text", key: "+" });
+    expect(intents).not.toContainEqual({ type: "move-timeline-text", key: "+" });
     expect(intents).not.toContainEqual({ type: "select-or-open" });
   });
 
@@ -544,10 +516,10 @@ describe("DeckController keyboard seam", () => {
     controller.handleKey("\u0006");
     controller.handleKey("y");
 
-    expect(intents).toEqual([]);
+    expect(intents).toEqual([{ type: "timeline-page", direction: 1 }]);
   });
 
-  it("treats arrows and g/G as their Vim navigation equivalents outside editors", () => {
+  it("treats arrows and gg/G as their Vim navigation equivalents outside editors", () => {
     const intents: unknown[] = [];
     const controller = new DeckController(
       () => makeState(),
@@ -558,6 +530,7 @@ describe("DeckController keyboard seam", () => {
     controller.handleKey("\u001b[B");
     controller.handleKey("\u001b[D");
     controller.handleKey("\u001b[C");
+    controller.handleKey("g");
     controller.handleKey("g");
     controller.handleKey("G");
 
@@ -589,12 +562,13 @@ describe("DeckController keyboard seam", () => {
     expect(composer.handleKey("\u001b[A")).toBe(false);
 
     expect(timelineIntents).toEqual([
-      { type: "move-timeline-selection-boundary", boundary: "start" },
-      { type: "move-timeline-selection-boundary", boundary: "end" },
+      { type: "move-timeline-text", key: "gg" },
+      { type: "move-timeline-text", key: "G" },
+      { type: "move-timeline-text", key: "k" },
     ]);
   });
 
-  it("routes buffer yank, Visual Block, and link commands", () => {
+  it("rejects entry objects and Visual Block while routing Normal links", () => {
     const intents: unknown[] = [];
     const controller = new DeckController(
       () => ({
@@ -612,11 +586,7 @@ describe("DeckController keyboard seam", () => {
       (intent) => intents.push(intent),
     );
     for (const key of ["y", "i", "v", "g", "x", "\u0016"]) controller.handleKey(key);
-    expect(intents).toEqual([
-      { type: "timeline-yank-object", object: "event" },
-      { type: "timeline-open-link" },
-      { type: "timeline-visual", selection: "block" },
-    ]);
+    expect(intents).toEqual([{ type: "timeline-open-link" }]);
   });
 
   it("moves through visible timeline lines while timeline metadata is loading", () => {
@@ -671,8 +641,8 @@ describe("DeckController keyboard seam", () => {
       { type: "move-timeline-text", key: "W" },
       { type: "move-timeline-text", key: "ge" },
       { type: "timeline-find-character", key: "f", character: "o", count: 1 },
-      { type: "timeline-repeat-find", reverse: false },
-      { type: "timeline-repeat-find", reverse: true },
+      { type: "move-timeline-text", key: ";" },
+      { type: "move-timeline-text", key: "," },
       { type: "timeline-viewport-motion", key: "H", count: 1 },
       { type: "move-timeline-text", key: "h" },
       { type: "move-timeline-text", key: "G", count: 2 },
@@ -734,7 +704,7 @@ describe("DeckController keyboard seam", () => {
     expect(intents).toEqual([{ type: "set-focus", focus: "tree" }]);
   });
 
-  it("uses up and down for selected-agent prompt history while composing", () => {
+  it("reserves Ctrl-P for palette and removes Ctrl-N history alias", () => {
     const intents: unknown[] = [];
     const controller = new DeckController(
       () => ({ ...makeState(), focus: "composer", composerMode: "insert" }),
@@ -742,11 +712,8 @@ describe("DeckController keyboard seam", () => {
     );
 
     expect(controller.handleKey("\u0010")).toBe(true);
-    expect(controller.handleKey("\u000e")).toBe(true);
-    expect(intents).toEqual([
-      { type: "navigate-composer-history", direction: -1 },
-      { type: "navigate-composer-history", direction: 1 },
-    ]);
+    expect(controller.handleKey("\u000e")).toBe(false);
+    expect(intents).toEqual([{ type: "open-command-palette" }]);
   });
 
   it("leaves plain up and down available to the multiline editor", () => {
@@ -772,7 +739,7 @@ describe("DeckController keyboard seam", () => {
       (intent) => intents.push(intent),
     );
 
-    controller.handleKey("E");
+    controller.invokeCommand("error-details");
 
     expect(intents).toContainEqual({
       type: "open-error-details",
@@ -792,7 +759,8 @@ describe("DeckController keyboard seam", () => {
       (intent) => intents.push(intent),
     );
 
-    expect(controller.handleKey("R")).toBe(true);
+    expect(controller.handleKey("R")).toBe(false);
+    expect(controller.invokeCommand("retry")).toBe(true);
     expect(intents).toEqual([{ type: "retry-notification", id: 4 }]);
   });
 
@@ -818,15 +786,19 @@ describe("DeckController keyboard seam", () => {
       (intent) => {
         intents.push(intent);
         if (intent.type === "move-notification")
-          current = { ...current, activeNotificationId: intent.direction > 0 ? 2 : 1 };
+          current = {
+            ...current,
+            activeNotificationId: intent.direction > 0 ? 2 : 1,
+            modal: { type: "notifications", index: intent.direction > 0 ? 1 : 0 },
+          };
       },
     );
 
     controller.handleKey("j");
-    controller.handleKey("R");
+    controller.handleKey("r");
     controller.handleKey("\r");
     current = { ...current, activeNotificationId: 1, modal: { type: "notifications", index: 0 } };
-    controller.handleKey("E");
+    controller.invokeCommand("error-details");
 
     expect(intents).toContainEqual({ type: "move-notification", direction: 1 });
     expect(intents).toContainEqual({ type: "retry-notification", id: 2 });

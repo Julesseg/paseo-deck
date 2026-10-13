@@ -90,7 +90,10 @@ describe("command registry", () => {
     } = state();
     const disconnected: AppState = { ...withoutSelection, connection: "disconnected" };
     expect(commandById(disconnected, "new-workspace")?.disabledReason).toBeUndefined();
-    expect(commandById(disconnected, "stop-agent")?.disabledReason).toContain("Reconnect");
+    expect(
+      commandById({ ...disconnected, focus: "composer", composerMode: "normal" }, "stop-agent")
+        ?.disabledReason,
+    ).toContain("Reconnect");
     expect(commandById(disconnected, "permissions")?.disabledReason).toContain("No pending");
     expect(commandById(disconnected, "error-details")?.disabledReason).toContain("No error");
     expect(
@@ -112,15 +115,15 @@ describe("command registry", () => {
       commandById(
         { ...base, directory: { ...base.directory, agents: [{ ...agent, availableModeIds: [] }] } },
         "mode",
-      )?.disabledReason,
-    ).toContain("No modes");
+      ),
+    ).toBeUndefined();
   });
 
   it("uses composer-specific controls for model, thinking, and operational mode", () => {
     const current = { ...state(), focus: "composer" as const, composerMode: "normal" as const };
-    expect(commandForKey(current, "\\m")?.disabledReason).toContain("model switching");
-    expect(commandForKey(current, "\\z")?.id).toBe("thinking");
-    expect(commandForKey(current, "\\o")?.id).toBe("operational-mode");
+    expect(commandById(current, "model")?.shortcuts).toEqual(["mm"]);
+    expect(commandById(current, "thinking")?.id).toBe("thinking");
+    expect(commandById(current, "operational-mode")?.id).toBe("operational-mode");
     expect(commandForKey({ ...current, focus: "tree" }, "o")?.id).toBe("toggle-order");
     expect(contextualHelp(current).map((command) => command.id)).toContain("operational-mode");
     expect(contextualHelp(current).map((command) => command.id)).not.toContain("mode");
@@ -134,10 +137,10 @@ describe("command registry", () => {
   it("makes a direct key and palette invocation emit the identical confirmation intent", () => {
     const intents: unknown[] = [];
     const controller = new DeckController(
-      () => state(),
+      () => ({ ...state(), focus: "composer", composerMode: "normal" }),
       (intent) => intents.push(intent),
     );
-    controller.handleKey("x");
+    controller.handleKey("\u0018");
     controller.invokeCommand("stop-agent");
     expect(intents).toEqual([
       { type: "open-confirmation", action: "stop", agentId: "a" },
@@ -145,7 +148,7 @@ describe("command registry", () => {
     ]);
   });
 
-  it("keeps direct and palette retry and error-detail intents identical", () => {
+  it("keeps Sidebar utilities palette-only", () => {
     const current: AppState = {
       ...state(),
       notifications: [
@@ -164,36 +167,40 @@ describe("command registry", () => {
       () => current,
       (intent) => intents.push(intent),
     );
-    controller.handleKey("R");
+    expect(controller.handleKey("R")).toBe(false);
     controller.invokeCommand("retry");
-    controller.handleKey("E");
+    expect(controller.handleKey("E")).toBe(false);
     controller.invokeCommand("error-details");
     expect(intents).toEqual([
       { type: "retry-notification", id: 7 },
-      { type: "retry-notification", id: 7 },
-      { type: "open-error-details", message: "Failed", detail: "safe details" },
       { type: "open-error-details", message: "Failed", detail: "safe details" },
     ]);
   });
 
-  it("resolves Ctrl-K in an editor without leaking normal keys", () => {
+  it("resolves Ctrl-P in an editor without leaking normal keys", () => {
     const intents: unknown[] = [];
     const controller = new DeckController(
       () => ({ ...state(), focus: "composer" }),
       (intent) => intents.push(intent),
     );
     expect(controller.handleKey("x")).toBe(false);
-    expect(controller.handleKey("\u000b")).toBe(true);
+    expect(controller.handleKey("\u0010")).toBe(true);
     expect(intents).toEqual([{ type: "open-command-palette" }]);
   });
 
   it("keeps disabled palette items inert and recomputes availability from current state", () => {
     const { selectedAgentId: _agent, ...noAgent }: AppState = state();
-    expect(commandForKey(noAgent, "x")?.disabledReason).toBe("Select an active session first");
-    expect(commandForKey(state(), "x")?.disabledReason).toBeUndefined();
+    expect(
+      commandForKey({ ...noAgent, focus: "composer", composerMode: "normal" }, "\u0018")
+        ?.disabledReason,
+    ).toBe("Select an active session first");
+    expect(
+      commandForKey({ ...state(), focus: "composer", composerMode: "normal" }, "\u0018")
+        ?.disabledReason,
+    ).toBeUndefined();
     const intents: unknown[] = [];
     new DeckController(
-      () => noAgent,
+      () => ({ ...noAgent, focus: "composer", composerMode: "normal" }),
       (intent) => intents.push(intent),
     ).invokeCommand("stop-agent");
     expect(intents).toEqual([]);
@@ -246,7 +253,11 @@ describe("command registry", () => {
             () => current,
             (intent) => intents.push(intent),
           ).handleKey(input);
-          expect(intents, `${focus}:${command.id}:${shortcut}`).toEqual([command.intent(current)]);
+          expect(intents, `${focus}:${command.id}:${shortcut}`).toEqual(
+            command.id === "timeline-navigation" && focus === "timeline"
+              ? []
+              : [command.intent(current)],
+          );
         }
       }
     },
@@ -290,7 +301,7 @@ describe("command registry", () => {
       ],
       activeNotificationId: 7,
     };
-    expectRegistryInputs(current, ["j", "\u001b[B", "k", "\u001b[A", "\r", "E", "R", "\u001b"]);
+    expectRegistryInputs(current, ["j", "\u001b[B", "k", "\u001b[A", "\r", "r", "\u001b"]);
   });
 });
 
@@ -323,3 +334,26 @@ function terminalInput(shortcut: string): string | undefined {
   };
   return inputs[shortcut] ?? (shortcut.length === 1 ? shortcut : undefined);
 }
+
+it("Sidebar Workspace actions use its highlighted eligible Workspace and never fall back on Project rows", () => {
+  const current = state();
+  const highlighted = {
+    ...current,
+    sidebarSelection: { kind: "workspace" as const, id: "other" },
+    directory: {
+      ...current.directory,
+      workspaces: [
+        ...current.directory.workspaces,
+        { id: "other", title: "Other", directory: "/other", archived: false },
+      ],
+    },
+  };
+  expect(commandById(highlighted, "terminal-create")?.intent(highlighted)).toEqual({
+    type: "open-create-terminal",
+    workspaceId: "other",
+  });
+  const project = { ...highlighted, sidebarSelection: { kind: "project" as const, id: "p" } };
+  expect(commandById(project, "terminal-create")?.disabledReason).toContain("workspace");
+  expect(commandById(project, "rename-agent")).toBeUndefined();
+  expect(commandById(project, "detach-agent")).toBeUndefined();
+});

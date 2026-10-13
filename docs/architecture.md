@@ -6,7 +6,7 @@ Paseo Deck has three deep modules joined by small, typed interfaces.
 
 `PaseoGateway` is the application's entire Paseo-facing surface: connect and close, read and observe the directory, focus and release one timeline, and execute typed commands. `ProductionPaseoGateway` contains SDK projection, replacement recovery, subscription ownership, target resolution, and the shell-free CLI fallback. `FakePaseoGateway` implements the same contract for deterministic store and application tests.
 
-The gateway uses public `@getpaseo/client` APIs for discovery, timelines, creation, prompts, permissions, archive, and detach. A subprocess adapter invokes documented CLI commands for stop, rename, mode, and thinking because those operations are not in the public SDK. It always passes an executable and argument array, parses JSON, captures stderr, and never launches a shell.
+The gateway uses public `@getpaseo/client` APIs for discovery, timelines, creation, prompts, permissions, archive, and detach. A subprocess adapter invokes documented CLI commands for stop, Session rename, standalone thinking-level changes and operational mode. Narrow adapters own the pinned package-exported `internal/daemon-client` contracts for Git metadata, supported Session model mutation and its dependent thinking setter, Terminal rename and authoritative Terminal title/activity reads (the public 0.8 projection strips these fields). Each adapter limits its operations, shares resolved authentication/target, and closes its owned connection; no broad private-client access or daemon modification is required. It always passes an executable and argument array, parses JSON, captures stderr, and never launches a shell.
 
 ## Store and terminal presentation
 
@@ -22,7 +22,7 @@ The application subscribes to directory changes before requesting the initial sn
 
 The timeline adapter subscribes before fetching history. Live events received during hydration are buffered, merged with projected history by epoch and sequence, and replayed exactly once. The SDK restores focused timeline demand after reconnect; its replacement event triggers a fresh projected-history fetch without discarding live events that arrive during that fetch.
 
-On quit, Ctrl+C, connection failure, or an uncaught error, the controller releases its focused and directory observations, closes the gateway, and restores the terminal's alternate screen exactly once. Public client 0.8.0 restores focused timeline demand and reports timeline replacements, but exposes neither a connection-state listener nor guaranteed directory-demand restoration. The UI therefore offers `r` as an explicit full reconnect and directory refresh after transport interruption instead of polling or depending on a private SDK hook.
+On quit, Ctrl+C, connection failure, or an uncaught error, the controller releases its focused and directory observations, closes the gateway, and restores the terminal's alternate screen exactly once. Public client 0.8.0 restores focused timeline demand and reports timeline replacements, but exposes neither a connection-state listener nor guaranteed directory-demand restoration. The UI therefore offers palette **Refresh directory / reconnect** as an explicit full reconnect and directory refresh after transport interruption instead of polling or depending on a private SDK hook.
 
 ## Preference lifecycle
 

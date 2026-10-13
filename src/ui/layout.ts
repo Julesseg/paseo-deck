@@ -27,3 +27,17 @@ export function shellLayout(
 export function adjustTreeWidth(width: number, delta: number): number {
   return Math.max(MIN_TREE_WIDTH, Math.min(MAX_TREE_WIDTH, width + delta));
 }
+
+export const READING_COLUMN_WIDTH = 144;
+
+/** Equal gutters inside the Main pane, including when Sidebar becomes a drawer. */
+export function readingColumnLayout(mainWidth: number): {
+  left: number;
+  width: number;
+  right: number;
+} {
+  const available = Math.max(1, Math.floor(mainWidth));
+  const width = Math.min(READING_COLUMN_WIDTH, Math.max(1, available - 2));
+  const left = Math.floor((available - width) / 2);
+  return { left, width, right: available - width - left };
+}
