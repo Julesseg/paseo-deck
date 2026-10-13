@@ -228,6 +228,9 @@ it("dismisses an in-flight permission without answering again or reopening on la
     expect(gateway.commands).toEqual([
       { type: "respond-permission", agentId: "a", requestId: "first", allow: true },
     ]);
+    expect(app.state.modal.type).not.toBe("permission");
+    await app.handleIntent({ type: "open-notifications" });
+    await terminal.waitForRender();
     expect(terminal.viewport().join("\n")).toContain("New notice while pending");
     expect(terminal.viewport().join("\n")).not.toContain("Original request");
     await app.handleIntent({ type: "open-permissions" });
