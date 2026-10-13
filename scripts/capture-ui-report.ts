@@ -1951,7 +1951,9 @@ for (const shot of shots.filter(
     "terminal-direct-empty": "terminal-insert",
   };
   const baselineName = renamedBaseline[shot.name] ?? shot.name;
-  const beforePath = join("/tmp/paseo-spec-72/before-png", `${baselineName}.png`);
+  const beforePath = shot.name.startsWith("sidebar-metadata-")
+    ? join("/tmp/paseo-deck-seven-issues/99-captures/before", `${baselineName}.png`)
+    : join("/tmp/paseo-spec-72/before-png", `${baselineName}.png`);
   const hasBefore = await access(beforePath).then(
     () => true,
     () => false,
@@ -1963,9 +1965,10 @@ for (const shot of shots.filter(
     before: hasBefore
       ? {
           path: beforePath,
-          sourceRevision: "6591925",
-          limitation:
-            "Pinned old fixtures and old controls; compare geometry/behavior with the recorded input differences, not equivalent input sequences.",
+          sourceRevision: shot.name.startsWith("sidebar-metadata-") ? "b59d562" : "6591925",
+          limitation: shot.name.startsWith("sidebar-metadata-")
+            ? "Matched grouping/metadata fixture and terminal dimensions; baseline has grouping but no second metadata line or new width/drawer geometry."
+            : "Pinned old fixtures and old controls; compare geometry/behavior with the recorded input differences, not equivalent input sequences.",
         }
       : null,
     missingBefore: hasBefore
