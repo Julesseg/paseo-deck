@@ -99,6 +99,16 @@ export class RecordingTerminal implements Terminal {
       (_, index) => buffer.getLine(buffer.viewportY + index)?.translateToString(true) ?? "",
     );
   }
+  viewportCells(): Array<Array<{ text: string; width: number }>> {
+    const buffer = this.xterm.buffer.active;
+    return Array.from({ length: this.xterm.rows }, (_, row) => {
+      const line = buffer.getLine(buffer.viewportY + row);
+      return Array.from({ length: this.xterm.cols }, (_, column) => {
+        const cell = line?.getCell(column);
+        return { text: cell?.getChars() ?? "", width: cell?.getWidth() ?? 1 };
+      });
+    });
+  }
   viewportCursor(): { row: number; column: number } {
     const buffer = this.xterm.buffer.active;
     return { row: buffer.cursorY + buffer.baseY - buffer.viewportY, column: buffer.cursorX };
