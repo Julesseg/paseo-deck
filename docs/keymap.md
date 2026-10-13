@@ -135,11 +135,13 @@ Ctrl-Shift-Z redo requires distinguishable terminal delivery. In Insert, Esc the
 
 | Keys | Action |
 | --- | --- |
-| Enter / Alt-Enter | Insert newline and stay in Insert, across legacy and enhanced encodings. Never send. |
+| Enter / Alt-Enter | Plain Enter accepts an open provider suggestion; otherwise Enter and Alt-Enter insert newline and stay in Insert. Never send. |
 | Shift-Enter / Ctrl-J | Retained ordinary editor newline aliases, subject to received encoding; never send while Insert is active. |
-| Up / Down | Move through displayed rows, including wraps. At first/last displayed row, first reach line start/end, then another press recalls older/newer prompt. |
-| Esc | Return to Normal, completing the current Insert undo group. |
-| Tab / Shift-Tab | No indentation or focus traversal; Tab has no visible effect while completion is unwired. |
+| Up / Down | Select suggestions while their dropdown is open; otherwise move through displayed rows, including wraps. At first/last displayed row, first reach line start/end, then another press recalls older/newer prompt. |
+| Esc | Dismiss an open suggestion dropdown and stay in Insert; otherwise return to Normal, completing the current Insert undo group. |
+| Tab / Shift-Tab | Tab accepts the selected provider suggestion. Without a dropdown, no indentation or focus traversal. Shift-Tab retains no effect. |
+
+Provider suggestions appear above a slash reference at a logical line start or after a literal space. The selected Session or draft provider supplies its Workspace-scoped skills and commands; ordinary commands are eligible only at prompt start. Fuzzy filtering offers no popup when nothing matches. Tab or plain Enter replaces the entire reference with `/name` and one following space as one undoable edit. A space or second slash dismisses and inserts literally; native paste remains literal and does not accept suggestions. Embedded Codex `/skill` references retain native plain-text semantics; completion adds no provider-specific expansion.
 
 History recall preserves the unfinished draft/cursor, stops without wrapping, and is undoable. Editing a recalled prompt ends history browsing without changing sent history. Ctrl-N/Ctrl-P history aliases are removed; Ctrl-P opens the palette. Ctrl-A/Ctrl-X do not archive/stop here, and Ctrl-T does not open New tab.
 
