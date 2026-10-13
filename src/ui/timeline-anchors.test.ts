@@ -306,7 +306,7 @@ it("preserves duplicate rows by item and text position across gateway append, pr
       items: initial.timeline.items,
     });
     await terminal.waitForRender();
-    for (const key of ["g", "g", "3", "j", "l", "l"]) terminal.sendInput(key);
+    for (const key of ["g", "g", "3", "j", "^"]) terminal.sendInput(key);
     await terminal.waitForRender();
     const cursor = terminal.viewportCursor();
     expect(terminal.viewport()[cursor.row]?.trim()).toBe("same");
