@@ -64,12 +64,21 @@ _Avoid_: Selected tab, focused tab
 The Session represented by the Active tab. Its timeline and composer occupy the main pane.
 _Avoid_: Focused session, selected agent
 
+**Session review state**:
+Whether the user has seen a Session's most recent completed turn by opening it or already displaying it when the turn finishes. This describes review attention, rather than whether the Session's task has been completed or accepted.
+
+**Ready to review**:
+A Session whose agent has finished a turn that the user has not yet seen.
+
+**Done**:
+A Session whose most recent completed turn has been seen by opening the Session or displaying it when the turn finishes. This does not imply that the user approved the result or that the overall task is finished.
+
 **Active terminal**:
 The Terminal represented by the Active tab. Its terminal surface occupies the main pane.
 _Avoid_: Focused terminal, selected terminal
 
 **Sidebar selection**:
-The Project or Workspace row that Sidebar navigation will act on. It is highlighted only while the sidebar is active, and a Workspace becomes active only when the user opens it.
+The Project, activity grouping, or Workspace row that Sidebar navigation will act on. It is highlighted only while the sidebar is active, and a Workspace becomes active only when the user opens it.
 _Avoid_: Active workspace, focus
 
 **Timeline**:
@@ -84,6 +93,12 @@ _Avoid_: Timeline window, right-side region
 **Composer**:
 The editor and session controls used to send the next prompt to the active session.
 _Avoid_: Prompt box, input
+
+**Skill suggestions**:
+The available named skills offered to complete a skill reference in a Composer prompt.
+
+**Provider suggestions**:
+The selected provider's named skills and commands offered for completion in a Composer prompt, scoped to its Workspace.
 
 **New workspace composer**:
 The editor and controls used to define a new Workspace and the Session or Terminal that will initially occupy it.
@@ -122,12 +137,15 @@ The temporary active region that presents the rendered timeline as a read-only V
 _Avoid_: Cursor mode, timeline mode, timeline selection
 
 **Activity indicator**:
-A semantic visual cue for attention, working, idle, or done activity. Text or symbols must carry the meaning when color is unavailable.
+A semantic visual cue for a resource's or Workspace's activity and review attention. Text or symbols must carry the meaning when color is unavailable.
 _Avoid_: Status color
 
 **Workspace activity**:
-The roll-up state of a Workspace's Sessions and Terminals. `attention` means intervention is required, `working` means at least one resource is active, `idle` means the Workspace is available without active work, including when it is empty and launchable, and `done` means it had resources and all of them have ended or been archived.
+Paseo's roll-up state of a Workspace's Sessions and Terminals, presented as Waiting for user input, Failed, Working, Ready to review, or Done. A Workspace may remain Working while one of its Sessions is Ready to review; Done does not imply task acceptance.
 _Avoid_: Workspace status
+
+**Sidebar grouping**:
+The organization of Workspace rows under either Project headings or Workspace activity headings.
 
 **Key cue**:
 A short, dimmed key label placed beside a Paseo-specific value or action such as the model, thinking level, or operational mode. Ordinary Vim movement and confirmation keys do not need key cues.
