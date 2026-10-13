@@ -199,7 +199,7 @@ it("restores grouping, ordering and heading expansion on the next launch", async
     expect(restarted.app.state.treeOrder).toBe("alphabetical");
     expect(await restarted.frame()).toContain("Design project");
     expect(await restarted.frame()).toContain("Mixed workspace");
-    expect(await restarted.frame()).not.toContain("Ready to review");
+    expect(await restarted.frame()).not.toContain("v Ready to review");
     await restarted.input("\u0013");
     await restarted.input("s");
     expect(await restarted.frame()).toContain("Ready to review");

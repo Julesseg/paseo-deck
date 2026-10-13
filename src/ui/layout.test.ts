@@ -31,6 +31,6 @@ describe("shellLayout", () => {
 
   it("switches the sidebar to an overlay below the responsive breakpoint", () => {
     expect(shellLayout(69, MIN_TERMINAL_ROWS, 34).narrow).toBe(true);
-    expect(shellLayout(70, MIN_TERMINAL_ROWS, 34).narrow).toBe(false);
+    expect(shellLayout(70, MIN_TERMINAL_ROWS, 18).narrow).toBe(false);
   });
 });

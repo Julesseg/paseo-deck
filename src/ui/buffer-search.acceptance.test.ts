@@ -57,6 +57,7 @@ async function fixture(text = "", twoSessions = false) {
       void app.handleIntent(intent);
     },
     {
+      treeWidth: 34,
       openLink: (url) => {
         opened.push(url);
       },

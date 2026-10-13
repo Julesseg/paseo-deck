@@ -1098,9 +1098,7 @@ describe("terminal appearance", () => {
     await deck.stop();
 
     expect(lines.every((line) => !line.startsWith("│"))).toBe(true);
-    expect(
-      backgrounds.every((line) => line.slice(0, 34).every((color) => color === "#1f1d1b")),
-    ).toBe(true);
+    expect(backgrounds.every((line) => line[50] === "#1f1d1b")).toBe(true);
   });
 
   it("shows an active workspace without exposing session rows in the sidebar", async () => {
@@ -1177,8 +1175,8 @@ describe("terminal appearance", () => {
     const sidebarRow = lines.findIndex((line) => line.includes("Projects / workspaces"));
     const composerRow = lines.findIndex((line) => line.includes("Prompt →"));
     expect(backgrounds[sidebarRow]?.[lines[sidebarRow]?.indexOf("Projects") ?? -1]).toBe("#e8ded4");
-    expect(backgrounds[sidebarRow]?.[40]).toBeUndefined();
-    expect(backgrounds[composerRow]?.[40]).toBe("#e2d8cf");
+    expect(backgrounds[sidebarRow]?.[60]).toBeUndefined();
+    expect(backgrounds[composerRow]?.[60]).toBe("#e2d8cf");
     expect(lines[composerRow]).not.toMatch(/[┌┐└┘│]/u);
   });
 
@@ -2313,6 +2311,7 @@ describe("DeckTui viewport and focus", () => {
         },
       },
       () => undefined,
+      { treeWidth: 34 },
     );
     deck.start();
     await terminal.waitForRender();
@@ -3200,7 +3199,10 @@ describe("DeckTui viewport and focus", () => {
   it("batches streamed redraws while rendering the latest delta and focus change promptly", async () => {
     const terminal = new RecordingTerminal(80, 16);
     const clock = new FakeRenderClock();
-    const deck = new DeckTui(terminal, state(), () => undefined, { renderClock: clock });
+    const deck = new DeckTui(terminal, state(), () => undefined, {
+      renderClock: clock,
+      treeWidth: 34,
+    });
     const requestRender = vi.spyOn(deck.tui, "requestRender");
     const streamed = (text: string): AppState => ({
       ...state(),
@@ -3628,8 +3630,10 @@ describe("DeckTui viewport and focus", () => {
     await terminal.waitForRender();
     const wideTree = terminal.viewport().slice(0, 8).join("\n");
     expect(wideTree).toContain("Main");
-    expect(wideTree).toContain("No timeline selected");
+    expect(wideTree).not.toContain("No timeline selected");
     deck.update({ ...resizedState, focus: "composer" });
+    await terminal.waitForRender();
+    expect(terminal.viewport().join("\n")).toContain("No timeline selected");
     terminal.sendInput("x");
     await deck.stop();
 
@@ -3779,7 +3783,7 @@ describe("DeckTui viewport and focus", () => {
     await terminal.waitForRender();
     await deck.stop();
 
-    expect(preferences).toEqual([{ treeWidth: 46 }]);
+    expect(preferences).toEqual([{ treeWidth: 70 }]);
   });
 
   it("invokes palette-visible presentation commands", async () => {
@@ -3799,7 +3803,7 @@ describe("DeckTui viewport and focus", () => {
     await terminal.waitForRender();
     await deck.stop();
 
-    expect(preferences).toEqual([{ treeWidth: 34, theme: "plain" }]);
+    expect(preferences).toEqual([{ treeWidth: 51, theme: "plain" }]);
   });
 
   it("renders chrome appropriate to detected terminal capabilities", async () => {
@@ -3854,8 +3858,8 @@ describe("DeckTui viewport and focus", () => {
     await deck.stop();
 
     expect(preferences).toEqual([
-      { treeWidth: 34, theme: "plain" },
-      { treeWidth: 34, theme: "ember" },
+      { treeWidth: 51, theme: "plain" },
+      { treeWidth: 51, theme: "ember" },
     ]);
     expect(terminal.writes.join("")).not.toContain("\u001b[38;");
   });

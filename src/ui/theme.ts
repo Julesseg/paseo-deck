@@ -26,6 +26,9 @@ export type BackgroundTone =
   | "selection";
 
 export type DeckGlyph =
+  | "folder"
+  | "clock"
+  | "unavailable"
   | "agent"
   | "draft"
   | "expanded"
@@ -126,6 +129,9 @@ const surfaceOpacity: Readonly<Record<BackgroundTone, number>> = {
 };
 
 const unicodeGlyphs: Readonly<Record<DeckGlyph, string>> = {
+  folder: "▱",
+  clock: "◷",
+  unavailable: "—",
   agent: "•",
   draft: "✎",
   expanded: "▾",
@@ -140,6 +146,9 @@ const unicodeGlyphs: Readonly<Record<DeckGlyph, string>> = {
   end: "↓",
 };
 const asciiGlyphs: Readonly<Record<DeckGlyph, string>> = {
+  folder: "[/]",
+  clock: "[t]",
+  unavailable: "-",
   agent: "*",
   draft: "+",
   expanded: "v",

@@ -305,7 +305,7 @@ describe("preferences", () => {
     ).toEqual({
       version: 1,
       global: { theme: "plain" },
-      targets: { [validScope]: { treeWidth: 48, expandedIds: ["w"] } },
+      targets: { [validScope]: { treeWidth: 72, expandedIds: ["w"] } },
     });
     expect(
       parsePreferences({

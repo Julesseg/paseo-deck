@@ -149,6 +149,7 @@ it("keeps a character selection through reflow and a streaming replacement", asy
       void application.handleIntent(intent);
     },
     {
+      treeWidth: 34,
       copyText: (text) => {
         copied.push(text);
       },
@@ -200,6 +201,7 @@ it("moves a removed cursor entry to the nearest surviving entry and invalidates 
       void application.handleIntent(intent);
     },
     {
+      treeWidth: 34,
       copyText: (text) => {
         copied.push(text);
       },
@@ -245,6 +247,7 @@ it("invalidates a selection when its text is lost inside a surviving entry", asy
       void application.handleIntent(intent);
     },
     {
+      treeWidth: 34,
       copyText: (text) => {
         copied.push(text);
       },
@@ -444,6 +447,7 @@ it("keeps every reflowed row spanned by a line Visual selection", async () => {
       void application.handleIntent(intent);
     },
     {
+      treeWidth: 34,
       copyText: (text) => {
         copied.push(text);
       },
@@ -481,6 +485,7 @@ it("retains the saved Session selection while its history loads on return", asyn
       void application.handleIntent(intent);
     },
     {
+      treeWidth: 34,
       copyText: (text) => {
         copied.push(text);
       },
