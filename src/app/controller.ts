@@ -1406,13 +1406,13 @@ export class ApplicationController {
     )
       return;
     this.#acknowledgingCompletions.add(agentId);
-    void this.gateway
-      .acknowledgeAgentCompletion(agentId)
-      .catch((error) => {
+    void this.gateway.acknowledgeAgentCompletion(agentId).then(
+      () => this.#acknowledgingCompletions.delete(agentId),
+      (error) => {
         this.#acknowledgingCompletions.delete(agentId);
         this.reportError("Could not acknowledge the displayed Session's completion.", error);
-      })
-      .finally(() => this.#acknowledgingCompletions.delete(agentId));
+      },
+    );
   }
 
   private async openPermission(
