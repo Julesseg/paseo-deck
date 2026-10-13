@@ -1515,7 +1515,7 @@ export class ApplicationController {
       this.apply({
         type: "select-sidebar",
         selection: { kind: row.kind, id: row.id },
-        order: rows.map((item) => item.id),
+        order: this.sidebarOrder(),
         groups: this.sidebarGroups(),
       });
       return;
@@ -1538,6 +1538,22 @@ export class ApplicationController {
     );
   }
 
+  private sidebarOrder(): readonly string[] {
+    if (this.#state.sidebarOrder) return this.#state.sidebarOrder;
+    const expandedIds = new Set([
+      ...this.#state.expandedIds,
+      ...workspaceActivityGroups.map(([status]) => `activity:${status}`),
+      ...this.#state.directory.projects.map((project) => project.id),
+    ]);
+    return deriveTreeRows({
+      ...this.#state,
+      expandedIds,
+      filter: "",
+      attentionOnly: false,
+      showArchived: true,
+    }).map((row) => row.id);
+  }
+
   private captureSidebarPositions(): void {
     if (this.#state.focus !== "tree") return;
     const rows = deriveTreeRows(this.#state);
@@ -1548,7 +1564,7 @@ export class ApplicationController {
       this.apply({
         type: "select-sidebar",
         selection: { kind: row.kind, id: row.id },
-        order: rows.map((item) => item.id),
+        order: this.sidebarOrder(),
         groups: this.sidebarGroups(),
       });
   }
@@ -1566,7 +1582,7 @@ export class ApplicationController {
         kind: row.kind,
         id: row.id,
       },
-      order: deriveTreeRows(this.#state).map((item) => item.id),
+      order: this.sidebarOrder(),
       groups: this.sidebarGroups(),
     });
   }
@@ -1597,11 +1613,12 @@ export class ApplicationController {
       void previous?.release();
       this.apply({ type: "activate-workspace", workspaceId: selection.id });
       this.apply({ type: "set-filter", filter: "" });
-      await this.showActiveResource();
+      const resource = this.showActiveResource();
       this.apply({
         type: "set-focus",
         focus: this.#state.activeTerminalId ? "timeline" : "composer",
       });
+      await resource;
       return;
     }
   }
