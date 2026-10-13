@@ -77,12 +77,11 @@ jobs:
             find "$daemon_home" -depth -delete 2>/dev/null || true
           }
           trap cleanup EXIT
-          paseo daemon start \
-            --listen 127.0.0.1:17677 \
-            --no-relay \
-            --no-web-ui \
-            --no-mcp \
-            --home "$daemon_home"
+          paseo daemon config set daemon.listen 127.0.0.1:17677 --home "$daemon_home"
+          paseo daemon config set daemon.relay.enabled false --home "$daemon_home"
+          paseo daemon config set features.webUi.enabled false --home "$daemon_home"
+          paseo daemon config set daemon.mcp.enabled false --home "$daemon_home"
+          paseo daemon start --home "$daemon_home"
           npm run smoke:daemon -- --home "$daemon_home"
 
   check:
