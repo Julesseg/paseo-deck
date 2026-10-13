@@ -108,6 +108,7 @@ import {
   shortAgentId,
   timelineItemDisplay,
   toolBodyText,
+  workspaceActivityGlyph,
   workspaceTabs,
 } from "./view-model.js";
 
@@ -222,18 +223,16 @@ class TreeView implements Component {
         ...rows.flatMap((row) => {
           const selected = " ";
           const branch =
-            row.kind === "project"
+            row.kind !== "workspace"
               ? this.theme.glyph(row.expanded ? "expanded" : "collapsed")
               : this.theme.appearance.color === "none" ||
                   this.theme.appearance.theme === "plain" ||
                   this.theme.appearance.symbols === "ascii"
-                ? ({ attention: "A", working: "W", idle: "I", done: "D" } as const)[
-                    row.activity ?? "idle"
-                  ]
+                ? workspaceActivityGlyph(row.activity)
                 : this.theme.styleRendered(
-                    row.activity === "attention"
+                    ["attention", "needs_input", "failed"].includes(row.activity ?? "")
                       ? "attention"
-                      : row.activity === "working"
+                      : row.activity === "running"
                         ? "running"
                         : row.activity === "done"
                           ? "muted"
@@ -244,7 +243,7 @@ class TreeView implements Component {
             `${selected}${"  ".repeat(row.depth)}${branch} ${sanitizeTerminalText(row.label)}`,
             innerWidth,
           );
-          const tone = row.attention ? "attention" : row.kind === "project" ? "header" : "muted";
+          const tone = row.attention ? "attention" : row.kind !== "workspace" ? "header" : "muted";
           const fill = (line: string): string =>
             `${line}${" ".repeat(Math.max(0, innerWidth - terminalDisplayWidth(line)))}`;
           const background =

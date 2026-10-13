@@ -34,7 +34,12 @@ import {
 } from "../state/store.js";
 import type { UiIntent } from "../ui/controller.js";
 import { sanitizeTerminalText } from "../ui/text-safety.js";
-import { deriveTreeRows, type TreeRow, workspaceTabs } from "../ui/view-model.js";
+import {
+  deriveTreeRows,
+  type TreeRow,
+  workspaceActivityGroups,
+  workspaceTabs,
+} from "../ui/view-model.js";
 
 export interface ApplicationControllerOptions {
   onQuit?: () => void | Promise<void>;
@@ -136,7 +141,11 @@ export class ApplicationController {
         update: { type: "connection-changed", state: "connected" },
       });
       if (!this.#state.selectedWorkspaceId) {
-        const expandedIds = new Set(this.#state.directory.projects.map((project) => project.id));
+        const expandedIds = new Set([
+          ...this.#state.expandedIds,
+          ...workspaceActivityGroups.map(([status]) => `activity:${status}`),
+          ...this.#state.directory.projects.map((project) => project.id),
+        ]);
         const first = deriveTreeRows({ ...this.#state, expandedIds }).find(
           (row) => row.kind === "workspace",
         );
@@ -535,9 +544,24 @@ export class ApplicationController {
       case "toggle-tree-order":
         this.apply({
           type: "set-tree-order",
-          order: this.#state.treeOrder === "alphabetical" ? "attention" : "alphabetical",
+          order: this.#state.treeOrder === "alphabetical" ? "recent" : "alphabetical",
         });
+        this.captureSidebarPositions();
         return;
+      case "toggle-tree-grouping": {
+        this.apply({
+          type: "set-tree-grouping",
+          grouping: (this.#state.treeGrouping ?? "status") === "status" ? "project" : "status",
+        });
+        const selectedWorkspace =
+          this.#state.sidebarSelection?.kind === "workspace"
+            ? this.#state.sidebarSelection.id
+            : undefined;
+        if (selectedWorkspace)
+          this.apply({ type: "reveal-workspace", workspaceId: selectedWorkspace });
+        this.captureSidebarPositions();
+        return;
+      }
       case "toggle-archived":
         this.apply({ type: "toggle-archived" });
         return;
@@ -1492,10 +1516,41 @@ export class ApplicationController {
         type: "select-sidebar",
         selection: { kind: row.kind, id: row.id },
         order: rows.map((item) => item.id),
+        groups: this.sidebarGroups(),
       });
       return;
     }
     this.apply({ type: "set-focus", focus: "tree" });
+  }
+
+  private sidebarGroups(): NonNullable<AppState["sidebarGroups"]> {
+    return Object.fromEntries(
+      this.#state.directory.workspaces.map((workspace) => [
+        workspace.id,
+        (this.#state.treeGrouping ?? "status") === "status"
+          ? workspace.status
+            ? `activity:${workspace.status}`
+            : null
+          : this.#state.directory.projects.some((project) => project.id === workspace.projectId)
+            ? (workspace.projectId ?? null)
+            : null,
+      ]),
+    );
+  }
+
+  private captureSidebarPositions(): void {
+    if (this.#state.focus !== "tree") return;
+    const rows = deriveTreeRows(this.#state);
+    const selection = this.#state.sidebarSelection;
+    const row =
+      rows.find((item) => item.id === selection?.id && item.kind === selection.kind) ?? rows[0];
+    if (row)
+      this.apply({
+        type: "select-sidebar",
+        selection: { kind: row.kind, id: row.id },
+        order: rows.map((item) => item.id),
+        groups: this.sidebarGroups(),
+      });
   }
 
   private async moveSelectionBoundary(boundary: "start" | "end"): Promise<void> {
@@ -1512,12 +1567,13 @@ export class ApplicationController {
         id: row.id,
       },
       order: deriveTreeRows(this.#state).map((item) => item.id),
+      groups: this.sidebarGroups(),
     });
   }
 
   private collapseOrExpand(direction: -1 | 1): void {
     const selection = this.#state.sidebarSelection;
-    const id = selection?.kind === "project" ? selection.id : undefined;
+    const id = selection && selection.kind !== "workspace" ? selection.id : undefined;
     if (!id) return;
     const expanded = this.#state.expandedIds.has(id);
     if ((direction === 1 && !expanded) || (direction === -1 && expanded)) {
@@ -1527,6 +1583,10 @@ export class ApplicationController {
 
   private async openSelection(): Promise<void> {
     const selection = this.#state.sidebarSelection;
+    if (selection && selection.kind !== "workspace") {
+      this.apply({ type: "toggle-expanded", id: selection.id });
+      return;
+    }
     if (selection?.kind === "workspace") {
       if (!this.#state.directory.workspaces.some((workspace) => workspace.id === selection.id))
         return;

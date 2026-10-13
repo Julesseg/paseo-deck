@@ -2,7 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { chmod, mkdir, open, readFile, rename, rm } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join, normalize, resolve } from "node:path";
-import type { AppState, TreeOrder } from "../contracts/app-state.js";
+import type { AppState, SidebarGrouping, TreeOrder } from "../contracts/app-state.js";
 import { createInitialState } from "../state/store.js";
 import type { ThemeId } from "../ui/capabilities.js";
 import { adjustTreeWidth } from "../ui/layout.js";
@@ -11,6 +11,7 @@ import type { TargetArgument } from "./arguments.js";
 export interface TargetPreferences {
   treeWidth?: number;
   treeOrder?: TreeOrder;
+  treeGrouping?: SidebarGrouping;
   showArchived?: boolean;
   expandedIds?: string[];
 }
@@ -320,8 +321,13 @@ function parseTargetPreference(value: unknown): TargetPreferences | undefined {
     ...(typeof record.treeWidth === "number" && Number.isFinite(record.treeWidth)
       ? { treeWidth: adjustTreeWidth(record.treeWidth, 0) }
       : {}),
-    ...(record.treeOrder === "attention" || record.treeOrder === "alphabetical"
+    ...(record.treeOrder === "recent" ||
+    record.treeOrder === "attention" ||
+    record.treeOrder === "alphabetical"
       ? { treeOrder: record.treeOrder }
+      : {}),
+    ...(record.treeGrouping === "status" || record.treeGrouping === "project"
+      ? { treeGrouping: record.treeGrouping }
       : {}),
     ...(typeof record.showArchived === "boolean" ? { showArchived: record.showArchived } : {}),
     ...(Array.isArray(record.expandedIds) &&
@@ -343,6 +349,7 @@ export function preferenceProjection(
       [scope]: {
         treeWidth: adjustTreeWidth(treeWidth, 0),
         treeOrder: state.treeOrder,
+        treeGrouping: state.treeGrouping ?? "status",
         showArchived: state.showArchived,
         expandedIds: [...state.expandedIds].sort(),
       },
@@ -356,7 +363,10 @@ export function applyTargetPreferences(
   if (!preference) return state;
   return {
     ...state,
-    ...(preference.treeOrder ? { treeOrder: preference.treeOrder } : {}),
+    ...(preference.treeOrder
+      ? { treeOrder: preference.treeOrder === "attention" ? "recent" : preference.treeOrder }
+      : {}),
+    ...(preference.treeGrouping ? { treeGrouping: preference.treeGrouping } : {}),
     ...(preference.showArchived === undefined ? {} : { showArchived: preference.showArchived }),
     ...(preference.expandedIds ? { expandedIds: new Set(preference.expandedIds) } : {}),
   };

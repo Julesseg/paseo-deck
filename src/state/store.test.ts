@@ -269,7 +269,8 @@ describe("application store", () => {
   it("keeps tree triage preferences explicit and independently toggleable", () => {
     let state = createInitialState();
     expect(state).toMatchObject({
-      treeOrder: "attention",
+      treeOrder: "recent",
+      treeGrouping: "status",
       showArchived: false,
       attentionOnly: false,
     });
@@ -324,7 +325,9 @@ describe("application store", () => {
       update: { type: "agent-upserted", agent: { ...changed, title: "Changed" } },
     });
     expect(state.selectedAgentId).toBe("agent-a");
-    expect(state.expandedIds).toEqual(new Set(["project-a", "workspace-a"]));
+    expect(state.expandedIds).toEqual(
+      new Set([...createInitialState().expandedIds, "project-a", "workspace-a"]),
+    );
     expect(state.filter).toBe("no match");
   });
 
@@ -364,7 +367,9 @@ describe("application store", () => {
     state = reduceApp(state, { type: "directory", update });
     expect(state.selectedAgentId).toBe("agent-a");
     expect(state.selectedWorkspaceId).toBe("workspace-a");
-    expect(state.expandedIds).toEqual(new Set(["project-a", "workspace-a"]));
+    expect(state.expandedIds).toEqual(
+      new Set([...createInitialState().expandedIds, "project-a", "workspace-a"]),
+    );
   });
 
   it("chooses the next surviving sibling when a selected workspace or project disappears", () => {

@@ -772,8 +772,16 @@ export const deckCommands: readonly DeckCommand[] = [
     intent: () => ({ type: "open-permissions" }),
   },
   {
+    id: "toggle-grouping",
+    label: "Toggle Status/Project grouping",
+    group: "Workspaces",
+    shortcuts: ["s"],
+    contexts: ["tree"],
+    intent: () => ({ type: "toggle-tree-grouping" }),
+  },
+  {
     id: "toggle-order",
-    label: "Toggle tree ordering",
+    label: "Toggle recent activity/alphabetical ordering",
     group: "Sessions",
     shortcuts: ["o"],
     contexts: ["tree"],

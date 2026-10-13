@@ -1036,9 +1036,10 @@ describe("terminal appearance", () => {
       ...base,
       directory: {
         ...base.directory,
-        workspaces: ["attention", "working", "idle", "done"].map((id) => ({
+        workspaces: ["attention", "running", "needs_input", "done"].map((id) => ({
           id,
           title: id.slice(0, 1).toUpperCase() + id.slice(1),
+          status: id as "attention" | "running" | "needs_input" | "done",
           directory: `/${id}`,
           archived: false,
         })),
@@ -1047,6 +1048,12 @@ describe("terminal appearance", () => {
           { ...agent, id: "ended", workspaceId: "done", status: "stopped", needsAttention: false },
         ],
       },
+      expandedIds: new Set([
+        "activity:attention",
+        "activity:running",
+        "activity:needs_input",
+        "activity:done",
+      ]),
       workspaceTerminals: {
         working: [
           {
@@ -1070,8 +1077,8 @@ describe("terminal appearance", () => {
       .join("\n");
     await deck.stop();
     expect(sidebar).toMatch(/A Attention/);
-    expect(sidebar).toMatch(/W Working/);
-    expect(sidebar).toMatch(/I Idle/);
+    expect(sidebar).toMatch(/R Running/);
+    expect(sidebar).toMatch(/W Needs_input/);
     expect(sidebar).toMatch(/D Done/);
     expect(sidebar).not.toContain("Hidden session");
     expect(sidebar).not.toContain("/working");
@@ -3546,6 +3553,8 @@ describe("DeckTui viewport and focus", () => {
     await terminal.waitForRender();
     expect(terminal.viewport().join("\n")).not.toContain("Tab  Focus next pane");
     terminal.sendInput("G");
+    terminal.sendInput("k");
+    await terminal.waitForRender();
     terminal.sendInput("k");
     await terminal.waitForRender();
     expect(terminal.viewport().join("\n")).toContain("h / Left  Collapse selected branch");

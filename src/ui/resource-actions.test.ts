@@ -1,6 +1,7 @@
 import { expect, it } from "vitest";
 import { ApplicationController } from "../app/controller.js";
 import { FakePaseoGateway } from "../paseo/fake-gateway.js";
+import { createInitialState } from "../state/store.js";
 import { RecordingTerminal } from "./terminal.js";
 import { DeckTui } from "./views.js";
 
@@ -30,7 +31,9 @@ async function fixture() {
     ],
   };
   const gateway = new FakePaseoGateway(snapshot);
-  const app = new ApplicationController(gateway);
+  const app = new ApplicationController(gateway, {
+    initialState: { ...createInitialState(), treeGrouping: "project", expandedIds: new Set() },
+  });
   await app.start();
   const terminal = new RecordingTerminal(120, 35);
   const deck = new DeckTui(terminal, app.state, (intent) => {
