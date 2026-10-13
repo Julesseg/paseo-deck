@@ -119,6 +119,47 @@ const shots: Array<{
   appearance?: TerminalAppearance;
   input?: readonly string[];
 }> = [
+  ...(
+    [
+      ["long-settings", 100, 28, sampledTerminalAppearance],
+      ["wide", 160, 36, sampledTerminalAppearance],
+      ["narrow", 52, 18, sampledTerminalAppearance],
+      ["short", 30, 12, sampledTerminalAppearance],
+      ["scrolling", 30, 12, sampledTerminalAppearance],
+      ["light", 100, 28, { ...sampledTerminalAppearance, background: [240, 230, 220] }],
+      ["plain", 100, 28, { color: "none", unicode: true, theme: "plain", symbols: "unicode" }],
+      ["ascii", 100, 28, { color: "none", unicode: false, theme: "plain", symbols: "ascii" }],
+    ] satisfies Array<[string, number, number, TerminalAppearance]>
+  ).map(([name, columns, rows, appearance]) => ({
+    name: `composer-layout-${name}`,
+    columns,
+    rows,
+    appearance,
+    state: {
+      ...baseState,
+      focus: "composer" as const,
+      composerMode: "insert" as const,
+      directory: {
+        ...baseState.directory,
+        agents: baseState.directory.agents.map((agent) =>
+          agent.id === "agent-atlas-1234"
+            ? {
+                ...agent,
+                modelId: "model-with-a-long-configuration-name",
+                thinkingLevel: "high",
+                modeId: "plan",
+              }
+            : agent,
+        ),
+      },
+      timeline: { ...baseState.timeline, usage: { contextTokens: 123456789 } },
+    },
+    input: [
+      name === "scrolling"
+        ? `\u001b[200~${Array.from({ length: 15 }, (_, index) => `line ${index}`).join("\n")}\u001b[201~`
+        : "\u001b[200~Review the Composer layout.\nKeep this prompt intact.\nCursor stays here.\u001b[201~",
+    ],
+  })),
   {
     name: "command-palette-appearance",
     columns: 100,
@@ -1653,6 +1694,8 @@ for (const shot of shots.filter(
 await writeFile(join(outputDirectory, "manifest.json"), JSON.stringify(manifest, null, 2));
 
 function captureRequirements(name: string): string {
+  if (name.startsWith("composer-layout"))
+    return "#102; Composer spacing, removed bottom status row, complete padded token count and editor sizing";
   if (name.includes("search")) return "#72 appendix 2/14; bottom Main query and retained settings";
   if (name.includes("new-workspace") || name.startsWith("launch"))
     return "#72 appendix 19; Project/placement/Base/first Tab and partial-success states";
