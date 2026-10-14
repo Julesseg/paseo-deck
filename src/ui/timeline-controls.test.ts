@@ -183,9 +183,7 @@ it("counts multiply, underscore equals caret, bare percent matches and unsupport
   }
 });
 it("Normal half-page scroll keeps the screen row and desired column", async () => {
-  const f = await fixture(
-    Array.from({ length: 60 }, (_, i) => `long row ${i} content`).join("\n\n"),
-  );
+  const f = await fixture(Array.from({ length: 60 }, (_, i) => `long row ${i} content`).join("\n"));
   try {
     await f.keys("\u000b", "g", "g", "^", "5", "l");
     const before = f.terminal.viewportCursor();
@@ -238,7 +236,7 @@ it("links and folds are Normal-only and a missing link preserves clipboard", asy
   }
 });
 it("page controls move the active Visual endpoint while half-pages can leave it offscreen", async () => {
-  const f = await fixture(Array.from({ length: 70 }, (_, i) => `page ${i}`).join("\n\n"));
+  const f = await fixture(Array.from({ length: 70 }, (_, i) => `page ${i}`).join("\n"));
   try {
     await f.keys("\u000b", "g", "g", "^", "v", "\u0004", "\u0004");
     expect(f.terminal.writes.at(-1)).toContain("\u001b[?25l");

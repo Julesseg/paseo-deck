@@ -90,3 +90,15 @@ Sequential 1,000-item Unicode/no-color application-write p95 benchmarks passed: 
 Matched captures compare the prior accepted revision `18237ad` with this change using common fixtures and its real preference parser for the old alphabetical setting. They cover status icons, all ten native label hues in light/dark, constrained clipping, both grouping modes, recent-order migration and Timeline/Composer regression states. The local standalone report and final-head CI are linked from PR #104. Physical terminal font/theme painting and ANSI16/256 palette appearance remain unverified; the captures record RGB cells with simulated default/indexed foregrounds.
 
 The final follow-up uses the same shared Unicode/ASCII endcap characters for Workspace labels and Tabs, with cap foreground matching each tinted label background. Full terminal/controller/store checks verify both label and actual Tab frames. Final `npm run check`: 62 files / 896 tests, Biome, TypeScript, coverage, build and packed executable smoke passed; statements 89.07%, branches 81.38%, functions 86.23%, lines 91.25%. Both reviews remain clear.
+
+## Stable Main search row, 2026-10-14 UTC
+
+The bottom Main query row is now always allocated and blank when inactive. Composer and Timeline search use that row without changing the Composer heading, editor or settings positions. Search cancel and confirm restore the blank row. This applies to direct Terminal and empty Workspace Main panes as well.
+
+The editor height budget and provider suggestion anchor account for the same reserved height. The budget also retains the nonshrinking Session activity row, preventing long prompt settings from being cropped. The original terminal/controller/store repro moved all three Composer positions from rows 23/25/27 to 22/24/26 when search opened; the fixed regression holds those positions through open/cancel/confirm in desktop, narrow and 30×12 layouts. Completion placement, cursor visibility, literal Terminal input, draft preservation and read-only search remain covered.
+
+`npm run check` passed 62 files / 902 tests, Biome, TypeScript, coverage, build and packed executable smoke. Coverage: statements 89.07%, branches 81.4%, functions 86.22%, lines 91.25%. Standards and Spec reviews have no remaining findings. Half-page fixtures use uniform text rows so their column assertions test text rather than incidental blank-row landing after the reduced viewport; real-blank navigation cases remain covered.
+
+Sequential 1,000-item Unicode/no-color application-write p95 benchmarks passed: Sidebar 15.814750000000004 ms at 13:14:12.523 UTC, Timeline 15.668083000000024 ms at 13:14:16.783 UTC, Composer 16.17554199999995 ms at 13:14:20.001 UTC. The fixture, measurement boundary and physical-evidence limits above remain applicable.
+
+Matched before/after captures use the prior accepted revision `2964e2d` and shared fixtures. They cover closed/open/canceled/confirmed Composer and Timeline search, narrow/short/light appearances, anchored provider suggestions, direct Terminal and empty Workspace integration. The local report and final-head CI are linked from PR #104.

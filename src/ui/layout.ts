@@ -5,6 +5,7 @@ export const DEFAULT_TREE_WIDTH = 51;
 export const MAX_TREE_WIDTH = 72;
 export const NARROW_SIDEBAR_BREAKPOINT = 70;
 export const NARROW_SIDEBAR_WIDTH = "90%";
+export const MAIN_QUERY_HEIGHT = 1;
 
 export interface ShellLayout {
   supported: boolean;

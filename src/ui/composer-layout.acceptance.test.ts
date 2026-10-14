@@ -124,7 +124,7 @@ it("separates the editor from its heading and settings and removes the bottom st
     expect(settings).toBe(last + 2);
     expect(lines[heading + 1]?.slice(37).trim()).toBe("");
     expect(lines[last + 1]?.slice(37).trim()).toBe("");
-    expect(settings).toBe(27);
+    expect(settings).toBe(26);
     expect(lines.join("\n")).not.toMatch(/provider\/|connected|permissions 0/u);
     expect(f.terminal.viewportCursor()).toEqual({ row: last, column: 47 });
   } finally {
@@ -161,6 +161,64 @@ it.each([
       expect(f.terminal.viewport().join("\n")).toContain("context 123456789");
       await f.keys("u");
       expect(f.app.state.composer.drafts.a).toBe("");
+      expect(f.gateway.commands).toEqual([]);
+    } finally {
+      await f.close();
+    }
+  },
+);
+
+it.each([
+  ["composer", 100, 28],
+  ["timeline", 100, 28],
+  ["composer", 52, 18],
+  ["timeline", 52, 18],
+  ["composer", 30, 12],
+  ["timeline", 30, 12],
+] as const)(
+  "reserves the bottom search row so %s search never moves the Composer at %ix%i",
+  async (origin, columns, rows) => {
+    const f = await fixture(columns, rows);
+    try {
+      f.gateway.emitTimeline("a", {
+        type: "hydrated",
+        agentId: "a",
+        items: [
+          {
+            epoch: "search",
+            sequence: 1,
+            item: {
+              id: "search-body",
+              type: "assistant-message",
+              messageId: "search-body",
+              text: "needle timeline content",
+            },
+          },
+        ],
+      });
+      await f.keys("i", "needle draft", "\u001b");
+      if (origin === "timeline") await f.keys("\u000b");
+      const geometry = () => {
+        const lines = f.terminal.viewport();
+        return [
+          lines.findIndex((line) => line.includes("Prompt")),
+          lines.findIndex((line) => line.includes("needle draft")),
+          lines.findIndex((line) => line.includes("context 123456789")),
+        ];
+      };
+      const before = geometry();
+      expect(before.every((row) => row >= 0)).toBe(true);
+      await f.keys("/", "needle");
+      expect(geometry()).toEqual(before);
+      expect(f.terminal.viewport().at(-1)).toContain("/ needle");
+      expect(f.terminal.viewportCursor().row).toBe(f.terminal.rows - 1);
+      await f.keys("\u001b");
+      expect(geometry()).toEqual(before);
+      expect(f.terminal.viewport().at(-1)?.trim()).toBe("");
+      await f.keys("?", "needle", "\r");
+      expect(geometry()).toEqual(before);
+      expect(f.terminal.viewport().at(-1)?.trim()).toBe("");
+      expect(f.app.state.composer.drafts.a).toBe("needle draft");
       expect(f.gateway.commands).toEqual([]);
     } finally {
       await f.close();

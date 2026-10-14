@@ -61,6 +61,7 @@ import { ownedInputTerminal } from "./input.js";
 import {
   adjustTreeWidth,
   DEFAULT_TREE_WIDTH,
+  MAIN_QUERY_HEIGHT,
   MIN_TERMINAL_COLUMNS,
   MIN_TERMINAL_ROWS,
   MIN_TREE_WIDTH,
@@ -2088,12 +2089,15 @@ class ComposerView implements Component, Focusable {
     const minimumTimelineHeight = 3;
     const tabHeight =
       !activeLaunchWorkspaceId(this.state) && workspaceTabs(this.state).length > 0 ? 1 : 0;
+    const activityHeight = this.tui.terminal.rows - tabHeight >= 24 ? 1 : 0;
     const editorHeight = Math.max(
       1,
       this.tui.terminal.rows -
         composerChromeHeight -
         minimumTimelineHeight -
         tabHeight -
+        activityHeight -
+        MAIN_QUERY_HEIGHT -
         workspaceControlRows(this.state, this.theme, innerWidth).length,
     );
     const cursorRow = Math.max(
@@ -2190,7 +2194,8 @@ class ComposerView implements Component, Focusable {
         : terminalDisplayWidth(
             row?.text.slice(0, Math.max(0, suggestions.reference.start - (row?.offset ?? 0))) ?? "",
           );
-    const anchorRow = this.tui.terminal.rows - height + 2 + visibleRow - editorStart;
+    const anchorRow =
+      this.tui.terminal.rows - height - MAIN_QUERY_HEIGHT + 2 + visibleRow - editorStart;
     const menuHeight = Math.min(5, suggestions.items.length, anchorRow);
     const menuWidth = Math.min(46, width, this.tui.terminal.columns);
     this.completionOverlayOptions.width = menuWidth;
@@ -3483,12 +3488,11 @@ export class DeckTui {
             },
             {
               component: {
-                render: (width: number) => this.bufferQuery?.field.render(width) ?? [],
+                render: (width: number) => this.bufferQuery?.field.render(width) ?? [""],
                 invalidate: () => {},
               },
-              basis: 1,
-              minSize: 1,
-              visible: () => Boolean(this.bufferQuery),
+              basis: MAIN_QUERY_HEIGHT,
+              minSize: MAIN_QUERY_HEIGHT,
             },
           ]),
           mainWidth,

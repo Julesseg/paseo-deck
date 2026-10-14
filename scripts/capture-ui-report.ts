@@ -2071,6 +2071,64 @@ for (const grouping of ["status", "project"] as const) {
   });
 }
 
+for (const origin of ["composer", "timeline"] as const) {
+  for (const stage of ["closed", "open", "canceled", "confirmed"] as const) {
+    const input = [
+      "i",
+      "needle saved draft",
+      "\u001b",
+      ...(origin === "timeline" ? ["\u000b"] : []),
+      ...(stage === "closed"
+        ? []
+        : [
+            "/",
+            "needle",
+            ...(stage === "canceled" ? ["\u001b"] : stage === "confirmed" ? ["\r"] : []),
+          ]),
+    ];
+    shots.push({
+      name: `search-slot-${origin}-desktop-${stage}`,
+      columns: 100,
+      rows: 28,
+      appearance: sampledTerminalAppearance,
+      state: {
+        ...withTimeline(baseState, "search-slot", [
+          {
+            id: "search-slot-message",
+            type: "assistant-message",
+            messageId: "search-slot-message",
+            text: "needle Timeline content",
+          },
+        ]),
+        focus: "composer",
+        composerMode: "normal",
+        composer: { ...baseState.composer, drafts: {} },
+      },
+      input,
+    });
+  }
+}
+for (const [mode, columns, rows, appearance] of [
+  ["narrow", 52, 18, sampledTerminalAppearance],
+  ["short", 30, 12, sampledTerminalAppearance],
+  ["light", 100, 28, { ...sampledTerminalAppearance, background: [240, 230, 220] }],
+] as const) {
+  for (const stage of ["closed", "open"] as const)
+    shots.push({
+      name: `search-slot-composer-${mode}-${stage}`,
+      columns,
+      rows,
+      appearance: appearance as TerminalAppearance,
+      state: {
+        ...baseState,
+        focus: "composer",
+        composerMode: "normal",
+        composer: { ...baseState.composer, drafts: {} },
+      },
+      input: ["i", "needle saved draft", "\u001b", ...(stage === "open" ? ["/", "needle"] : [])],
+    });
+}
+
 // Populate interactive Composer selections through actual editing so cursor history is reproducible.
 for (const shot of shots) {
   if (!shot.name.startsWith("composer-visual")) continue;

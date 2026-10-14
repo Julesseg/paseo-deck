@@ -295,6 +295,8 @@ All inherit ordinary single-line editing and Deck globals. Buffer query text is 
 | Rename Session/Workspace/Terminal | Enter | Trim surrounding whitespace and save nonempty valid name; unchanged name closes. Failure/invalid name keeps input for correction. |
 | Rename Session/Workspace/Terminal | Esc | Cancel and restore origin. |
 
+The Main pane always reserves one blank bottom row. Composer and Timeline search input occupies that row without moving the Composer.
+
 These fields have no local picker-navigation exception unless they actually own a selectable result list. Ctrl-K focuses Timeline. Their local undo cannot reverse the underlying prompt, an applied setting or a saved rename. Plain n/N and g? are text during entry.
 
 ## 15. Help and Error details
