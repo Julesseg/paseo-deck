@@ -76,6 +76,45 @@ it("uses colored label text on a neutral ANSI background", async () => {
     await f.close();
   }
 });
+it.each(["unicode", "ascii"] as const)(
+  "uses the Tab pill endcaps around Workspace labels in %s",
+  async (symbols) => {
+    const agent = {
+      id: "label-session",
+      workspaceId: "w",
+      title: "Label tab",
+      status: "idle" as const,
+      archived: false,
+      availableModeIds: [],
+      availableThinkingLevels: [],
+      pendingPermissions: [],
+      needsAttention: false,
+    };
+    const f = await fixture(
+      {
+        appearance: { color: "truecolor", unicode: symbols === "unicode", theme: "ember", symbols },
+      },
+      { treeGrouping: "project", expandedIds: new Set(["p"]) },
+      {
+        ...directory,
+        agents: [agent],
+        workspaceLabels: [{ name: "urgent", color: "red" }],
+        workspaces: directory.workspaces.map((workspace) => ({ ...workspace, labels: ["urgent"] })),
+      },
+    );
+    try {
+      const lines = await f.frame();
+      const caps = symbols === "unicode" ? ["", ""] : ["[", "]"];
+      expect(lines.some((line) => line.includes(`${caps[0]} urgent ${caps[1]}`))).toBe(true);
+      const tab = lines.find((line) => line.includes("Label tab"));
+      expect(tab).toContain(caps[0]);
+      expect(tab).toContain(caps[1]);
+    } finally {
+      await f.close();
+    }
+  },
+);
+
 it.each([
   ["dark", [28, 25, 23], "#512927", "#1f3e4b"],
   ["light", [240, 230, 220], "#eabcb4", "#b8d1d9"],

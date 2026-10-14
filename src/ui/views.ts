@@ -442,8 +442,7 @@ class SessionTabsView implements Component {
     const pieces = [this.theme.styleRendered("muted", leading)];
     for (const [index, tab] of tabs.entries()) {
       const tabStart = positions[index] ?? 0;
-      const cap =
-        this.theme.appearance.symbols === "unicode" ? (["", ""] as const) : (["[", "]"] as const);
+      const cap = this.theme.pillCaps();
       const segments = [
         { text: cap[0], kind: "cap" },
         { text: tab.label, kind: "body" },

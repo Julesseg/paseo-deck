@@ -225,7 +225,9 @@ export class DeckTheme {
 
   styleWorkspaceLabel(color: WorkspaceLabelRecord["color"], value: string): string {
     const safe = sanitizeTerminalText(value);
-    if (this.appearance.color === "none" || this.appearance.theme === "plain") return safe;
+    const [leading, trailing] = this.pillCaps();
+    if (this.appearance.color === "none" || this.appearance.theme === "plain")
+      return `${leading}${safe}${trailing}`;
     const accent = {
       violet: [139, 92, 246],
       sky: [14, 165, 233],
@@ -251,7 +253,7 @@ export class DeckTheme {
         amber: 93,
         blue: 94,
       }[color];
-      return `\u001b[${foreground};40m${safe}\u001b[0m`;
+      return `\u001b[30m${leading}\u001b[0m\u001b[${foreground};40m${safe}\u001b[0m\u001b[30m${trailing}\u001b[0m`;
     }
     const [red, green, blue] = blendBackground(this.backgroundColor("sidebar"), accent, 0.22);
     const cube = [red, green, blue].map((channel) =>
@@ -284,7 +286,12 @@ export class DeckTheme {
           ? "38;2;0;0;0"
           : "38;2;255;255;255"
         : String(foreground);
-    return `\u001b[${text};${background}m${safe}\u001b[0m`;
+    const cap = background.replace("48;", "38;");
+    return `\u001b[${cap}m${leading}\u001b[0m\u001b[${text};${background}m${safe}\u001b[0m\u001b[${cap}m${trailing}\u001b[0m`;
+  }
+
+  pillCaps(): readonly [string, string] {
+    return this.appearance.symbols === "unicode" ? ["", ""] : ["[", "]"];
   }
 
   /** Colours a pill endcap to match the tab body without filling its outside edge. */
