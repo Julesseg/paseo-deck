@@ -52,7 +52,7 @@ it("renders icon-only status with inline colored labels and clips labels before 
     await f.close();
   }
 });
-it("uses bright text for native labels mapped to dark ANSI backgrounds", async () => {
+it("uses colored label text on a neutral ANSI background", async () => {
   const f = await fixture(
     { appearance: { color: "ansi16", unicode: false, theme: "ember", symbols: "ascii" } },
     { treeGrouping: "project", expandedIds: new Set(["p"]) },
@@ -70,12 +70,75 @@ it("uses bright text for native labels mapped to dark ANSI backgrounds", async (
   );
   try {
     await f.frame();
-    expect(f.terminal.writes.join("")).toContain("\u001b[97;44m blue ");
-    expect(f.terminal.writes.join("")).toContain("\u001b[97;41m red ");
+    expect(f.terminal.writes.join("")).toContain("\u001b[94;40m blue ");
+    expect(f.terminal.writes.join("")).toContain("\u001b[91;40m red ");
   } finally {
     await f.close();
   }
 });
+it.each([
+  ["dark", [28, 25, 23], "#512927", "#1f3e4b"],
+  ["light", [240, 230, 220], "#eabcb4", "#b8d1d9"],
+] as const)(
+  "uses subdued native label tints in %s appearance",
+  async (_mode, background, red, sky) => {
+    const f = await fixture(
+      {
+        appearance: {
+          color: "truecolor",
+          unicode: true,
+          theme: "ember",
+          symbols: "unicode",
+          background,
+        },
+      },
+      { treeGrouping: "project", expandedIds: new Set(["p"]) },
+      {
+        ...directory,
+        workspaceLabels: [
+          { name: "urgent", color: "red" },
+          { name: "design", color: "sky" },
+        ],
+        workspaces: directory.workspaces.map((workspace) => ({
+          ...workspace,
+          labels: ["urgent", "design"],
+        })),
+      },
+    );
+    try {
+      const lines = await f.frame();
+      const row = lines.findIndex((line) => line.includes("urgent"));
+      expect(f.terminal.viewportBackgrounds()[row]?.[lines[row]?.indexOf("urgent") ?? -1]).toBe(
+        red,
+      );
+      expect(f.terminal.viewportBackgrounds()[row]?.[lines[row]?.indexOf("design") ?? -1]).toBe(
+        sky,
+      );
+    } finally {
+      await f.close();
+    }
+  },
+);
+
+it.each(["unicode", "ascii"] as const)(
+  "prefixes activity group headings with status icons in %s",
+  async (symbols) => {
+    const f = await fixture(
+      { appearance: { color: "none", unicode: symbols === "unicode", theme: "plain", symbols } },
+      { treeGrouping: "status" },
+    );
+    try {
+      const lines = await f.frame();
+      expect(lines.join("\n")).toContain(
+        symbols === "unicode" ? "▾ ◉ Ready to review" : "v A Ready to review",
+      );
+      expect(lines.join("\n")).toContain(symbols === "unicode" ? "▾ ✓ Done" : "v D Done");
+    } finally {
+      await f.close();
+    }
+  },
+);
+
 const directory: DirectorySnapshot = {
   projects: [{ id: "p", name: "Design project" }],
   providers: [],
@@ -279,7 +342,7 @@ it("keeps blank rows around headings and reveals both lines of the highlighted W
     await f.input("g");
     await f.input("g");
     const lines = await f.frame();
-    const heading = lines.findIndex((line) => line.includes("v Done"));
+    const heading = lines.findIndex((line) => line.includes("v D Done"));
     expect(lines[heading - 1]?.slice(0, 34).trim()).toBe("");
     expect(lines[heading + 1]?.slice(0, 34).trim()).toBe("");
     await f.input("j");

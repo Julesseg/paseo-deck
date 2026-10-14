@@ -5,7 +5,6 @@ import type {
   SidebarGrouping,
   TabId,
   TimelineNavigationState,
-  TreeOrder,
 } from "../contracts/app-state.js";
 import { emptyDirectory } from "../contracts/app-state.js";
 import type {
@@ -57,7 +56,6 @@ export type AppAction =
   | { type: "select-workspace"; workspaceId?: string }
   | { type: "select-project"; projectId?: string }
   | { type: "set-filter"; filter: string }
-  | { type: "set-tree-order"; order: TreeOrder }
   | { type: "set-tree-grouping"; grouping: SidebarGrouping }
   | { type: "toggle-archived" }
   | { type: "toggle-attention-only" }
@@ -1057,8 +1055,6 @@ export function reduceApp(state: AppState, action: AppAction): AppState {
     }
     case "set-filter":
       return { ...state, filter: action.filter };
-    case "set-tree-order":
-      return reduceApp({ ...state, treeOrder: action.order }, { type: "refresh-sidebar-order" });
     case "set-tree-grouping":
       return reduceApp(
         { ...state, treeGrouping: action.grouping },

@@ -629,7 +629,7 @@ describe("runCli", () => {
     expect(parsed.targets).toHaveProperty(targetScope({ type: "host", value: "b:1" }));
     expect(parsed.targets[targetScope({ type: "host", value: "a:1" })]).toMatchObject({
       treeWidth: 53,
-      treeOrder: "alphabetical",
+      treeOrder: "recent",
       showArchived: true,
       treeGrouping: "project",
       expandedIds: [

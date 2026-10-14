@@ -266,7 +266,7 @@ describe("application store", () => {
     });
   });
 
-  it("keeps tree triage preferences explicit and independently toggleable", () => {
+  it("keeps archive and attention filters independent with recent activity ordering", () => {
     let state = createInitialState();
     expect(state).toMatchObject({
       treeOrder: "recent",
@@ -274,11 +274,10 @@ describe("application store", () => {
       showArchived: false,
       attentionOnly: false,
     });
-    state = reduceApp(state, { type: "set-tree-order", order: "alphabetical" });
     state = reduceApp(state, { type: "toggle-archived" });
     state = reduceApp(state, { type: "toggle-attention-only" });
     expect(state).toMatchObject({
-      treeOrder: "alphabetical",
+      treeOrder: "recent",
       showArchived: true,
       attentionOnly: true,
     });

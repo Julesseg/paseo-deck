@@ -331,7 +331,7 @@ function parseTargetPreference(value: unknown): TargetPreferences | undefined {
     ...(record.treeOrder === "recent" ||
     record.treeOrder === "attention" ||
     record.treeOrder === "alphabetical"
-      ? { treeOrder: record.treeOrder }
+      ? { treeOrder: "recent" as const }
       : {}),
     ...(record.treeGrouping === "status" || record.treeGrouping === "project"
       ? { treeGrouping: record.treeGrouping }
@@ -371,9 +371,7 @@ export function applyTargetPreferences(
   if (!preference) return state;
   return {
     ...state,
-    ...(preference.treeOrder
-      ? { treeOrder: preference.treeOrder === "attention" ? "recent" : preference.treeOrder }
-      : {}),
+    ...(preference.treeOrder ? { treeOrder: preference.treeOrder } : {}),
     ...(preference.treeGrouping ? { treeGrouping: preference.treeGrouping } : {}),
     ...(preference.showArchived === undefined ? {} : { showArchived: preference.showArchived }),
     ...(preference.expandedIds ? { expandedIds: new Set(preference.expandedIds) } : {}),

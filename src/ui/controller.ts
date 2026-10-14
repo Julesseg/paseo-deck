@@ -79,7 +79,6 @@ export type UiIntent =
   | { type: "open-command-palette" }
   | { type: "invoke-command"; id: string }
   | { type: "open-filter" }
-  | { type: "toggle-tree-order" }
   | { type: "toggle-tree-grouping" }
   | { type: "toggle-archived" }
   | { type: "toggle-attention-only" }
@@ -466,6 +465,7 @@ export class DeckController {
         return true;
       }
       if (data === "i") return this.send({ type: "focus-composer-insert" });
+      if (data === "o") return true;
     }
     const normalBuffer =
       state.modal.type === "none" &&

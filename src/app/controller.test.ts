@@ -140,12 +140,11 @@ describe("ApplicationController", () => {
     const app = new ApplicationController(new FakePaseoGateway(snapshot));
     await app.start();
 
-    await app.handleIntent({ type: "toggle-tree-order" });
     await app.handleIntent({ type: "toggle-archived" });
     await app.handleIntent({ type: "toggle-attention-only" });
 
     expect(app.state).toMatchObject({
-      treeOrder: "alphabetical",
+      treeOrder: "recent",
       showArchived: true,
       attentionOnly: true,
     });

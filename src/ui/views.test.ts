@@ -50,7 +50,7 @@ function state(): AppState {
     },
     expandedIds: new Set(),
     filter: "",
-    treeOrder: "attention",
+    treeOrder: "recent",
     showArchived: false,
     attentionOnly: false,
     focus: "tree",

@@ -16,7 +16,7 @@ function state(text: string): AppState {
     directory: emptyDirectory(),
     expandedIds: new Set(),
     filter: "",
-    treeOrder: "attention",
+    treeOrder: "recent",
     showArchived: false,
     attentionOnly: false,
     focus: "timeline",

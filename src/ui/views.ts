@@ -243,7 +243,7 @@ class TreeView implements Component {
                     "●",
                   );
           const primary = this.theme.clipRendered(
-            `${selected}${"  ".repeat(row.depth)}${branch} ${sanitizeTerminalText(row.label)}`,
+            `${selected}${"  ".repeat(row.depth)}${branch} ${row.kind === "activity" ? `${workspaceActivityGlyph(row.activity, this.theme.appearance.symbols)} ` : ""}${sanitizeTerminalText(row.label)}`,
             innerWidth,
           );
           const tone = row.attention ? "attention" : row.kind !== "workspace" ? "header" : "muted";
@@ -281,12 +281,7 @@ class TreeView implements Component {
 
   private metadataLine(row: ReturnType<typeof deriveTreeRows>[number], width: number): string {
     const workspace = this.state.directory.workspaces.find((item) => item.id === row.id);
-    const icon =
-      this.theme.appearance.symbols === "ascii"
-        ? workspaceActivityGlyph(row.activity)
-        : row.activity
-          ? { needs_input: "?", failed: "×", attention: "◉", running: "▶", done: "✓" }[row.activity]
-          : "?";
+    const icon = workspaceActivityGlyph(row.activity, this.theme.appearance.symbols);
     const label =
       (this.state.treeGrouping ?? "status") === "project"
         ? icon

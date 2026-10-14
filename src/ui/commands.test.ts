@@ -39,7 +39,7 @@ function state(): AppState {
     selectedAgentId: "a",
     expandedIds: new Set(),
     filter: "",
-    treeOrder: "attention",
+    treeOrder: "recent",
     showArchived: false,
     attentionOnly: false,
     focus: "tree",
@@ -124,7 +124,7 @@ describe("command registry", () => {
     expect(commandById(current, "model")?.shortcuts).toEqual(["mm"]);
     expect(commandById(current, "thinking")?.id).toBe("thinking");
     expect(commandById(current, "operational-mode")?.id).toBe("operational-mode");
-    expect(commandForKey({ ...current, focus: "tree" }, "o")?.id).toBe("toggle-order");
+    expect(commandForKey({ ...current, focus: "tree" }, "o")).toBeUndefined();
     expect(contextualHelp(current).map((command) => command.id)).toContain("operational-mode");
     expect(contextualHelp(current).map((command) => command.id)).not.toContain("mode");
     expect(

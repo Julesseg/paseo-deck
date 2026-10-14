@@ -541,13 +541,6 @@ export class ApplicationController {
       case "open-filter":
         this.apply({ type: "open-modal", modal: { type: "filter", query: this.#state.filter } });
         return;
-      case "toggle-tree-order":
-        this.apply({
-          type: "set-tree-order",
-          order: this.#state.treeOrder === "alphabetical" ? "recent" : "alphabetical",
-        });
-        this.captureSidebarPositions();
-        return;
       case "toggle-tree-grouping": {
         this.apply({
           type: "set-tree-grouping",

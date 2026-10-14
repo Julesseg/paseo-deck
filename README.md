@@ -76,7 +76,7 @@ capabilities are reported as an actionable notification.
 ## Supported in v0.1
 
 - Project, workspace, and session discovery with filtering and attention markers
-- Attention-first or alphabetical ordering, archived visibility, persistent collapse state, and adjustable tree width
+- Most-recent activity first within each group, archived visibility, persistent collapse state, and adjustable tree width
 - Existing history plus live user, assistant, reasoning, tool, error, permission, and turn events
 - Timeline navigation by turn and error, source-text search, OSC 52 copy, and pause/follow indicators for streaming output
 - Follow-up prompts and provider/model-aware session creation

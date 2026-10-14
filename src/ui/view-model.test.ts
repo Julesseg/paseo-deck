@@ -230,11 +230,6 @@ describe("tree view model", () => {
       "w",
       "other",
     ]);
-    expect(
-      deriveTreeRows({ ...changed, focus: "composer", treeOrder: "alphabetical" }).map(
-        (row) => row.id,
-      ),
-    ).toEqual(["p", "b", "w", "other"]);
   });
 
   it("keeps newly revealed workspaces under their project without applying pending reorder", () => {

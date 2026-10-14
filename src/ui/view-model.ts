@@ -115,10 +115,16 @@ export const workspaceActivityGroups = [
   ["done", "Done"],
 ] as const;
 
-export function workspaceActivityGlyph(activity: NativeWorkspaceActivity | undefined): string {
-  return activity
-    ? { needs_input: "W", failed: "F", attention: "A", running: "R", done: "D" }[activity]
-    : "?";
+export function workspaceActivityGlyph(
+  activity: NativeWorkspaceActivity | undefined,
+  symbols: "unicode" | "ascii" = "ascii",
+): string {
+  if (!activity) return "?";
+  return (
+    symbols === "unicode"
+      ? { needs_input: "?", failed: "×", attention: "◉", running: "▶", done: "✓" }
+      : { needs_input: "W", failed: "F", attention: "A", running: "R", done: "D" }
+  )[activity];
 }
 
 export function workspaceActivityAt(
@@ -191,9 +197,7 @@ export function deriveTreeRows(state: AppState): TreeRow[] {
     [...items].sort(
       (left, right) =>
         compareFrozen(left.id, right.id) ||
-        (state.treeOrder !== "alphabetical"
-          ? activityTime(activityTimes.get(right.id)) - activityTime(activityTimes.get(left.id))
-          : 0) ||
+        activityTime(activityTimes.get(right.id)) - activityTime(activityTimes.get(left.id)) ||
         left.title.localeCompare(right.title) ||
         left.id.localeCompare(right.id),
     );
@@ -242,6 +246,7 @@ export function deriveTreeRows(state: AppState): TreeRow[] {
       rows.push({
         id,
         kind: "activity",
+        activity: status,
         label,
         depth: 0,
         expanded,

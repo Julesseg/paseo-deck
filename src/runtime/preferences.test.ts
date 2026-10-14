@@ -46,7 +46,7 @@ describe("preferences", () => {
         },
       },
     });
-    expect(parsed.targets[validScope]).toEqual({ treeOrder: "alphabetical" });
+    expect(parsed.targets[validScope]).toEqual({ treeOrder: "recent" });
     const restored = applyTargetPreferences(createInitialState(), parsed.targets[validScope]);
     expect(restored.tabOrder).toEqual({});
     expect(restored.activeTabIds).toEqual({});
@@ -213,7 +213,7 @@ describe("preferences", () => {
     const base = createInitialState();
     const state = {
       ...base,
-      treeOrder: "alphabetical" as const,
+      treeOrder: "recent" as const,
       showArchived: true,
       expandedIds: new Set(["project", "workspace"]),
       selectedAgentId: "SELECTION_MARKER",
@@ -284,7 +284,7 @@ describe("preferences", () => {
           treeWidth: 33,
           treeWidthVersion: 2,
           treeGrouping: "status",
-          treeOrder: "alphabetical",
+          treeOrder: "recent",
           showArchived: true,
           expandedIds: ["project", "workspace"],
         },
@@ -353,7 +353,7 @@ describe("preferences", () => {
       version: 1,
       global: { theme: "ember" },
       targets: {
-        [validScope]: { treeWidth: 28, treeOrder: "attention" },
+        [validScope]: { treeWidth: 28, treeOrder: "recent" },
         [otherScope]: { treeWidth: 44, showArchived: true, expandedIds: ["project"] },
       },
     });
@@ -419,7 +419,7 @@ describe("preferences", () => {
 
   it("seeds persisted expansion before hydration without retaining unrelated state", () => {
     const state = applyTargetPreferences(createInitialState(), {
-      treeOrder: "alphabetical",
+      treeOrder: "recent",
       expandedIds: ["project", "workspace"],
     });
     expect(state.expandedIds).toEqual(new Set(["project", "workspace"]));
@@ -566,7 +566,7 @@ describe("preferences", () => {
     a.present({ treeWidth: 26, theme: "plain" });
     a.observe({
       ...a.initialState(),
-      treeOrder: "alphabetical",
+      treeOrder: "recent",
       showArchived: true,
       expandedIds: new Set(["pa", "wa"]),
     });
@@ -580,7 +580,7 @@ describe("preferences", () => {
       { fs, path: "/p" },
     );
     expect(restored.initialState()).toMatchObject({
-      treeOrder: "alphabetical",
+      treeOrder: "recent",
       showArchived: true,
     });
     expect(restored.initialState().expandedIds).toEqual(new Set(["pa", "wa"]));

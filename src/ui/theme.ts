@@ -226,7 +226,7 @@ export class DeckTheme {
   styleWorkspaceLabel(color: WorkspaceLabelRecord["color"], value: string): string {
     const safe = sanitizeTerminalText(value);
     if (this.appearance.color === "none" || this.appearance.theme === "plain") return safe;
-    const [red, green, blue] = {
+    const accent = {
       violet: [139, 92, 246],
       sky: [14, 165, 233],
       emerald: [16, 185, 129],
@@ -238,7 +238,29 @@ export class DeckTheme {
       amber: [245, 158, 11],
       blue: [59, 130, 246],
     }[color] as [number, number, number];
-    const cube = [red, green, blue].map((channel) => Math.round((channel / 255) * 5));
+    if (this.appearance.color === "ansi16") {
+      const foreground = {
+        violet: 95,
+        sky: 96,
+        emerald: 92,
+        orange: 93,
+        pink: 95,
+        indigo: 94,
+        teal: 96,
+        red: 91,
+        amber: 93,
+        blue: 94,
+      }[color];
+      return `\u001b[${foreground};40m${safe}\u001b[0m`;
+    }
+    const [red, green, blue] = blendBackground(this.backgroundColor("sidebar"), accent, 0.22);
+    const cube = [red, green, blue].map((channel) =>
+      [0, 95, 135, 175, 215, 255].reduce(
+        (best, candidate, index, palette) =>
+          Math.abs(candidate - channel) < Math.abs((palette[best] ?? 0) - channel) ? index : best,
+        0,
+      ),
+    );
     const contrastChannels =
       this.appearance.color === "ansi256"
         ? cube.map((index) => [0, 95, 135, 175, 215, 255][index] ?? 0)
@@ -251,33 +273,11 @@ export class DeckTheme {
           (normalized <= 0.04045 ? normalized / 12.92 : ((normalized + 0.055) / 1.055) ** 2.4)
       );
     }, 0);
-    const foreground =
-      this.appearance.color === "ansi16"
-        ? color === "amber" || color === "orange"
-          ? 30
-          : 97
-        : (luminance + 0.05) / 0.05 > 1.05 / (luminance + 0.05)
-          ? 30
-          : 97;
+    const foreground = (luminance + 0.05) / 0.05 > 1.05 / (luminance + 0.05) ? 30 : 97;
     const background =
       this.appearance.color === "truecolor"
         ? `48;2;${red};${green};${blue}`
-        : this.appearance.color === "ansi256"
-          ? `48;5;${16 + 36 * (cube[0] ?? 0) + 6 * (cube[1] ?? 0) + (cube[2] ?? 0)}`
-          : String(
-              {
-                violet: 45,
-                sky: 46,
-                emerald: 42,
-                orange: 43,
-                pink: 45,
-                indigo: 44,
-                teal: 46,
-                red: 41,
-                amber: 43,
-                blue: 44,
-              }[color],
-            );
+        : `48;5;${16 + 36 * (cube[0] ?? 0) + 6 * (cube[1] ?? 0) + (cube[2] ?? 0)}`;
     const text =
       this.appearance.color === "truecolor"
         ? foreground === 30

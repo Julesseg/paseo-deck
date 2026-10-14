@@ -12,7 +12,7 @@ import type { TerminalProfile, TerminalRecord } from "./terminal.js";
 export type FocusArea = "tree" | "timeline" | "composer";
 export type ComposerMode = "normal" | "insert" | "visual";
 export type TimelineMode = "normal" | "visual";
-export type TreeOrder = "recent" | "attention" | "alphabetical";
+export type TreeOrder = "recent";
 export type SidebarGrouping = "status" | "project";
 export type SidebarSelection = { kind: "project" | "activity" | "workspace"; id: string };
 export type TabId = `session:${string}` | `terminal:${string}` | `draft:${string}`;

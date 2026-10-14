@@ -42,7 +42,7 @@ function makeState(): AppState {
     selectedWorkspaceId: "w",
     selectedAgentId: "a",
     filter: "",
-    treeOrder: "attention",
+    treeOrder: "recent",
     showArchived: false,
     attentionOnly: false,
     focus: "tree",
@@ -403,11 +403,7 @@ describe("DeckController keyboard seam", () => {
     controller.handleKey("v");
     controller.handleKey("!");
 
-    expect(intents).toEqual([
-      { type: "toggle-tree-order" },
-      { type: "toggle-archived" },
-      { type: "toggle-attention-only" },
-    ]);
+    expect(intents).toEqual([{ type: "toggle-archived" }, { type: "toggle-attention-only" }]);
   });
 
   it("emits bounded tree-width adjustment intents outside editable fields", () => {

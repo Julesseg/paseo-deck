@@ -4,7 +4,11 @@ import { join } from "node:path";
 import { ApplicationController } from "../src/app/controller.js";
 import type { AppState, SessionDraft } from "../src/contracts/app-state.js";
 import { FakePaseoGateway } from "../src/paseo/fake-gateway.js";
-import { parsePreferences, targetScope } from "../src/runtime/preferences.js";
+import {
+  applyTargetPreferences,
+  parsePreferences,
+  targetScope,
+} from "../src/runtime/preferences.js";
 import type { TerminalAppearance } from "../src/ui/capabilities.js";
 import { DEFAULT_TREE_WIDTH, shellLayout } from "../src/ui/layout.js";
 import { RecordingTerminal } from "../src/ui/terminal.js";
@@ -1956,6 +1960,117 @@ for (const grouping of ["status", "project"] as const) {
   }
 }
 
+for (const mode of ["dark", "light"] as const) {
+  const colors = [
+    "violet",
+    "sky",
+    "emerald",
+    "orange",
+    "pink",
+    "indigo",
+    "teal",
+    "red",
+    "amber",
+    "blue",
+  ] as const;
+  shots.push({
+    name: `sidebar-label-palette-${mode}`,
+    columns: 130,
+    rows: 45,
+    appearance: {
+      ...sampledTerminalAppearance,
+      background: mode === "dark" ? [28, 25, 23] : [240, 230, 220],
+    },
+    state: {
+      ...sidebarCaptureState,
+      treeGrouping: "project",
+      directory: {
+        ...sidebarCaptureState.directory,
+        workspaceLabels: colors.map((color) => ({ name: color, color })),
+        workspaces: colors.map((color) => ({
+          id: `palette-${color}`,
+          projectId: "sidebar-project",
+          title: `${color} Workspace`,
+          directory: "/demo/palette",
+          status: "done",
+          activityAt: new Date(12000 - 180000).toISOString(),
+          archived: false,
+          labels: [color],
+        })),
+        agents: [],
+      },
+      selectedWorkspaceId: "palette-violet",
+      sidebarSelection: { kind: "workspace", id: "palette-violet" },
+    },
+  });
+}
+for (const grouping of ["status", "project"] as const) {
+  const raw = JSON.stringify({
+    version: 1,
+    targets: { [targetScope({ type: "default" })]: { treeOrder: "alphabetical" } },
+  });
+  const preferences = parsePreferences(JSON.parse(raw)).targets[targetScope({ type: "default" })];
+  shots.push({
+    name: `sidebar-recent-order-${grouping}`,
+    columns: 130,
+    rows: 35,
+    appearance: sampledTerminalAppearance,
+    state: applyTargetPreferences(
+      {
+        ...sidebarCaptureState,
+        treeGrouping: grouping,
+        focus: "composer",
+        selectedWorkspaceId: "order-new",
+        sidebarSelection: { kind: "workspace", id: "order-new" },
+        directory: {
+          ...sidebarCaptureState.directory,
+          workspaces: [
+            {
+              id: "order-old",
+              projectId: "sidebar-project",
+              title: "Alpha old",
+              status: "done",
+              activityAt: new Date(12000 - 7200000).toISOString(),
+              directory: "/demo/old",
+              archived: false,
+            },
+            {
+              id: "order-new",
+              projectId: "sidebar-project",
+              title: "Zulu newest",
+              status: "done",
+              activityAt: null,
+              directory: "/demo/new",
+              archived: false,
+            },
+            {
+              id: "order-missing",
+              projectId: "sidebar-project",
+              title: "Missing activity",
+              status: "done",
+              activityAt: null,
+              directory: "/demo/missing",
+              archived: false,
+            },
+          ],
+          agents: [
+            {
+              ...overflowTemplate,
+              id: "order-session",
+              workspaceId: "order-new",
+              lastActivityAt: new Date(12000 - 180000).toISOString(),
+              pendingPermissions: [],
+              needsAttention: false,
+              status: "idle",
+            },
+          ],
+        },
+      },
+      preferences,
+    ),
+  });
+}
+
 // Populate interactive Composer selections through actual editing so cursor history is reproducible.
 for (const shot of shots) {
   if (!shot.name.startsWith("composer-visual")) continue;
@@ -2280,7 +2395,7 @@ function syntheticState(): AppState {
     selectedAgentId: "agent-atlas-1234",
     expandedIds: new Set(["live-project", "workspace-main", "workspace-theme", "workspace-orphan"]),
     filter: "",
-    treeOrder: "attention",
+    treeOrder: "recent",
     showArchived: false,
     attentionOnly: false,
     focus: "tree",

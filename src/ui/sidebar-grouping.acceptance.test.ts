@@ -3,7 +3,7 @@ import { ApplicationController } from "../app/controller.js";
 import type { AppState } from "../contracts/app-state.js";
 import type { DirectorySnapshot } from "../contracts/domain.js";
 import { FakePaseoGateway } from "../paseo/fake-gateway.js";
-import { PreferenceSession } from "../runtime/preferences.js";
+import { PreferenceSession, targetScope } from "../runtime/preferences.js";
 import { createInitialState } from "../state/store.js";
 import { RecordingTerminal } from "./terminal.js";
 import { DeckTui } from "./views.js";
@@ -196,10 +196,10 @@ it("restores grouping, ordering and heading expansion on the next launch", async
   const restored = await PreferenceSession.open({ type: "default" }, { fs });
   const restarted = await fixture(directory, restored.initialState());
   try {
-    expect(restarted.app.state.treeOrder).toBe("alphabetical");
+    expect(restarted.app.state.treeOrder).toBe("recent");
     expect(await restarted.frame()).toContain("Design project");
     expect(await restarted.frame()).toContain("Mixed workspace");
-    expect(await restarted.frame()).not.toContain("v Ready to review");
+    expect(await restarted.frame()).not.toContain("v A Ready to review");
     await restarted.input("\u0013");
     await restarted.input("s");
     expect(await restarted.frame()).toContain("Ready to review");
@@ -208,7 +208,7 @@ it("restores grouping, ordering and heading expansion on the next launch", async
   }
 });
 
-it("orders by native recency, applies explicit ordering immediately, and holds automatic positions until Sidebar exit", async () => {
+it("orders by native recency and holds automatic positions until Sidebar exit", async () => {
   const snapshot: DirectorySnapshot = {
     ...directory,
     agents: [],
@@ -249,8 +249,10 @@ it("orders by native recency, applies explicit ordering immediately, and holds a
     before(await f.frame(), "Alpha", "Missing time");
     await f.input("\u0013");
     expect(f.app.state.sidebarSelection?.id).toBe("z");
+    await f.input("j");
+    await f.input("k");
     await f.input("o");
-    before(await f.frame(), "Alpha", "Zulu");
+    before(await f.frame(), "Zulu", "Alpha");
     expect(f.app.state.sidebarSelection?.id).toBe("z");
     await f.input("o");
     before(await f.frame(), "Zulu", "Alpha");
@@ -266,13 +268,13 @@ it("orders by native recency, applies explicit ordering immediately, and holds a
       workspace: { ...zulu, status: "failed" },
     });
     const frozen = await f.frame();
-    expect(frozen).not.toContain("v Failed");
+    expect(frozen).not.toContain("v F Failed");
     expect(frozen).toContain("F Zulu");
     before(frozen, "Zulu", "Alpha");
     expect(f.app.state.sidebarSelection?.id).toBe("z");
     await f.input("\u001b");
     const resumed = await f.frame();
-    expect(resumed).toContain("v Failed");
+    expect(resumed).toContain("v F Failed");
     before(resumed, "Failed", "Zulu");
     before(resumed, "Zulu", "Done");
     expect(f.app.state.sidebarSelection?.id).toBe("z");
@@ -346,7 +348,7 @@ it("restores collapsed activity headings while still displaying the first eligib
   const f = await fixture(directory, { ...createInitialState(), expandedIds: new Set() });
   try {
     expect(f.app.state.selectedWorkspaceId).toBe("needs_input");
-    expect(await f.frame()).toContain("> Waiting for user input");
+    expect(await f.frame()).toContain("> W Waiting for user input");
     expect(await f.frame()).not.toContain("Waiting workspace");
     await f.input("\u0013");
     await f.input("l");
@@ -437,7 +439,7 @@ it.each(["status", "project"] as const)(
       const frozen = await f.frame();
       before(frozen, "Zulu", "Alpha");
       expect(frozen).toContain("A Zulu");
-      expect(frozen).not.toContain("v Ready to review");
+      expect(frozen).not.toContain("v A Ready to review");
       expect(frozen).not.toContain("> Ready to review");
       expect(f.app.state.sidebarSelection?.id).toBe("z");
       await f.input("k");
@@ -462,3 +464,66 @@ it.each(["status", "project"] as const)(
     }
   },
 );
+
+it("migrates alphabetical preferences to most-recent native activity first and ignores the old toggle", async () => {
+  const template = directory.workspaces[0],
+    agent = directory.agents[0];
+  if (!template || !agent) throw new Error("Missing Sidebar fixtures");
+  const snapshot: DirectorySnapshot = {
+    ...directory,
+    workspaces: [
+      { ...template, id: "old", title: "Alpha old", activityAt: "2026-10-13T12:00:00Z" },
+      { ...template, id: "new", title: "Zulu newest", activityAt: null },
+      { ...template, id: "missing", title: "Missing activity", activityAt: null },
+    ],
+    agents: [
+      {
+        ...agent,
+        workspaceId: "new",
+        needsAttention: false,
+        lastActivityAt: "2026-10-13T13:00:00Z",
+      },
+    ],
+  };
+  let saved = JSON.stringify({
+    version: 1,
+    global: {},
+    targets: {
+      [targetScope({ type: "default" })]: {
+        treeOrder: "alphabetical",
+        treeGrouping: "status",
+        expandedIds: ["activity:done"],
+      },
+    },
+  });
+  const preferences = await PreferenceSession.open(
+    { type: "default" },
+    {
+      fs: {
+        readFile: async () => saved,
+        writeAtomic: async (_path, value) => {
+          saved = value;
+        },
+        remove: async () => {
+          saved = "";
+        },
+      },
+    },
+  );
+  const f = await fixture(snapshot, preferences.initialState());
+  const unsubscribe = f.app.subscribe((state) => preferences.observe(state));
+  try {
+    const frame = await f.frame();
+    expect(frame.indexOf("Zulu newest")).toBeLessThan(frame.indexOf("Alpha old"));
+    expect(frame.indexOf("Alpha old")).toBeLessThan(frame.indexOf("Missing activity"));
+    await f.input("\u0013");
+    await f.input("o");
+    expect(f.app.state.treeOrder).toBe("recent");
+    expect(f.app.state.focus).toBe("tree");
+    await preferences.flush();
+    expect(JSON.parse(saved).targets[targetScope({ type: "default" })].treeOrder).toBe("recent");
+  } finally {
+    unsubscribe();
+    await f.close();
+  }
+});
