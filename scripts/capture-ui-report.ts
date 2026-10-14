@@ -1684,6 +1684,34 @@ for (const [name, columns, rows, appearance, input] of [
   });
 }
 
+for (const [name, columns, background] of [
+  ["wide", 240, [28, 25, 23]],
+  ["light", 240, [245, 245, 244]],
+  ["narrow", 92, [28, 25, 23]],
+] as const) {
+  shots.push({
+    name: `timeline-scrollbar-tools-${name}`,
+    columns,
+    rows: 28,
+    treeWidth: 34,
+    state: withTimeline(
+      baseState,
+      "scrollbar-tools",
+      Array.from({ length: 30 }, (_, index) => ({
+        id: `scrollbar-tool-${index}`,
+        type: "tool",
+        callId: `scrollbar-tool-${index}`,
+        name: "shell",
+        status: "completed",
+        summary: `scrollbar-tool-${index}`,
+        output: "Tool output remains inside the reading column.",
+      })),
+    ),
+    appearance: { ...sampledTerminalAppearance, background: [...background] },
+    input: ["\u000b", "g", "g"],
+  });
+}
+
 const workspaceFocusState: AppState = {
   ...baseState,
   focus: "composer",
@@ -1762,7 +1790,11 @@ const sidebarCaptureState: AppState = {
   treeOrder: "recent",
   directory: {
     ...baseState.directory,
-    projects: [{ id: "sidebar-project", name: "Design systems 界界 with long project metadata" }],
+    projects: [{ id: "sidebar-project", name: "Design systems" }],
+    workspaceLabels: [
+      { name: "urgent", color: "red" },
+      { name: "design", color: "sky" },
+    ],
     workspaces: (["needs_input", "failed", "attention", "running", "done"] as const).map(
       (status, index) => ({
         id: `sidebar-${status}`,
@@ -1841,6 +1873,7 @@ for (const grouping of ["status", "project"] as const) {
     "collapsed",
     "empty-filter",
     "long-metadata",
+    "crowded-labels",
     "drawer",
     "short",
     "plain",
@@ -1864,6 +1897,28 @@ for (const grouping of ["status", "project"] as const) {
       state: {
         ...sidebarCaptureState,
         treeGrouping: grouping,
+        ...(mode === "long-metadata"
+          ? {
+              directory: {
+                ...sidebarCaptureState.directory,
+                projects: [
+                  { id: "sidebar-project", name: "Design systems 界界 with long project metadata" },
+                ],
+              },
+            }
+          : {}),
+        ...(mode === "crowded-labels"
+          ? {
+              directory: {
+                ...sidebarCaptureState.directory,
+                workspaces: sidebarCaptureState.directory.workspaces.map((workspace) =>
+                  workspace.status === "attention"
+                    ? { ...workspace, labels: ["urgent", "design", "long-native-workspace-label"] }
+                    : workspace,
+                ),
+              },
+            }
+          : {}),
         ...(mode === "collapsed"
           ? {
               expandedIds: new Set<string>(),
@@ -1969,6 +2024,7 @@ for (const shot of shots.filter(
   await terminal.waitForRender();
   const viewport = terminal.viewport();
   const backgrounds = terminal.viewportBackgrounds();
+  const foregrounds = terminal.viewportForegrounds();
   const emittedCursor = terminal.viewportCursor();
   const cursor =
     emittedCursor.row >= 0 &&
@@ -2030,12 +2086,12 @@ for (const shot of shots.filter(
     emittedCursor,
     cursor: cursor ?? null,
     limitations:
-      "Synthetic terminal cells/backgrounds only; foreground colors are not recorded and SVG root/text colors are fixed, so injected light-background shots do not establish foreground contrast. SVG cursor is a rectangle at emitted position, not proof of physical cursor shape, keyboard delivery, clipboard or daemon support.",
+      "Headless terminal cells with RGB foreground/background colors; default and indexed foregrounds use a simulated light/dark SVG text color; SVG ground uses the injected terminal background. Light shots establish RGB pill contrast only; they do not establish the physical terminal theme. SVG cursor is a rectangle at emitted position, not proof of physical cursor shape, keyboard delivery, clipboard or daemon support.",
   };
   manifest.push(metadata);
   await writeFile(
     join(outputDirectory, `${shot.name}.cells.json`),
-    JSON.stringify({ ...metadata, viewport, backgrounds }, null, 2),
+    JSON.stringify({ ...metadata, viewport, backgrounds, foregrounds }, null, 2),
   );
   unsubscribe();
   await app.releaseObservations();
@@ -2054,6 +2110,8 @@ for (const shot of shots.filter(
         ? { columns: shot.treeWidth ?? DEFAULT_TREE_WIDTH, color: "#1f1d1b" }
         : undefined,
       cursor,
+      foregrounds,
+      shot.appearance?.background,
     ),
     "utf8",
   );
@@ -2328,7 +2386,14 @@ function terminalSvg(
   title: string,
   sidebar?: { columns: number; color: string },
   cursor?: { row: number; column: number },
+  foregrounds?: ReadonlyArray<ReadonlyArray<string | undefined>>,
+  background?: readonly [number, number, number],
 ): string {
+  const ground = background ? `rgb(${background.join(",")})` : "#1c1917";
+  const fallbackForeground =
+    background && background.reduce((sum, channel) => sum + channel, 0) > 384
+      ? "#1c1917"
+      : "#f5f5f4";
   const cellWidth = 9;
   const lineHeight = 18;
   const padding = 16;
@@ -2346,7 +2411,7 @@ function terminalSvg(
       for (const { segment } of graphemes.segment(line)) {
         if (segment !== " " && segment !== "" && segment !== "")
           glyphs.push(
-            `<text x="${padding + column * cellWidth}" y="${chromeHeight + padding + (row + 1) * lineHeight - 4}">${escapeXml(segment)}</text>`,
+            `<text x="${padding + column * cellWidth}" y="${chromeHeight + padding + (row + 1) * lineHeight - 4}" fill="${foregrounds?.[row]?.[column] ?? fallbackForeground}">${escapeXml(segment)}</text>`,
           );
         column += terminalDisplayWidth(segment);
       }
@@ -2390,7 +2455,7 @@ function terminalSvg(
     : "";
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">
   <title>${escapeXml(title)}</title>
-  <rect width="${width}" height="${height}" rx="12" fill="#1c1917"/>
+  <rect width="${width}" height="${height}" rx="12" fill="${ground}"/>
   <rect width="${width}" height="${chromeHeight}" rx="12" fill="#292524"/>
   <rect y="20" width="${width}" height="12" fill="#292524"/>
   <circle cx="18" cy="16" r="5" fill="#ef4444"/>

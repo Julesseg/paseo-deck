@@ -1,3 +1,4 @@
+import type { WorkspaceLabelRecord } from "../contracts/domain.js";
 import type { PaletteId, TerminalAppearance, TerminalBackground } from "./capabilities.js";
 import { clipTerminalLine, sanitizeTerminalText, terminalDisplayWidth } from "./text-safety.js";
 
@@ -129,7 +130,7 @@ const surfaceOpacity: Readonly<Record<BackgroundTone, number>> = {
 };
 
 const unicodeGlyphs: Readonly<Record<DeckGlyph, string>> = {
-  folder: "▱",
+  folder: "📁",
   clock: "◷",
   unavailable: "—",
   agent: "•",
@@ -220,6 +221,70 @@ export class DeckTheme {
     if (this.paletteId() === "terminal" && !this.appearance.background)
       return `\u001b[${tone === "tab-active" ? "7" : "2;7"}m${value}\u001b[0m`;
     return this.styleRenderedBackground(tone, this.styleRendered(textTone, value));
+  }
+
+  styleWorkspaceLabel(color: WorkspaceLabelRecord["color"], value: string): string {
+    const safe = sanitizeTerminalText(value);
+    if (this.appearance.color === "none" || this.appearance.theme === "plain") return safe;
+    const [red, green, blue] = {
+      violet: [139, 92, 246],
+      sky: [14, 165, 233],
+      emerald: [16, 185, 129],
+      orange: [249, 115, 22],
+      pink: [236, 72, 153],
+      indigo: [99, 102, 241],
+      teal: [20, 184, 166],
+      red: [239, 68, 68],
+      amber: [245, 158, 11],
+      blue: [59, 130, 246],
+    }[color] as [number, number, number];
+    const cube = [red, green, blue].map((channel) => Math.round((channel / 255) * 5));
+    const contrastChannels =
+      this.appearance.color === "ansi256"
+        ? cube.map((index) => [0, 95, 135, 175, 215, 255][index] ?? 0)
+        : [red, green, blue];
+    const luminance = contrastChannels.reduce((sum, channel, index) => {
+      const normalized = channel / 255;
+      return (
+        sum +
+        (index === 0 ? 0.2126 : index === 1 ? 0.7152 : 0.0722) *
+          (normalized <= 0.04045 ? normalized / 12.92 : ((normalized + 0.055) / 1.055) ** 2.4)
+      );
+    }, 0);
+    const foreground =
+      this.appearance.color === "ansi16"
+        ? color === "amber" || color === "orange"
+          ? 30
+          : 97
+        : (luminance + 0.05) / 0.05 > 1.05 / (luminance + 0.05)
+          ? 30
+          : 97;
+    const background =
+      this.appearance.color === "truecolor"
+        ? `48;2;${red};${green};${blue}`
+        : this.appearance.color === "ansi256"
+          ? `48;5;${16 + 36 * (cube[0] ?? 0) + 6 * (cube[1] ?? 0) + (cube[2] ?? 0)}`
+          : String(
+              {
+                violet: 45,
+                sky: 46,
+                emerald: 42,
+                orange: 43,
+                pink: 45,
+                indigo: 44,
+                teal: 46,
+                red: 41,
+                amber: 43,
+                blue: 44,
+              }[color],
+            );
+    const text =
+      this.appearance.color === "truecolor"
+        ? foreground === 30
+          ? "38;2;0;0;0"
+          : "38;2;255;255;255"
+        : String(foreground);
+    return `\u001b[${text};${background}m${safe}\u001b[0m`;
   }
 
   /** Colours a pill endcap to match the tab body without filling its outside edge. */

@@ -1471,7 +1471,7 @@ describe("terminal appearance", () => {
     // runners; retain a bounded responsiveness check without treating those
     // platforms as a rendering failure.
     expect(elapsed).toBeLessThan(8_000);
-    expect(terminal.viewport().join("\n")).toContain("Assistant");
+    expect(terminal.viewport().join("\n")).toContain("A completed response");
   }, 10_000);
 
   it("keeps empty-state actions visible instead of clipping them from their panes", async () => {
@@ -1898,7 +1898,7 @@ describe("DeckTui viewport and focus", () => {
     await terminal.waitForRender();
     await deck.stop();
 
-    expect(terminal.viewport().join("\n")).toContain("You");
+    expect(terminal.viewport().join("\n")).not.toMatch(/You ·/u);
     expect(terminal.viewport().join("\n")).toContain("first");
   });
 
@@ -2007,7 +2007,7 @@ describe("DeckTui viewport and focus", () => {
       type: "set-timeline-navigation",
       agentId: "agent",
       following: false,
-      anchor: { epoch: "pause", sequence: 1 },
+      anchor: { epoch: "pause", sequence: 2 },
     });
 
     transcript.scrollToEnd();
@@ -2253,7 +2253,7 @@ describe("DeckTui viewport and focus", () => {
     expect(terminal.viewport().join("\n")).toContain("Active session timeline");
   });
 
-  it("renders Markdown assistant streaming and timestamp metadata", async () => {
+  it("renders Markdown assistant streaming without author or timestamp headings", async () => {
     const terminal = new RecordingTerminal(80, 14);
     const deck = new DeckTui(
       terminal,
@@ -2283,7 +2283,9 @@ describe("DeckTui viewport and focus", () => {
     deck.start();
     await terminal.waitForRender();
     await deck.stop();
-    expect(terminal.viewport().join("\n")).toContain("Assistant · streaming… · 10:01");
+    expect(terminal.viewport().join("\n")).toContain("partial");
+    expect(terminal.viewport().join("\n")).not.toContain("Assistant ·");
+    expect(terminal.viewport().join("\n")).not.toContain("10:01");
   });
 
   it("renders fenced assistant code through the terminal while preserving its whitespace", async () => {
@@ -2318,7 +2320,7 @@ describe("DeckTui viewport and focus", () => {
     await deck.stop();
 
     const viewport = terminal.viewport().join("\n");
-    expect(viewport).toContain("Assistant · 10:01");
+    expect(viewport).not.toContain("Assistant · 10:01");
     expect(viewport).toContain("  const answer = 1;");
     expect(viewport).toContain("  return answer;");
   });
@@ -2744,8 +2746,8 @@ describe("DeckTui viewport and focus", () => {
     await terminal.waitForRender();
     await deck.stop();
     expect(timeline.buffer.mode).toBe("visual");
-    expect(timeline.buffer.line).toBe(before.line + 3);
-    expect(timeline.buffer.anchor?.line).toBe((before.anchor ?? -1) + 3);
+    expect(timeline.buffer.line).toBe(before.line + 2);
+    expect(timeline.buffer.anchor?.line).toBe((before.anchor ?? -1) + 2);
     expect(timeline.selectedItem()?.id).toBe("second");
   });
 

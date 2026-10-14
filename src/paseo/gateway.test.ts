@@ -1,9 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
 import { ApplicationController } from "../app/controller.js";
+import type { DirectoryUpdate } from "../contracts/domain.js";
 import { RecordingTerminal } from "../ui/terminal.js";
 import { DeckTui } from "../ui/views.js";
 import type { PaseoGatewayError } from "./errors.js";
 import { ProductionPaseoGateway } from "./gateway.js";
+import type { WorkspaceLabelsClient } from "./workspace-labels.js";
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -11,6 +13,50 @@ function deferred<T>() {
     resolve = next;
   });
   return { promise, resolve };
+}
+
+function labelClientFixture() {
+  const payload: Awaited<ReturnType<WorkspaceLabelsClient["listWorkspaceLabels"]>> = {
+    requestId: "labels",
+    labels: [
+      { name: "urgent", color: "red" },
+      { name: "design", color: "sky" },
+    ],
+    sync: { mode: "snapshot", generation: "labels", headSeq: 1, removals: [] },
+  };
+  let observer:
+    | Parameters<ReturnType<WorkspaceLabelsClient["observeWorkspaceLabels"]>["subscribe"]>[0]
+    | undefined;
+  const release = vi.fn(async () => {});
+  return {
+    client: {
+      connect: vi.fn(async () => {}),
+      close: vi.fn(async () => {}),
+      listWorkspaceLabels: vi.fn(async () => payload),
+      observeWorkspaceLabels: vi.fn(() => ({
+        subscriptionId: "label-query",
+        ready: Promise.resolve({ ...payload, subscriptionId: "label-query" }),
+        subscribe: (listener: NonNullable<typeof observer>) => {
+          observer = listener;
+          listener.snapshot({ ...payload, subscriptionId: "label-query" });
+          return () => {
+            observer = undefined;
+          };
+        },
+        release,
+      })),
+    },
+    release,
+    fail() {
+      observer?.error?.(new Error("Label catalog temporarily unavailable"));
+    },
+    update(color: "emerald") {
+      observer?.update({
+        type: "workspace.label.update",
+        payload: { kind: "upsert", label: { name: "urgent", color }, generation: "labels", seq: 2 },
+      });
+    },
+  };
 }
 
 function testClient(
@@ -217,6 +263,7 @@ describe("ProductionPaseoGateway", () => {
 
   it("preserves native Workspace label assignments in directory snapshots", async () => {
     const fixture = testClient();
+    const colors = labelClientFixture();
     fixture.client.workspaces.list.mockResolvedValueOnce({
       entries: [
         {
@@ -230,14 +277,91 @@ describe("ProductionPaseoGateway", () => {
     const gateway = new ProductionPaseoGateway({
       host: "127.0.0.1:6767",
       createClient: () => fixture.client as never,
+      createLabelsClient: () => colors.client,
     });
     try {
       await gateway.connect();
-      expect((await gateway.getDirectorySnapshot()).workspaces[0]).toMatchObject({
+      const snapshot = await gateway.getDirectorySnapshot();
+      expect(snapshot.workspaceLabels).toEqual([
+        { name: "urgent", color: "red" },
+        { name: "design", color: "sky" },
+      ]);
+      expect(snapshot.workspaces[0]).toMatchObject({
         labels: ["urgent", "design"],
         activityAt: null,
       });
     } finally {
+      await gateway.close();
+    }
+  });
+
+  it("observes native label color changes and releases the owned catalog query", async () => {
+    const fixture = testClient(),
+      colors = labelClientFixture();
+    fixture.client.workspaces.list.mockResolvedValue({
+      entries: [{ id: "workspace-1", workspaceDirectory: "/repo", labels: ["urgent"] }],
+    } as never);
+    const gateway = new ProductionPaseoGateway({
+      host: "127.0.0.1:6767",
+      createClient: () => fixture.client as never,
+      createLabelsClient: () => colors.client,
+    });
+    const updates: DirectoryUpdate[] = [];
+    try {
+      await gateway.connect();
+      const observation = await gateway.observeDirectory((update) => updates.push(update));
+      await gateway.getDirectorySnapshot();
+      colors.update("emerald");
+      expect(updates.at(-1)).toMatchObject({
+        type: "workspace-labels-replaced",
+        labels: expect.arrayContaining([{ name: "urgent", color: "emerald" }]),
+      });
+      await observation.release();
+      await observation.release();
+      expect(colors.release).toHaveBeenCalledOnce();
+    } finally {
+      await gateway.close();
+    }
+    expect(colors.client.close).toHaveBeenCalledOnce();
+  });
+
+  it("loads and updates native label colors when the first assignment arrives after startup", async () => {
+    const fixture = testClient(),
+      colors = labelClientFixture();
+    const gateway = new ProductionPaseoGateway({
+      host: "127.0.0.1:6767",
+      createClient: () => fixture.client as never,
+      createLabelsClient: () => colors.client,
+    });
+    const app = new ApplicationController(gateway);
+    try {
+      await app.start();
+      expect(colors.client.connect).not.toHaveBeenCalled();
+      fixture.emitWorkspaceDirectory({
+        type: "workspace_update",
+        payload: {
+          kind: "upsert",
+          workspace: { id: "workspace-1", workspaceDirectory: "/repo", labels: ["urgent"] },
+        },
+      });
+      await vi.waitFor(() =>
+        expect(app.state.directory.workspaceLabels).toContainEqual({
+          name: "urgent",
+          color: "red",
+        }),
+      );
+      colors.fail();
+      expect(app.state.connection).toBe("connected");
+      await vi.waitFor(() => expect(colors.client.observeWorkspaceLabels).toHaveBeenCalledTimes(2));
+      colors.update("emerald");
+      expect(app.state.directory.workspaceLabels).toContainEqual({
+        name: "urgent",
+        color: "emerald",
+      });
+      await app.releaseObservations();
+      expect(colors.release).toHaveBeenCalledTimes(2);
+    } finally {
+      await app.releaseObservations();
       await gateway.close();
     }
   });

@@ -91,7 +91,7 @@ it("empty Timeline Escape restores the saved Composer and cancels a count first"
 it("copies counted displayed rows and shared motion ranges directly without editing", async () => {
   const f = await fixture("alpha bravo\n\ncharlie delta\n\necho foxtrot");
   try {
-    await f.keys("\u000b", "g", "g", "j", "^", "y", "w");
+    await f.keys("\u000b", "g", "g", "^", "y", "w");
     expect(f.clipboard()).toBe("alpha ");
     await f.keys("2", "y", "y");
     expect(f.clipboard()).toBe("alpha bravo\n");
@@ -106,12 +106,12 @@ it("copies counted displayed rows and shared motion ranges directly without edit
 it("Visual half-page scroll preserves endpoints and Visual G never resumes following", async () => {
   const f = await fixture(Array.from({ length: 60 }, (_, i) => `line ${i}`).join("\n\n"));
   try {
-    await f.keys("\u000b", "g", "g", "j", "^", "v", "l", "\u0004");
+    await f.keys("\u000b", "g", "g", "^", "v", "l", "\u0004");
     expect(f.app.state.timelineNavigation.a?.following).toBe(false);
     await f.keys("y");
     expect(f.clipboard()).toBe("li");
     expect(f.app.state.timelineMode).toBe("normal");
-    await f.keys("g", "g", "j", "^", "v", "G");
+    await f.keys("g", "g", "^", "v", "G");
     expect(f.app.state.timelineNavigation.a?.following).toBe(false);
     await f.keys("\u001b");
     await f.keys("G");
@@ -123,7 +123,7 @@ it("Visual half-page scroll preserves endpoints and Visual G never resumes follo
 it("switches Visual type without losing the anchor, swaps endpoints and restores same-Session selection", async () => {
   const f = await fixture("alpha bravo charlie");
   try {
-    await f.keys("\u000b", "g", "g", "j", "^", "v", "4", "l", "o", "l", "y");
+    await f.keys("\u000b", "g", "g", "^", "v", "4", "l", "o", "l", "y");
     expect(f.clipboard()).toBe("lpha");
     await f.keys("g", "v", "y");
     expect(f.clipboard()).toBe("lpha");
@@ -140,9 +140,9 @@ it("character copies rejoin wraps and retain real breaks while row copies keep d
     "alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar\n\nsecond paragraph";
   const f = await fixture(text);
   try {
-    await f.keys("\u000b", "g", "g", "j", "^", "v", "G", "y");
+    await f.keys("\u000b", "g", "g", "^", "v", "G", "y");
     expect(f.clipboard()).toBe(text);
-    await f.keys("g", "g", "j", "V", "G", "Y");
+    await f.keys("g", "g", "V", "G", "Y");
     expect(f.clipboard()).toContain("\n");
     expect(f.clipboard()).not.toBe(text);
     expect(f.clipboard()).toContain("second paragraph");
@@ -153,7 +153,7 @@ it("character copies rejoin wraps and retain real breaks while row copies keep d
 it("background scroll preserves input and refocus leaves the viewport until the next motion", async () => {
   const f = await fixture(Array.from({ length: 60 }, (_, i) => `row ${i}`).join("\n\n"));
   try {
-    await f.keys("\u000b", "g", "g", "j", "^");
+    await f.keys("\u000b", "g", "g", "^");
     await f.keys("\u001b");
     await f.keys("i", "draft", "\u0004", "\u0004");
     const before = f.terminal.viewport().join("\n");
@@ -170,7 +170,7 @@ it("background scroll preserves input and refocus leaves the viewport until the 
 it("counts multiply, underscore equals caret, bare percent matches and unsupported forms preserve clipboard", async () => {
   const f = await fixture("  alpha bravo charlie delta echo foxtrot (pair)");
   try {
-    await f.keys("\u000b", "g", "g", "j", "^", "2", "y", "2", "w");
+    await f.keys("\u000b", "g", "g", "^", "2", "y", "2", "w");
     expect(f.clipboard()).toBe("alpha bravo charlie delta ");
     await f.keys("w", "y", "_");
     expect(f.clipboard()).toBe("alpha ");
@@ -187,7 +187,7 @@ it("Normal half-page scroll keeps the screen row and desired column", async () =
     Array.from({ length: 60 }, (_, i) => `long row ${i} content`).join("\n\n"),
   );
   try {
-    await f.keys("\u000b", "g", "g", "j", "^", "5", "l");
+    await f.keys("\u000b", "g", "g", "^", "5", "l");
     const before = f.terminal.viewportCursor();
     await f.keys("\u0004");
     expect(f.terminal.viewportCursor()).toEqual(before);
@@ -201,7 +201,7 @@ it("Normal half-page scroll keeps the screen row and desired column", async () =
 it("row yanks retain linewise clipboard ownership for Composer paste", async () => {
   const f = await fixture("alpha bravo");
   try {
-    await f.keys("\u000b", "g", "g", "j", "y", "y");
+    await f.keys("\u000b", "g", "g", "y", "y");
     f.app.setComposerText("top\nbottom");
     await f.keys("\u001b");
     await f.keys("g", "g", "p");
@@ -213,7 +213,7 @@ it("row yanks retain linewise clipboard ownership for Composer paste", async () 
 it("links and folds are Normal-only and a missing link preserves clipboard", async () => {
   const f = await fixture("[docs](https://example.test/path)");
   try {
-    await f.keys("\u000b", "g", "g", "j", "^", "g", "x");
+    await f.keys("\u000b", "g", "g", "^", "g", "x");
     expect(f.opened).toEqual(["https://example.test/path"]);
     await f.keys("v", "g", "x", "z", "a");
     expect(f.opened).toHaveLength(1);
@@ -240,13 +240,13 @@ it("links and folds are Normal-only and a missing link preserves clipboard", asy
 it("page controls move the active Visual endpoint while half-pages can leave it offscreen", async () => {
   const f = await fixture(Array.from({ length: 70 }, (_, i) => `page ${i}`).join("\n\n"));
   try {
-    await f.keys("\u000b", "g", "g", "j", "^", "v", "\u0004", "\u0004");
+    await f.keys("\u000b", "g", "g", "^", "v", "\u0004", "\u0004");
     expect(f.terminal.writes.at(-1)).toContain("\u001b[?25l");
     await f.keys("y");
     expect(f.clipboard()).toBe("p");
-    await f.keys("g", "g", "j", "^", "v", "\u0006", "y");
+    await f.keys("g", "g", "^", "v", "\u0006", "y");
     expect(f.clipboard()).toContain("page 1");
-    await f.keys("g", "g", "j", "^", "\u001b[6~", "H", "j", "^", "v", "y");
+    await f.keys("g", "g", "^", "\u001b[6~", "H", "^", "v", "y");
     expect(f.clipboard()).toBe("p");
   } finally {
     await f.close();
@@ -259,7 +259,7 @@ it("previous row selections retain their content extent after reflow and copies 
   try {
     f.terminal.setSize(120, 26);
     await f.terminal.waitForRender();
-    await f.keys("\u000b", "g", "g", "j", "V", "y");
+    await f.keys("\u000b", "g", "g", "V", "y");
     const copied = f.clipboard();
     f.gateway.emitTimeline("a", {
       type: "event",
@@ -338,7 +338,7 @@ it("empty Timeline bare G follows future output while numbered G stays paused", 
 it("failed counted finds and missing objects preserve cursor, selection, mode and clipboard", async () => {
   const f = await fixture("a😀b😀c");
   try {
-    await f.keys("\u000b", "g", "g", "j", "^");
+    await f.keys("\u000b", "g", "g", "^");
     const cursor = f.terminal.viewportCursor();
     for (const keys of [
       ["3", "f", "😀"],
@@ -368,8 +368,8 @@ it.each([
   const baseline = await fixture(text);
   const pending = await fixture(text);
   try {
-    await baseline.keys("\u000b", "g", "g", "j", "^");
-    await pending.keys("\u000b", "g", "g", "j", "^");
+    await baseline.keys("\u000b", "g", "g", "^");
+    await pending.keys("\u000b", "g", "g", "^");
     const before = baseline.terminal.viewport();
     await baseline.keys("\u0004");
     await pending.keys(prefix, down);
@@ -389,7 +389,7 @@ it.each([
 it("inclusive row-end yanks copy the final character while empty backward ranges preserve clipboard", async () => {
   const f = await fixture("last");
   try {
-    await f.keys("\u000b", "g", "g", "j", "$", "y", "$");
+    await f.keys("\u000b", "g", "g", "$", "y", "$");
     expect(f.clipboard()).toBe("t");
     await f.keys("^", "y", "^");
     expect(f.clipboard()).toBe("t");
@@ -421,7 +421,7 @@ it("character copies retain meaningful indentation in non-Markdown output", asyn
 it("pending find and yank commands own mnemonic letters before application prefixes", async () => {
   const f = await fixture("alpha middle tail");
   try {
-    await f.keys("\u000b", "g", "g", "j", "^", "f", "m", "v", "y");
+    await f.keys("\u000b", "g", "g", "^", "f", "m", "v", "y");
     expect(f.clipboard()).toBe("m");
     expect(f.app.state.modal.type).toBe("none");
     await f.keys("^", "y", "t", "m");

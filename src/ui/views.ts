@@ -111,7 +111,6 @@ import {
   timelineItemDisplay,
   toolBodyText,
   workspaceActivityGlyph,
-  workspaceActivityGroups,
   workspaceTabs,
 } from "./view-model.js";
 
@@ -264,18 +263,6 @@ class TreeView implements Component {
           rowLines.push(styleRow(primary));
           if (row.kind === "workspace") {
             rowLines.push(styleRow(this.metadataLine(row, innerWidth)));
-            const labels = this.state.directory.workspaces.find(
-              (workspace) => workspace.id === row.id,
-            )?.labels;
-            if (labels?.length)
-              rowLines.push(
-                styleRow(
-                  this.theme.clipRendered(
-                    `${" ".repeat(1 + row.depth * 2)}${labels.map((label) => this.theme.styleTabBody("tab-inactive", "muted", ` ${sanitizeTerminalText(label)} `)).join(" ")}`,
-                    innerWidth,
-                  ),
-                ),
-              );
           }
           rowLines.push("");
           return rowLines;
@@ -294,13 +281,16 @@ class TreeView implements Component {
 
   private metadataLine(row: ReturnType<typeof deriveTreeRows>[number], width: number): string {
     const workspace = this.state.directory.workspaces.find((item) => item.id === row.id);
+    const icon =
+      this.theme.appearance.symbols === "ascii"
+        ? workspaceActivityGlyph(row.activity)
+        : row.activity
+          ? { needs_input: "?", failed: "×", attention: "◉", running: "▶", done: "✓" }[row.activity]
+          : "?";
     const label =
       (this.state.treeGrouping ?? "status") === "project"
-        ? (workspaceActivityGroups.find(([activity]) => activity === row.activity)?.[1] ??
-          "Unavailable")
-        : workspace
-          ? (projectForWorkspace(this.state.directory.projects, workspace)?.name ?? "No project")
-          : "No project";
+        ? icon
+        : `${this.theme.glyph("folder")} ${workspace ? (projectForWorkspace(this.state.directory.projects, workspace)?.name ?? "No project") : "No project"}`;
     const timestamp = row.activityAt ? Date.parse(row.activityAt) : Number.NaN;
     const minutes = Math.floor(Math.max(0, this.now() - timestamp) / 60_000);
     const age = !Number.isFinite(timestamp)
@@ -315,8 +305,6 @@ class TreeView implements Component {
     const right = `${this.theme.glyph("clock")} ${age}`;
     const indent = " ".repeat(1 + row.depth * 2);
     const available = Math.max(0, width - terminalDisplayWidth(indent + right) - 1);
-    const labelWidth = Math.max(0, available - 2);
-    const clippedLabel = this.theme.clipRemoteText(label, labelWidth);
     const tone =
       row.activity === "failed"
         ? "failure"
@@ -327,23 +315,29 @@ class TreeView implements Component {
             : row.activity === "running"
               ? "running"
               : "muted";
-    const left =
-      available >= 2
-        ? this.theme.styleTabBody("tab-inactive", tone, ` ${clippedLabel} `)
-        : this.theme.clipRendered(sanitizeTerminalText(label), available);
+    const prefix = this.theme.styleRemote(tone, this.theme.clipRemoteText(label, available));
+    const labels = (workspace?.labels ?? [])
+      .map((name) =>
+        this.theme.styleWorkspaceLabel(
+          this.state.directory.workspaceLabels?.find(
+            (definition) => definition.name.toLocaleLowerCase() === name.toLocaleLowerCase(),
+          )?.color ?? "sky",
+          ` ${name} `,
+        ),
+      )
+      .join(" ");
+    const labelWidth = Math.max(0, available - terminalDisplayWidth(prefix) - 1);
+    const left = `${prefix}${labels && labelWidth ? ` ${this.theme.clipRendered(labels, labelWidth)}` : ""}`;
     return `${indent}${left}${" ".repeat(Math.max(1, width - terminalDisplayWidth(indent + left + right)))}${this.theme.style("muted", right)}`;
   }
 
   selectedLineRange(_width: number): { start: number; end: number } | undefined {
     let line = 2;
     for (const row of deriveTreeRows(this.state)) {
-      const labels = this.state.directory.workspaces.find(
-        (workspace) => workspace.id === row.id,
-      )?.labels;
-      const height = row.kind === "workspace" ? 3 + (labels?.length ? 1 : 0) : 3;
+      const height = 3;
       if (row.selected)
         return row.kind === "workspace"
-          ? { start: line, end: line + (labels?.length ? 2 : 1) }
+          ? { start: line, end: line + 1 }
           : { start: line + 1, end: line + 1 };
       line += height;
     }
@@ -507,6 +501,7 @@ class ContentPane implements Component {
     private readonly timeline: TimelineView,
     private readonly theme: DeckTheme,
     state: AppState,
+    private readonly scrollbarVisible: () => boolean,
   ) {
     this.state = state;
   }
@@ -549,7 +544,10 @@ class ContentPane implements Component {
           .map((line) => clipTerminalLine(line, width)),
       ];
     }
-    return this.timeline.render(width);
+    const lines = this.timeline.render(width);
+    return this.scrollbarVisible() && width > 1
+      ? lines.map((line) => `${sliceByColumn(line, 0, width - 1, true)}\u001b[0m `)
+      : lines;
   }
 }
 
@@ -631,17 +629,9 @@ class TimelineItemView implements Component {
       this.markdown &&
       (this.item.type === "user-message" || this.item.type === "assistant-message")
     )
-      return [
-        this.theme.clipOwnedLabel(
-          this.item.type === "user-message"
-            ? `You${this.item.timestamp ? ` ${this.theme.glyph("bullet")} ${this.item.timestamp.slice(11, 16)}` : ""}`
-            : `Assistant${this.item.streaming ? ` ${this.theme.glyph("bullet")} streaming${this.theme.glyph("ellipsis")}` : ""}${this.item.timestamp ? ` ${this.theme.glyph("bullet")} ${this.item.timestamp.slice(11, 16)}` : ""}`,
-          width,
-        ),
-        ...this.markdown
-          .render(width)
-          .map((line) => clipTerminalLine(line, width, this.theme.glyph("ellipsis"))),
-      ];
+      return this.markdown
+        .render(width)
+        .map((line) => clipTerminalLine(line, width, this.theme.glyph("ellipsis")));
     const lines = timelineItemDisplay(this.item, width, this.expanded, {
       bullet: this.theme.glyph("bullet"),
       ellipsis: this.theme.glyph("ellipsis"),
@@ -1700,18 +1690,7 @@ class TimelineView implements Component {
       else if (item.type === "turn") group = `turn:${item.turnId ?? item.id}`;
       else if (item.type === "assistant-message" && item.turnId) group = `turn:${item.turnId}`;
       const firstInGroup = group !== priorGroup;
-      const gap =
-        item.type === "tool" && this.events[eventIndex - 1]?.item.type === "tool"
-          ? [
-              this.theme.styleRenderedBackground(
-                "tool",
-                this.theme.styleRendered("border", this.theme.glyph("divider").repeat(width)),
-              ),
-              "",
-            ]
-          : eventIndex > 0
-            ? [""]
-            : [];
+      const gap = eventIndex > 0 ? [""] : [];
       if (firstInGroup) ordinal += 1;
       priorGroup = group;
       const primary = item.type === "user-message" || item.type === "assistant-message";
@@ -1756,9 +1735,7 @@ class TimelineView implements Component {
       // character sequentially into it, so repeated identical rows have separate
       // offsets and rewrapping never uses row numbers as content identity.
       const canonical = this.itemViews.get(item.id)?.canonicalLines() ?? [];
-      // Every item owns a heading. Clipped headings and synthetic separators
-      // must not consume canonical body offsets or collide with body rows.
-      const contentStart = 1;
+      const contentStart = primary ? 0 : 1;
       const canonicalText = canonical
         .slice(contentStart)
         .map((line) => line.trimEnd())
@@ -3268,7 +3245,12 @@ export class DeckTui {
     this.timeline = new TimelineView(this.theme, () => this.transcript?.scrollTop ?? 0);
     this.timeline.update(initialState.timeline.items);
     this.timeline.updateSelection(initialState);
-    this.contentPane = new ContentPane(this.timeline, this.theme, initialState);
+    this.contentPane = new ContentPane(
+      this.timeline,
+      this.theme,
+      initialState,
+      () => this.transcript?.isScrollbarVisible ?? false,
+    );
     this.composer = new ComposerView(
       this.tui,
       initialState,

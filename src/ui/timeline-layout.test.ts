@@ -283,7 +283,7 @@ it("Workspace controls share the centered Composer column", async () => {
 it("Visual content selection survives width reflow of the same centered column", async () => {
   const f = await fixture(100, 34, { text: `alpha target omega ${"word ".repeat(30)}` });
   try {
-    for (const key of ["\u000b", "g", "g", "j", "^", "v", "l", "l"]) {
+    for (const key of ["\u000b", "g", "g", "^", "v", "l", "l"]) {
       f.terminal.sendInput(key);
       await f.terminal.waitForRender();
     }
@@ -320,6 +320,7 @@ it("right-aligns a bounded user block while assistant text stays at the reading 
     const lines = f.terminal.viewport();
     const userRow = lines.findIndex((line) => line.includes("User body"));
     const assistantRow = lines.findIndex((line) => line.includes("Assistant body"));
+    expect(lines.join("\n")).not.toMatch(/(?:You|Assistant) · \d{2}:\d{2}/u);
     const backgrounds = f.terminal.viewportBackgrounds()[userRow] ?? [];
     const painted = backgrounds.flatMap((color, column) => (color && column > 34 ? [column] : []));
     expect(painted).toHaveLength(76);
@@ -392,7 +393,7 @@ it("paints consecutive tools across the reading column and leaves assistant outp
       const cells = f.terminal.viewportBackgrounds()[row]?.slice(37, 139);
       expect(cells?.every((cell) => cell && cell === cells[0])).toBe(true);
     }
-    expect(lines.some((line) => line.slice(37, 139) === "─".repeat(102))).toBe(true);
+    expect(lines.some((line) => line.includes("─".repeat(10)))).toBe(false);
     const assistant = lines.findIndex((line) => line.includes("After tools"));
     expect(
       f.terminal
@@ -472,11 +473,53 @@ it("leaves a blank reading row between messages and consecutive tool blocks", as
   }
 });
 
+it("bounds tool backgrounds to the reading column while its scrollbar is visible", async () => {
+  const f = await fixture(240, 34, { rows: 28, text: "seed" });
+  try {
+    f.gateway.emitTimeline("a", {
+      type: "replaced",
+      epoch: "bleed",
+      agentId: "a",
+      items: Array.from({ length: 30 }, (_, sequence) => ({
+        epoch: "bleed",
+        sequence,
+        item: {
+          id: `tool-${sequence}`,
+          type: "tool" as const,
+          callId: `call-${sequence}`,
+          name: "scrollbar-tool",
+          status: "completed" as const,
+          output: "No output",
+        },
+      })),
+    });
+    await f.terminal.waitForRender();
+    f.terminal.sendInput("\u000b");
+    f.terminal.sendInput("g");
+    f.terminal.sendInput("g");
+    await f.terminal.waitForRender();
+    const lines = f.terminal.viewport();
+    const row = lines.findIndex((line) => line.includes("scrollbar-tool"));
+    expect(row).toBeGreaterThanOrEqual(0);
+    const composer = lines.findIndex((line) => line.includes("Prompt"));
+    const cells = f.terminal.viewportBackgrounds();
+    const readingCells =
+      cells[composer]?.flatMap((color, column) => (column > 36 && color ? [column] : [])) ?? [];
+    const right = readingCells.at(-1);
+    if (right === undefined) throw new Error("Missing reading column");
+    expect(lines.some((line) => /[┃│█]/u.test(line.slice(36)))).toBe(true);
+    expect(cells[row]?.slice(right + 1).every((color) => !color)).toBe(true);
+    expect(lines.join("\n")).not.toContain("─".repeat(10));
+  } finally {
+    await f.close();
+  }
+});
+
 it("copies wrapped user content through Visual reflow without adding padding or soft-wrap newlines", async () => {
   const text = "alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima 世界 end";
   const f = await fixture(100, 34, { rows: 40, text, user: true });
   try {
-    for (const key of ["\u000b", "g", "g", "j", "^", "v", "G", "$"]) f.terminal.sendInput(key);
+    for (const key of ["\u000b", "g", "g", "^", "v", "G", "$"]) f.terminal.sendInput(key);
     await f.terminal.waitForRender();
     f.terminal.setSize(52, 40);
     await f.terminal.waitForRender();

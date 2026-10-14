@@ -11,6 +11,71 @@ import type { DeckTuiOptions } from "./views.js";
 import { DeckTui } from "./views.js";
 
 const now = Date.parse("2026-10-13T12:00:00Z");
+
+it("renders icon-only status with inline colored labels and clips labels before metadata", async () => {
+  const f = await fixture(
+    { appearance: { color: "truecolor", unicode: true, theme: "ember", symbols: "unicode" } },
+    { treeGrouping: "project", expandedIds: new Set(["p"]) },
+    {
+      ...directory,
+      workspaceLabels: [
+        { name: "urgent", color: "red" },
+        { name: "design", color: "sky" },
+      ],
+      workspaces: directory.workspaces.map((workspace) => ({
+        ...workspace,
+        labels: ["urgent", "design"],
+      })),
+    },
+  );
+  try {
+    const lines = await f.frame();
+    const index = lines.findIndex((line) => line.includes("Review workspace"));
+    expect(lines[index + 1]).toContain("urgent");
+    expect(lines[index + 1]).toContain("design");
+    expect(lines[index + 1]).not.toContain("Ready to review");
+    expect(lines[index + 2]?.slice(0, 50).trim()).toBe("");
+    const backgrounds = f.terminal.viewportBackgrounds()[index + 1];
+    expect(backgrounds?.[lines[index + 1]?.indexOf("urgent") ?? -1]).not.toBe(
+      backgrounds?.[lines[index + 1]?.indexOf("design") ?? -1],
+    );
+    const workspace = f.app.state.directory.workspaces.find((item) => item.id === "w");
+    if (!workspace) throw new Error("Missing Workspace");
+    f.gateway.emitDirectory({
+      type: "workspace-upserted",
+      workspace: { ...workspace, labels: ["urgent", "design", "a-label-too-long-to-fit"] },
+    });
+    const updated = await f.frame();
+    expect(updated[index + 1]).toContain("◷ 3m");
+    expect(updated[index + 1]).toContain("…");
+  } finally {
+    await f.close();
+  }
+});
+it("uses bright text for native labels mapped to dark ANSI backgrounds", async () => {
+  const f = await fixture(
+    { appearance: { color: "ansi16", unicode: false, theme: "ember", symbols: "ascii" } },
+    { treeGrouping: "project", expandedIds: new Set(["p"]) },
+    {
+      ...directory,
+      workspaceLabels: [
+        { name: "blue", color: "blue" },
+        { name: "red", color: "red" },
+      ],
+      workspaces: directory.workspaces.map((workspace) => ({
+        ...workspace,
+        labels: ["blue", "red"],
+      })),
+    },
+  );
+  try {
+    await f.frame();
+    expect(f.terminal.writes.join("")).toContain("\u001b[97;44m blue ");
+    expect(f.terminal.writes.join("")).toContain("\u001b[97;41m red ");
+  } finally {
+    await f.close();
+  }
+});
 const directory: DirectorySnapshot = {
   projects: [{ id: "p", name: "Design project" }],
   providers: [],
@@ -40,7 +105,7 @@ const reviewWorkspace = directory.workspaces[0];
 const missingWorkspace = directory.workspaces[1];
 if (!reviewWorkspace || !missingWorkspace) throw new Error("Missing Sidebar fixtures");
 
-it("separates Workspace cards and shows plain metadata and native Workspace labels", async () => {
+it("separates Workspace cards and shows icon metadata with inline native Workspace labels", async () => {
   const snapshot = {
     ...directory,
     workspaces: directory.workspaces.map((workspace) => ({
@@ -53,11 +118,12 @@ it("separates Workspace cards and shows plain metadata and native Workspace labe
     const lines = await f.frame();
     const first = lines.findIndex((line) => line.includes("Review workspace"));
     const second = lines.findIndex((line) => line.includes("Missing native time"));
-    expect(lines[first + 1]).toContain("Ready to review");
+    expect(lines[first + 1]).toMatch(/^\s+A /u);
+    expect(lines[first + 1]).not.toContain("Ready to review");
     expect(lines[first + 1]).not.toContain("[/]");
     expect(lines[first + 1]).not.toContain("[ Ready");
-    expect(lines[first + 2]).toContain("urgent");
-    expect(lines[first + 2]).toContain("design");
+    expect(lines[first + 1]).toContain("urgent");
+    expect(lines[first + 1]).toContain("design");
     expect(lines[second - 1]?.slice(0, 50).trim()).toBe("");
   } finally {
     await f.close();
@@ -124,7 +190,7 @@ it("renders Project metadata and native ages below Workspace titles, switching t
     const lines = await f.frame();
     const title = lines.findIndex((line) => line.includes("Review workspace"));
     expect(lines[title + 1]).toContain(" Design project ");
-    expect(lines[title + 1]).not.toContain("[/]");
+    expect(lines[title + 1]).toContain("[/]");
     expect(lines[title + 1]).toContain("[t] 3m");
     const missing = lines.findIndex((line) => line.includes("Missing native time"));
     expect(lines[missing + 1]).toContain("[t] -");
@@ -135,7 +201,8 @@ it("renders Project metadata and native ages below Workspace titles, switching t
     await f.input("l");
     const project = await f.frame();
     const projectTitle = project.findIndex((line) => line.includes("Review workspace"));
-    expect(project[projectTitle + 1]).toContain(" Ready to review ");
+    expect(project[projectTitle + 1]).toMatch(/^\s+A /u);
+    expect(project[projectTitle + 1]).not.toContain("Ready to review");
     expect(project[projectTitle + 1]).toContain("[t] 3m");
   } finally {
     await f.close();
@@ -392,7 +459,7 @@ it.each(["unicode", "ascii"] as const)(
       expect(terminalDisplayWidth(metadata.slice(0, metadata.indexOf(clock)))).toBe(
         symbols === "unicode" ? 19 : 17,
       );
-      expect(metadata).toContain(symbols === "unicode" ? " 界界界界界界… " : " 界界界界... ");
+      expect(metadata).toContain(symbols === "unicode" ? "📁 界界界界界… " : "[/] 界界界... ");
       expect(metadata).not.toContain("project metadata");
     } finally {
       await f.close();

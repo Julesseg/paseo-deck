@@ -87,9 +87,7 @@ function timelineContentRows(terminal: RecordingTerminal, first: number, last: n
     const next = (viewport[row + 1] ?? "").trim();
     return (
       text.length > 0 ||
-      !/^(?:You(?: ·|$)|Assistant(?: ·|$)|Tool (?:completed|running|failed)|Turn |─ Turn )/u.test(
-        next,
-      )
+      !/^(?:after(?: tools)?$|Tool (?:completed|running|failed)|Turn |─ Turn )/u.test(next)
     );
   });
 }
@@ -115,7 +113,7 @@ it("first Timeline focus starts at the beginning of its final displayed row", as
 it("keeps a vertical screen-column goal across separately rendered ordinary rows", async () => {
   const f = await fixture("alpha enough width\nsecond row long\nthird anotherline");
   try {
-    await f.keys("\u000b", "g", "g", "j", "0", "l", "l", "l", "l", "l", "l");
+    await f.keys("\u000b", "g", "g", "0", "l", "l", "l", "l", "l", "l");
     const goal = f.terminal.viewportCursor().column;
     const row = f.terminal.viewportCursor().row;
     await f.keys("j");
@@ -191,7 +189,7 @@ it("restores its preferred screen column after short blank indented and Unicode 
     "alpha enough width\nx\n\n   indented long row\n界界界界abcdefghijk\néééabcdefghijk\nfinal enough width",
   );
   try {
-    await f.keys("\u000b", "g", "g", "j", "0", "8", "l");
+    await f.keys("\u000b", "g", "g", "0", "8", "l");
     const goal = f.terminal.viewportCursor().column;
     for (const label of ["short", "blank", "indented", "wide", "combining", "final"]) {
       await f.keys("j");

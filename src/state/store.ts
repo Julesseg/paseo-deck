@@ -177,6 +177,8 @@ function directoryUpdate(directory: DirectorySnapshot, update: DirectoryUpdate):
   switch (update.type) {
     case "snapshot":
       return update.snapshot;
+    case "workspace-labels-replaced":
+      return { ...directory, workspaceLabels: update.labels };
     case "project-upserted":
       return { ...directory, projects: replaceById(directory.projects, update.project) };
     case "project-removed":

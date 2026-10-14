@@ -99,6 +99,22 @@ export interface DirectorySnapshot {
   workspaces: readonly WorkspaceRecord[];
   agents: readonly AgentRecord[];
   providers: readonly ProviderOption[];
+  workspaceLabels?: readonly WorkspaceLabelRecord[];
+}
+
+export interface WorkspaceLabelRecord {
+  name: string;
+  color:
+    | "violet"
+    | "sky"
+    | "emerald"
+    | "orange"
+    | "pink"
+    | "indigo"
+    | "teal"
+    | "red"
+    | "amber"
+    | "blue";
 }
 
 export type DirectoryUpdate =
@@ -110,6 +126,7 @@ export type DirectoryUpdate =
   | { type: "agent-upserted"; agent: AgentRecord }
   | { type: "agent-removed"; agentId: string }
   | { type: "providers-replaced"; providers: readonly ProviderOption[] }
+  | { type: "workspace-labels-replaced"; labels: readonly WorkspaceLabelRecord[] }
   | {
       type: "connection-changed";
       state: ConnectionState;

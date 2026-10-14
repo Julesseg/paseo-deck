@@ -62,3 +62,17 @@ The saved preferences used the former default width of 34. Preferences now migra
 Follow-up checks and matched before/after captures are linked from PR #104. The native probes only read directory data: they did not open or acknowledge Sessions, send prompts, or modify user resources. Physical terminal/clipboard/provider-execution limits above still apply.
 
 Follow-up `npm run check` passed 62 files / 884 tests, Biome, TypeScript, coverage, build and packed executable smoke. Final sequential 1,000-item Unicode/no-color p95 application-write measurements: tree 16.899832999999944 ms, timeline 15.832499999999982 ms, composer 16.261124999999993 ms. All meet the 50 ms target; these remain headless application-write measurements.
+
+## Inline labels and Timeline refinements, 2026-10-14 UTC
+
+The later live-use feedback supersedes the earlier plain metadata/extra label row and tool-divider presentation. Project metadata now has a folder icon; Status metadata is icon-only, with spelled status on group headings. Native colored Workspace label pills follow on the same row and are clipped first with an ellipsis, retaining metadata and right-aligned activity age. The native catalog is read and observed through a narrow owned adapter; its failed queries retry independently without changing the main connection state.
+
+Timeline message bodies omit author/time headings. Blank block separation remains while consecutive tools have no divider rules. A reproduced 240-column transient-scrollbar case showed tool background leaking beyond the reading column. Clearing background at the scrollbar edge fixes it without changing logical content or reflow width. Copy, selection, semantic anchors, streaming, folding, Session switching and navigation checks now exercise the body-only presentation.
+
+Read-only production gateway observation returned 13 Workspaces, one assigned label, one native catalog definition (violet), one matching assignment and one catalog snapshot. The query was released and the owned connections closed; no Session was opened or acknowledged and no prompt was sent.
+
+`npm run check` passed 62 test files / 889 tests, Biome, TypeScript, coverage, build and packed executable smoke. Coverage: statements 89.07%, branches 81.39%, functions 86.22%, lines 91.24%. Standards and Spec reviews have no remaining actionable findings after correcting owned-query recovery and ANSI fallback text contrast.
+
+Sequential 1,000-item Unicode/no-color application-write benchmarks passed: Sidebar p95 17.122125000000096 ms at 10:25:19.767 UTC; Timeline 16.201250000000073 ms at 10:25:24.047 UTC; Composer 17.033708999999817 ms at 10:25:27.329 UTC. Fixtures and physical-evidence limits remain as documented above.
+
+The new report uses matched fixtures at the prior follow-up revision and this change. Both use common capture instrumentation: the official xterm Unicode 11 width table, RGB foreground/background recording and injected terminal ground. Default/indexed foregrounds are simulated; physical terminal font painting and host theme contrast remain unverified. Native RGB label contrast is represented in the controlled light/dark captures. The exact local report path and final-head CI are recorded on PR #104.

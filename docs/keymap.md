@@ -208,7 +208,7 @@ Changing provider on a draft resets model, thinking and operational mode to the 
 
 ## 10. Timeline local controls and read-only rules
 
-Inherits the relevant globals, shared motion/object/selection tables and Normal application commands. Timeline has no Insert mode.
+Inherits the relevant globals, shared motion/object/selection tables and Normal application commands. Timeline has no Insert mode. Message bodies omit author/time headings; blank rows separate blocks and tool calls without divider rules. Tool surfaces stop at the reading column before its scrollbar.
 
 | Keys / input | Scope | Action |
 | --- | --- | --- |
@@ -252,7 +252,7 @@ Rows are activity groups and Workspaces by default; `s` switches to Project head
 | s | Toggle Status/Project grouping; persists across launches. |
 | o | Toggle recent activity/alphabetical ordering; persists across launches. |
 
-The three filters combine without changing the Active workspace/Tab; retain grouping headings for matching Workspaces. Name filtering treats `s` and `o` as text. Automatic group positions and within-group ordering stay frozen while Sidebar navigation owns keyboard input, with live badges and stable highlighted Workspace identity; pending positions apply on leaving. Explicit grouping/ordering changes apply immediately. Status groups are Waiting for user input, Failed, Ready to review, Working, then Done, using Paseo's native bucket selection. Within each group the default is most recent native Workspace `activityAt` (falling back to the latest native Session update when unavailable), with missing timestamps last and title/identity as tie-breakers. Missing buckets stay ungrouped with a `?` indicator. Sidebar has no tab navigation, Session Stop/Archive/Rename/Detach or Session setting shortcuts. Ctrl-X is unassigned here.
+The three filters combine without changing the Active workspace/Tab; retain grouping headings for matching Workspaces. Name filtering treats `s` and `o` as text. Automatic group positions and within-group ordering stay frozen while Sidebar navigation owns keyboard input, with live badges and stable highlighted Workspace identity; pending positions apply on leaving. Explicit grouping/ordering changes apply immediately. Status groups are Waiting for user input, Failed, Ready to review, Working, then Done, using Paseo's native bucket selection. Within each group the default is most recent native Workspace `activityAt` (falling back to the latest native Session update when unavailable), with missing timestamps last and title/identity as tie-breakers. Missing buckets stay ungrouped with a `?` indicator. Workspace metadata shows a folder icon with Project text in Status grouping, or only a status icon in Project grouping. Native colored label pills follow on the same row and are clipped first; activity age retains priority. Sidebar has no tab navigation, Session Stop/Archive/Rename/Detach or Session setting shortcuts. Ctrl-X is unassigned here.
 
 Workspace activation clears only the text query; movement and bare i preserve it. Attention-only and archived visibility toggles survive activation. Search/filter input and native paste own literal i.
 

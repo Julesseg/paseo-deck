@@ -19,6 +19,7 @@ import type {
   ToolDetailKind,
   UsageSummary,
   WorkspaceActivity,
+  WorkspaceLabelRecord,
   WorkspaceRecord,
 } from "../contracts/domain.js";
 import type {
@@ -44,6 +45,7 @@ import { PaseoGatewayError, paseoFailure } from "./errors.js";
 import { createProviderCommandsClient, type ProviderCommandsClient } from "./provider-commands.js";
 import { createSessionSettingsClient, type SessionSettingsClient } from "./session-settings.js";
 import { type PaseoTarget, type PaseoTargetInput, targetFromDaemonStatus } from "./target.js";
+import { createWorkspaceLabelsClient, type WorkspaceLabelsClient } from "./workspace-labels.js";
 
 import {
   createWorkspaceMetadataClient,
@@ -74,6 +76,7 @@ export interface PaseoGatewayOptions extends PaseoTargetInput {
   createMetadataClient?: (target: PaseoTarget) => WorkspaceMetadataClient;
   createCommandsClient?: (target: PaseoTarget) => ProviderCommandsClient;
   createClient?: (target: PaseoTarget) => ClientSurface;
+  createLabelsClient?: (target: PaseoTarget) => WorkspaceLabelsClient;
 }
 
 export class ProductionPaseoGateway implements PaseoGateway {
@@ -87,6 +90,25 @@ export class ProductionPaseoGateway implements PaseoGateway {
   private settings: Promise<SessionSettingsClient> | undefined;
   private commandsClient: Promise<ProviderCommandsClient> | undefined;
   private metadata: Promise<WorkspaceMetadataClient> | undefined;
+  private labelsClient: Promise<WorkspaceLabelsClient> | undefined;
+  private labelDefinitions: readonly WorkspaceLabelRecord[] = [];
+
+  private async workspaceLabelsClient(): Promise<WorkspaceLabelsClient> {
+    if (!this.labelsClient) {
+      const target = this.target;
+      if (!target) throw new PaseoGatewayError("Paseo Deck is not connected.");
+      const client = (this.options.createLabelsClient ?? createWorkspaceLabelsClient)(target);
+      this.labelsClient = client
+        .connect()
+        .then(() => client)
+        .catch(async (error) => {
+          this.labelsClient = undefined;
+          await client.close().catch(() => {});
+          throw error;
+        });
+    }
+    return this.labelsClient;
+  }
 
   public constructor(private readonly options: PaseoGatewayOptions = {}) {
     this.cliRunner = options.cliRunner ?? createCliRunner();
@@ -203,15 +225,19 @@ export class ProductionPaseoGateway implements PaseoGateway {
     this.focusGeneration += 1;
     const focused = this.focused;
     const metadata = this.metadata;
+    const labelsClient = this.labelsClient;
     const client = this.client;
     this.focused = undefined;
     this.metadata = undefined;
+    this.labelsClient = undefined;
+    this.labelDefinitions = [];
     const outcomes = await Promise.allSettled([
       commandsClient?.then((connection) => connection.close()),
       attention?.then((connection) => connection.close()),
       settings?.then((connection) => connection.close()),
       focused?.release(),
       metadata?.then((connection) => connection.close()),
+      labelsClient?.then((connection) => connection.close()),
       client?.close(),
     ]);
     this.client = undefined;
@@ -279,7 +305,13 @@ export class ProductionPaseoGateway implements PaseoGateway {
         client.agents.list(),
         client.providers.waitForReady(),
       ]);
-      return directorySnapshot(client, projects, workspaces, agents, providers);
+      const snapshot = await directorySnapshot(client, projects, workspaces, agents, providers);
+      if (snapshot.workspaces.some((workspace) => workspace.labels?.length)) {
+        this.labelDefinitions = workspaceLabelRecords(
+          (await (await this.workspaceLabelsClient()).listWorkspaceLabels()).labels,
+        );
+      }
+      return this.labelsClient ? { ...snapshot, workspaceLabels: this.labelDefinitions } : snapshot;
     } catch (error) {
       throw paseoFailure(error, "protocol");
     }
@@ -450,6 +482,85 @@ export class ProductionPaseoGateway implements PaseoGateway {
   public async observeDirectory(listener: Listener<DirectoryUpdate>): Promise<Observation> {
     const client = this.requireClient();
     const releases: Array<() => Promise<void> | void> = [];
+    let active = true;
+    releases.push(() => {
+      active = false;
+    });
+    let observingLabels: Promise<void> | undefined;
+    let releaseLabels: (() => Promise<void>) | undefined;
+    let labelRetry: ReturnType<typeof setTimeout> | undefined;
+    releases.push(async () => {
+      clearTimeout(labelRetry);
+      await releaseLabels?.();
+    });
+    const retryLabels = () => {
+      if (!active || labelRetry) return;
+      labelRetry = setTimeout(() => {
+        labelRetry = undefined;
+        void ensureLabels().catch(retryLabels);
+      }, 500);
+      labelRetry.unref();
+    };
+    const publishLabels = (labels: readonly WorkspaceLabelRecord[]) => {
+      if (!active) return;
+      this.labelDefinitions = labels;
+      listener({ type: "workspace-labels-replaced", labels });
+    };
+    const ensureLabels = (): Promise<void> => {
+      if (observingLabels) return observingLabels;
+      const attempt = (async () => {
+        const labelsClient = await this.workspaceLabelsClient();
+        if (!active) return;
+        const query = labelsClient.observeWorkspaceLabels();
+        let released = false;
+        let unsubscribe = () => {};
+        const release = async () => {
+          if (released) return;
+          released = true;
+          unsubscribe();
+          await query.release();
+        };
+        releaseLabels = release;
+        unsubscribe = query.subscribe({
+          snapshot: (payload) => {
+            if (!released) publishLabels(workspaceLabelRecords(payload.labels));
+          },
+          update: (message) => {
+            if (released || message.type !== "workspace.label.update") return;
+            const payload = message.payload;
+            if (payload.kind === "remove")
+              publishLabels(this.labelDefinitions.filter((label) => label.name !== payload.name));
+            else {
+              const updated = workspaceLabelRecords([payload.label])[0];
+              if (updated)
+                publishLabels([
+                  ...this.labelDefinitions.filter(
+                    (label) => label.name !== updated.name && label.name !== payload.previousName,
+                  ),
+                  updated,
+                ]);
+            }
+          },
+          error: () => {
+            if (released) return;
+            observingLabels = undefined;
+            void release().catch(() => {});
+            retryLabels();
+          },
+        });
+        try {
+          await query.ready;
+        } catch (error) {
+          await release();
+          throw error;
+        }
+      })().catch((error) => {
+        if (observingLabels === attempt) observingLabels = undefined;
+        throw error;
+      });
+      observingLabels = attempt;
+      return attempt;
+    };
     // `connect()` has already settled before a directory observation exists;
     // ApplicationController establishes its initial connected state after the
     // snapshot. Forward only later transitions so startup does not refetch the
@@ -459,10 +570,23 @@ export class ProductionPaseoGateway implements PaseoGateway {
       const agents = await client.agents.list({ subscribe: {} });
       if (agents.subscription) releases.push(() => agents.subscription.release());
       releases.push(
-        client.workspaces.subscribe((message) => emitDirectoryMessage(message, listener)),
+        client.workspaces.subscribe((message) => {
+          emitDirectoryMessage(message, listener);
+          const payload = asRecord(asRecord(message)?.payload) ?? asRecord(message);
+          const workspace = asRecord(payload?.workspace);
+          if (Array.isArray(workspace?.labels) && workspace.labels.length)
+            void ensureLabels().catch(retryLabels);
+        }),
       );
       const workspaces = await client.workspaces.list({ subscribe: {} });
       if (workspaces.subscription) releases.push(() => workspaces.subscription.release());
+      if (
+        this.labelsClient ||
+        recordEntries(asRecord(workspaces) ?? {}).some(
+          (workspace) => Array.isArray(workspace.labels) && workspace.labels.length > 0,
+        )
+      )
+        await ensureLabels();
       releases.push(
         client.projects.subscribe((message) => emitDirectoryMessage(message, listener)),
       );
@@ -972,6 +1096,28 @@ function readableRemoteProjectName(id: string): string | undefined {
 function nonBlankString(value: unknown): string | undefined {
   const result = stringValue(value);
   return result?.trim() ? result : undefined;
+}
+
+function workspaceLabelRecords(value: unknown): WorkspaceLabelRecord[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((entry) => {
+    const label = asRecord(entry);
+    return typeof label?.name === "string" &&
+      [
+        "violet",
+        "sky",
+        "emerald",
+        "orange",
+        "pink",
+        "indigo",
+        "teal",
+        "red",
+        "amber",
+        "blue",
+      ].includes(String(label.color))
+      ? [{ name: label.name, color: label.color as WorkspaceLabelRecord["color"] }]
+      : [];
+  });
 }
 
 function workspaceRecord(value: UnknownRecord): WorkspaceRecord {

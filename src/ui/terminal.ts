@@ -1,4 +1,5 @@
 import type { Terminal, TUI } from "@earendil-works/pi-tui";
+import unicode11 from "@xterm/addon-unicode11";
 import xterm, { type Terminal as XtermTerminal } from "@xterm/headless";
 
 /** A narrow lifecycle owner so every exit path restores the user's terminal. */
@@ -46,6 +47,10 @@ export class RecordingTerminal implements Terminal {
       disableStdin: true,
       allowProposedApi: true,
     });
+    const unicode = new unicode11.Unicode11Addon();
+    // The official addon shares the headless Unicode API but types its browser terminal.
+    unicode.activate(this.xterm as unknown as Parameters<typeof unicode.activate>[0]);
+    this.xterm.unicode.activeVersion = "11";
   }
 
   start(onInput: (data: string) => void, onResize: () => void): void {
@@ -115,13 +120,20 @@ export class RecordingTerminal implements Terminal {
   }
   /** Captures truecolor backgrounds from xterm cells for visual reports. */
   viewportBackgrounds(): Array<Array<string | undefined>> {
+    return this.viewportColors("background");
+  }
+  viewportForegrounds(): Array<Array<string | undefined>> {
+    return this.viewportColors("foreground");
+  }
+  private viewportColors(layer: "foreground" | "background"): Array<Array<string | undefined>> {
     const buffer = this.xterm.buffer.active;
     return Array.from({ length: this.xterm.rows }, (_, row) => {
       const line = buffer.getLine(buffer.viewportY + row);
       return Array.from({ length: this.xterm.cols }, (_, column) => {
         const cell = line?.getCell(column);
-        if (!cell?.isBgRGB()) return undefined;
-        return `#${cell.getBgColor().toString(16).padStart(6, "0")}`;
+        if (!(layer === "foreground" ? cell?.isFgRGB() : cell?.isBgRGB())) return undefined;
+        const color = layer === "foreground" ? cell?.getFgColor() : cell?.getBgColor();
+        return `#${(color ?? 0).toString(16).padStart(6, "0")}`;
       });
     });
   }
