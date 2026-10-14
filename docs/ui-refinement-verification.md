@@ -25,7 +25,7 @@ Paseo client, protocol and CI CLI are pinned to `0.11.2`. Checks used an isolate
 
 The SDK lacks public per-Session attention clearing and public draft command discovery, so narrow adapters isolate those operations. Attention clearing refreshes the current native reason before sending; the backend RPC has no conditional reason parameter. No live provider turn, slash command or skill prompt was executed. Seeded attention establishes native persistence/RPC/update behavior, not provider turn completion.
 
-## Checks and visual evidence
+## Original implementation checks and visual evidence
 
 `npm run check` passed: Biome, TypeScript, 62 test files / 878 tests, coverage, build and packed `paseo-deck`/`pdeck` executable smoke. Coverage: statements 89.15%, branches 81.5%, functions 86.67%, lines 91.25%. Baseline checks passed 57 files / 806 tests. CI results for the final PR head are recorded in the PR.
 
@@ -35,7 +35,7 @@ The standalone HTML report contains 93 terminal-frame PNGs: 42 before and 51 aft
 
 Final integrated UI frames at `5745f91` reproduce the earlier rendered SVGs exactly. Native gateway frames were captured at the recorded earlier revisions. Each caption records its source revision and fixture. Chrome rasterization preserves the SVG's native dimensions at 1×; all 93 embedded images were opened and decoded successfully. The report lives locally under `~/.local/share/ui-reports/paseo-deck/implement-spec-all-7-open-issues/`, with its exact path in the PR.
 
-## Idle navigation performance
+## Original idle navigation performance
 
 Sequential final benchmarks used 1,000 Timeline items, 30 Workspaces, 90 Sessions, a 120×35 terminal, Unicode/no color, 100 keys and 10 warmup keys per context. All three passed the 50 ms p95 key-to-first-write target.
 
@@ -50,3 +50,15 @@ Environment: Node v26.10.0, Apple M2 Pro, darwin 27.0.0 / arm64. This measures a
 ## Acceptance limits
 
 Physical keyboard delivery, cross-application clipboard, actual macOS visibility/occlusion, terminal focus-report support and live provider execution were not exercised. Terminals without focus reports default to visible while Deck runs. Synthetic captures record terminal text/background cells but use fixed SVG foreground colors, so light-mode foreground contrast and physical terminal painting remain unverified. Controlled fixtures and native catalog reads do not establish provider execution.
+
+## Follow-up from live use, 2026-10-14 UTC
+
+Workspace cards now have an empty separator row. Project/Status metadata uses plain pills without brackets or the previous font-dependent icon. Native Workspace label assignments are preserved by the gateway and displayed in their own row. Timeline blocks have blank separation, including user/assistant boundaries and consecutive tools. Decorative gaps are skipped by vertical navigation/counts while real blank lines inside tool output remain navigable; copy and semantic anchors retain their content identity.
+
+The read-only native check found 13 Workspace summaries with null `activityAt`, 16 valid native Session update timestamps, and one Workspace with assigned labels. Deck had discarded label assignments. After the fixes all 13 Workspaces have an effective native activity time and the assigned labels reach the application. Workspace `activityAt` remains authoritative when valid; the fallback uses the latest native Session update, never a local opening timestamp. Truly unavailable data still displays `—`.
+
+The saved preferences used the former default width of 34. Preferences now migrate that legacy default to 51 and mark subsequent choices, preserving other custom widths and an explicitly chosen 34 across reload. The screenshot's dots before `active` were the running glyph rather than token-count truncation; the Composer now displays plain `active`/`sending` with complete fitting context usage.
+
+Follow-up checks and matched before/after captures are linked from PR #104. The native probes only read directory data: they did not open or acknowledge Sessions, send prompts, or modify user resources. Physical terminal/clipboard/provider-execution limits above still apply.
+
+Follow-up `npm run check` passed 62 files / 884 tests, Biome, TypeScript, coverage, build and packed executable smoke. Final sequential 1,000-item Unicode/no-color p95 application-write measurements: tree 16.899832999999944 ms, timeline 15.832499999999982 ms, composer 16.261124999999993 ms. All meet the 50 ms target; these remain headless application-write measurements.

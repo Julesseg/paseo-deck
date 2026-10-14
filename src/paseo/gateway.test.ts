@@ -215,6 +215,33 @@ describe("ProductionPaseoGateway", () => {
     expect(fixture.client.providers.listModes).toHaveBeenCalledWith("codex");
   });
 
+  it("preserves native Workspace label assignments in directory snapshots", async () => {
+    const fixture = testClient();
+    fixture.client.workspaces.list.mockResolvedValueOnce({
+      entries: [
+        {
+          id: "workspace-1",
+          workspaceDirectory: "/repo",
+          labels: ["urgent", "design"],
+          activityAt: null,
+        },
+      ],
+    } as never);
+    const gateway = new ProductionPaseoGateway({
+      host: "127.0.0.1:6767",
+      createClient: () => fixture.client as never,
+    });
+    try {
+      await gateway.connect();
+      expect((await gateway.getDirectorySnapshot()).workspaces[0]).toMatchObject({
+        labels: ["urgent", "design"],
+        activityAt: null,
+      });
+    } finally {
+      await gateway.close();
+    }
+  });
+
   it("uses the live projectId field to join projects with their workspaces", async () => {
     const fixture = testClient();
     fixture.client.projects.list.mockResolvedValueOnce({

@@ -262,8 +262,22 @@ class TreeView implements Component {
               : `${this.theme.styleRendered(tone, line)}${" ".repeat(Math.max(0, innerWidth - terminalDisplayWidth(line)))}`;
           const rowLines = row.kind === "workspace" ? [] : [""];
           rowLines.push(styleRow(primary));
-          if (row.kind === "workspace") rowLines.push(styleRow(this.metadataLine(row, innerWidth)));
-          else rowLines.push("");
+          if (row.kind === "workspace") {
+            rowLines.push(styleRow(this.metadataLine(row, innerWidth)));
+            const labels = this.state.directory.workspaces.find(
+              (workspace) => workspace.id === row.id,
+            )?.labels;
+            if (labels?.length)
+              rowLines.push(
+                styleRow(
+                  this.theme.clipRendered(
+                    `${" ".repeat(1 + row.depth * 2)}${labels.map((label) => this.theme.styleTabBody("tab-inactive", "muted", ` ${sanitizeTerminalText(label)} `)).join(" ")}`,
+                    innerWidth,
+                  ),
+                ),
+              );
+          }
+          rowLines.push("");
           return rowLines;
         }),
       );
@@ -287,7 +301,7 @@ class TreeView implements Component {
         : workspace
           ? (projectForWorkspace(this.state.directory.projects, workspace)?.name ?? "No project")
           : "No project";
-    const timestamp = workspace?.activityAt ? Date.parse(workspace.activityAt) : Number.NaN;
+    const timestamp = row.activityAt ? Date.parse(row.activityAt) : Number.NaN;
     const minutes = Math.floor(Math.max(0, this.now() - timestamp) / 60_000);
     const age = !Number.isFinite(timestamp)
       ? this.theme.glyph("unavailable")
@@ -300,9 +314,8 @@ class TreeView implements Component {
             : `${Math.floor(minutes / 1440)}d`;
     const right = `${this.theme.glyph("clock")} ${age}`;
     const indent = " ".repeat(1 + row.depth * 2);
-    const folder = this.theme.glyph("folder");
     const available = Math.max(0, width - terminalDisplayWidth(indent + right) - 1);
-    const labelWidth = Math.max(0, available - terminalDisplayWidth(folder) - 5);
+    const labelWidth = Math.max(0, available - 2);
     const clippedLabel = this.theme.clipRemoteText(label, labelWidth);
     const tone =
       row.activity === "failed"
@@ -315,19 +328,22 @@ class TreeView implements Component {
               ? "running"
               : "muted";
     const left =
-      available >= terminalDisplayWidth(folder) + 5
-        ? `${folder} ${this.theme.styleTabBody("tab-inactive", tone, `[ ${clippedLabel} ]`)}`
-        : this.theme.clipRendered(`${folder} ${sanitizeTerminalText(label)}`, available);
+      available >= 2
+        ? this.theme.styleTabBody("tab-inactive", tone, ` ${clippedLabel} `)
+        : this.theme.clipRendered(sanitizeTerminalText(label), available);
     return `${indent}${left}${" ".repeat(Math.max(1, width - terminalDisplayWidth(indent + left + right)))}${this.theme.style("muted", right)}`;
   }
 
   selectedLineRange(_width: number): { start: number; end: number } | undefined {
     let line = 2;
     for (const row of deriveTreeRows(this.state)) {
-      const height = row.kind === "workspace" ? 2 : 3;
+      const labels = this.state.directory.workspaces.find(
+        (workspace) => workspace.id === row.id,
+      )?.labels;
+      const height = row.kind === "workspace" ? 3 + (labels?.length ? 1 : 0) : 3;
       if (row.selected)
         return row.kind === "workspace"
-          ? { start: line, end: line + 1 }
+          ? { start: line, end: line + (labels?.length ? 2 : 1) }
           : { start: line + 1, end: line + 1 };
       line += height;
     }
@@ -798,9 +814,28 @@ class TimelineView implements Component {
     this.selectedIndex = Math.min(this.selectedIndex, Math.max(0, events.length - 1));
   }
   moveText(key: string, count = 0): void {
-    this.buffer = moveTimelineBuffer(this.buffer, key, count);
+    if (["j", "k", "gj", "gk"].includes(key)) {
+      for (let step = 0; step < Math.max(1, count); step++) {
+        const previousLine = this.buffer.line;
+        this.buffer = moveTimelineBuffer(this.buffer, key, 1);
+        this.skipDecorativeGap(key === "k" || key === "gk" ? -1 : 1);
+        if (this.buffer.line === previousLine) break;
+      }
+    } else this.buffer = moveTimelineBuffer(this.buffer, key, count);
     this.keepCursorAtEnd = key === "G" && count === 0 && this.buffer.mode === "normal";
     this.syncSelectedIndex();
+  }
+  private skipDecorativeGap(direction: -1 | 1): void {
+    const layout = this.timelineLayout(this.renderedWidth);
+    while (
+      layout.events.some(
+        (event) => event.positions[this.buffer.line - event.start]?.region === "gap",
+      )
+    ) {
+      const next = moveTimelineBuffer(this.buffer, direction < 0 ? "k" : "j", 1);
+      if (next.line === this.buffer.line) return;
+      this.buffer = next;
+    }
   }
   searchWord(key: "*" | "#", count: number): void {
     this.buffer = searchTimelineWord(this.buffer, key, count);
@@ -826,11 +861,13 @@ class TimelineView implements Component {
       { ...this.buffer, line: Math.max(0, Math.min(this.buffer.lines.length - 1, line)) },
       "^",
     );
+    this.skipDecorativeGap(1);
     this.keepCursorAtEnd = false;
     this.syncSelectedIndex();
   }
   moveViewport(key: "H" | "M" | "L", top: number, height: number, count: number): void {
     this.buffer = moveTimelineViewport(this.buffer, key, top, height, count);
+    this.skipDecorativeGap(key === "H" ? -1 : 1);
     this.keepCursorAtEnd = false;
     this.syncSelectedIndex();
   }
@@ -1663,9 +1700,6 @@ class TimelineView implements Component {
       else if (item.type === "turn") group = `turn:${item.turnId ?? item.id}`;
       else if (item.type === "assistant-message" && item.turnId) group = `turn:${item.turnId}`;
       const firstInGroup = group !== priorGroup;
-      // Explicit turn records are the visual boundaries between turns. Avoid
-      // inflating long streamed message histories with separator rows for
-      // every provider-assigned turn id.
       const gap =
         item.type === "tool" && this.events[eventIndex - 1]?.item.type === "tool"
           ? [
@@ -1673,8 +1707,9 @@ class TimelineView implements Component {
                 "tool",
                 this.theme.styleRendered("border", this.theme.glyph("divider").repeat(width)),
               ),
+              "",
             ]
-          : firstInGroup && priorGroup && item.type === "turn"
+          : eventIndex > 0
             ? [""]
             : [];
       if (firstInGroup) ordinal += 1;
@@ -2589,11 +2624,7 @@ export function composerControlRow(state: AppState, theme: DeckTheme, width: num
     .join("  ");
   const cues = controls.map(([key]) => theme.style("muted", `[${key}]`)).join(" ");
   const sending = agent && state.composer.sendingAgentIds.has(agent.id);
-  const activity = sending
-    ? `${theme.glyph("running")} sending`
-    : agent?.status === "running"
-      ? `${theme.glyph("running")} active`
-      : "";
+  const activity = sending ? "sending" : agent?.status === "running" ? "active" : "";
   const usage = state.timeline.usage ?? agent?.lastUsage;
   const tokenUsage = usage?.contextTokens === undefined ? "" : `context ${usage.contextTokens}`;
   const details = [activity, tokenUsage].filter(Boolean).join(` ${theme.glyph("bullet")} `);

@@ -18,6 +18,23 @@ const validScope = `v1-${"a".repeat(64)}`;
 const portablePath = (path: string): string => path.replaceAll("\\", "/");
 
 describe("preferences", () => {
+  it("migrates the old automatic Sidebar width while preserving newly chosen widths", async () => {
+    const scope = targetScope({ type: "default" });
+    let bytes = JSON.stringify({ version: 1, targets: { [scope]: { treeWidth: 34 } } });
+    const fs = {
+      readFile: async () => bytes,
+      writeAtomic: async (_path: string, value: string) => {
+        bytes = value;
+      },
+      remove: async () => {},
+    };
+    const session = await PreferenceSession.open({ type: "default" }, { fs, path: "/p" });
+    expect(session.treeWidth()).toBe(51);
+    session.present({ treeWidth: 34 });
+    await session.flush();
+    const restored = await PreferenceSession.open({ type: "default" }, { fs, path: "/p" });
+    expect(restored.treeWidth()).toBe(34);
+  });
   it("ignores tabs saved by older versions", () => {
     const parsed = parsePreferences({
       version: 1,
@@ -265,6 +282,7 @@ describe("preferences", () => {
       targets: {
         scope: {
           treeWidth: 33,
+          treeWidthVersion: 2,
           treeGrouping: "status",
           treeOrder: "alphabetical",
           showArchived: true,

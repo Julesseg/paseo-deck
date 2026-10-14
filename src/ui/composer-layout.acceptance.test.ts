@@ -71,6 +71,33 @@ it("shows a fitting token count fully at the padded Composer settings right edge
   }
 });
 
+it("shows active context usage without an ellipsis when the details fit", async () => {
+  const f = await fixture(200, 28, {
+    color: "none",
+    unicode: true,
+    theme: "plain",
+    symbols: "unicode",
+  });
+  try {
+    const agent = f.app.state.directory.agents[0];
+    if (!agent) throw new Error("Missing Session");
+    f.gateway.emitDirectory({
+      type: "agent-upserted",
+      agent: {
+        ...agent,
+        status: "running",
+        lastUsage: { contextTokens: 334037 },
+      },
+    });
+    await f.terminal.waitForRender();
+    const settings = f.terminal.viewport().find((line) => line.includes("context 334037"));
+    expect(settings).toContain("active · context 334037");
+    expect(settings).not.toContain("…");
+  } finally {
+    await f.close();
+  }
+});
+
 it("keeps a complete fitting token count when long settings cannot share the content width", async () => {
   const f = await fixture(30, 12);
   try {

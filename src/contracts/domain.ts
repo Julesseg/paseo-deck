@@ -24,6 +24,7 @@ export interface WorkspaceRecord {
   archived: boolean;
   status?: WorkspaceActivity;
   activityAt?: string | null;
+  labels?: readonly string[];
 }
 
 export type AgentStatus =

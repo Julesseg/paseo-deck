@@ -409,6 +409,69 @@ it("paints consecutive tools across the reading column and leaves assistant outp
   }
 });
 
+it("leaves a blank reading row between messages and consecutive tool blocks", async () => {
+  const f = await fixture(140, 34, { rows: 40, text: "seed" });
+  try {
+    f.gateway.emitTimeline("a", {
+      type: "replaced",
+      epoch: "spacing",
+      agentId: "a",
+      items: [
+        {
+          epoch: "spacing",
+          sequence: 1,
+          item: { id: "user", type: "user-message", text: "User spacing body" },
+        },
+        {
+          epoch: "spacing",
+          sequence: 2,
+          item: {
+            id: "assistant",
+            type: "assistant-message",
+            messageId: "a",
+            text: "Assistant spacing body",
+          },
+        },
+        {
+          epoch: "spacing",
+          sequence: 3,
+          item: {
+            id: "tool-one",
+            type: "tool",
+            callId: "c1",
+            name: "first-tool",
+            status: "completed",
+          },
+        },
+        {
+          epoch: "spacing",
+          sequence: 4,
+          item: {
+            id: "tool-two",
+            type: "tool",
+            callId: "c2",
+            name: "second-tool",
+            status: "completed",
+          },
+        },
+      ],
+    });
+    await f.terminal.waitForRender();
+    const lines = f.terminal.viewport().map((line) => line.slice(37, 139).trim());
+    for (const label of [
+      "Assistant",
+      "Tool completed: first-tool",
+      "Tool completed: second-tool",
+    ]) {
+      const index = lines.findIndex((line) => line === label || line.startsWith(label));
+      expect(index).toBeGreaterThan(0);
+      expect(lines[index - 1]).toBe("");
+    }
+  } finally {
+    await f.close();
+  }
+});
+
 it("copies wrapped user content through Visual reflow without adding padding or soft-wrap newlines", async () => {
   const text = "alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima 世界 end";
   const f = await fixture(100, 34, { rows: 40, text, user: true });

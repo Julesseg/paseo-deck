@@ -4,6 +4,7 @@ import type {
   WorkspaceActivity as NativeWorkspaceActivity,
   TimelineEvent,
   TimelineItem,
+  WorkspaceRecord,
 } from "../contracts/domain.js";
 import type { TerminalRecord } from "../contracts/terminal.js";
 import { selectedComposerDraft } from "../state/composer.js";
@@ -46,6 +47,7 @@ export interface TreeRow {
   selected: boolean;
   attention: boolean;
   activity?: NativeWorkspaceActivity;
+  activityAt?: string;
   /** The workspace currently shown in the main pane. */
   active?: boolean;
   /** Number of blank lines before this row, used for semantic grouping. */
@@ -119,6 +121,22 @@ export function workspaceActivityGlyph(activity: NativeWorkspaceActivity | undef
     : "?";
 }
 
+export function workspaceActivityAt(
+  workspace: WorkspaceRecord,
+  agents: readonly AgentRecord[],
+): string | undefined {
+  if (workspace.activityAt && Number.isFinite(Date.parse(workspace.activityAt)))
+    return workspace.activityAt;
+  let latest: string | undefined;
+  for (const agent of agents) {
+    const timestamp = agent.lastActivityAt;
+    if (agent.workspaceId !== workspace.id || !timestamp || !Number.isFinite(Date.parse(timestamp)))
+      continue;
+    if (!latest || Date.parse(timestamp) > Date.parse(latest)) latest = timestamp;
+  }
+  return latest;
+}
+
 export function deriveTreeRows(state: AppState): TreeRow[] {
   const rows: TreeRow[] = [];
   const filter = state.filter.trim().toLocaleLowerCase();
@@ -163,12 +181,18 @@ export function deriveTreeRows(state: AppState): TreeRow[] {
     const timestamp = value ? Date.parse(value) : Number.NaN;
     return Number.isFinite(timestamp) ? timestamp : Number.NEGATIVE_INFINITY;
   };
+  const activityTimes = new Map(
+    workspaces.map((workspace) => [
+      workspace.id,
+      workspaceActivityAt(workspace, state.directory.agents),
+    ]),
+  );
   const sorted = (items: typeof workspaces) =>
     [...items].sort(
       (left, right) =>
         compareFrozen(left.id, right.id) ||
         (state.treeOrder !== "alphabetical"
-          ? activityTime(right.activityAt) - activityTime(left.activityAt)
+          ? activityTime(activityTimes.get(right.id)) - activityTime(activityTimes.get(left.id))
           : 0) ||
         left.title.localeCompare(right.title) ||
         left.id.localeCompare(right.id),
@@ -186,6 +210,7 @@ export function deriveTreeRows(state: AppState): TreeRow[] {
     );
   const appendWorkspace = (workspace: (typeof workspaces)[number], depth: number): void => {
     const nativeActivity = activity(workspace.id);
+    const activityAt = activityTimes.get(workspace.id);
     rows.push({
       id: workspace.id,
       kind: "workspace",
@@ -197,6 +222,7 @@ export function deriveTreeRows(state: AppState): TreeRow[] {
           : !state.sidebarSelection && state.selectedWorkspaceId === workspace.id,
       attention: attention(workspace.id),
       ...(nativeActivity ? { activity: nativeActivity } : {}),
+      ...(activityAt ? { activityAt } : {}),
       active: workspace.id === state.selectedWorkspaceId,
       gapBefore: rows.at(-1)?.kind === "workspace" ? 1 : 0,
     });

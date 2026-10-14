@@ -10,6 +10,7 @@ import type { TargetArgument } from "./arguments.js";
 
 export interface TargetPreferences {
   treeWidth?: number;
+  treeWidthVersion?: 2;
   treeOrder?: TreeOrder;
   treeGrouping?: SidebarGrouping;
   showArchived?: boolean;
@@ -319,8 +320,14 @@ function parseTargetPreference(value: unknown): TargetPreferences | undefined {
   const record = value as Record<string, unknown>;
   return {
     ...(typeof record.treeWidth === "number" && Number.isFinite(record.treeWidth)
-      ? { treeWidth: adjustTreeWidth(record.treeWidth, 0) }
+      ? {
+          treeWidth:
+            record.treeWidth === 34 && record.treeWidthVersion !== 2
+              ? DEFAULT_TREE_WIDTH
+              : adjustTreeWidth(record.treeWidth, 0),
+        }
       : {}),
+    ...(record.treeWidthVersion === 2 ? { treeWidthVersion: 2 as const } : {}),
     ...(record.treeOrder === "recent" ||
     record.treeOrder === "attention" ||
     record.treeOrder === "alphabetical"
@@ -348,6 +355,7 @@ export function preferenceProjection(
     targets: {
       [scope]: {
         treeWidth: adjustTreeWidth(treeWidth, 0),
+        treeWidthVersion: 2,
         treeOrder: state.treeOrder,
         treeGrouping: state.treeGrouping ?? "status",
         showArchived: state.showArchived,

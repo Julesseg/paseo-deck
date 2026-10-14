@@ -991,6 +991,9 @@ function workspaceRecord(value: UnknownRecord): WorkspaceRecord {
     ...(value.activityAt === null || typeof value.activityAt === "string"
       ? { activityAt: value.activityAt }
       : {}),
+    ...(Array.isArray(value.labels)
+      ? { labels: value.labels.filter((label): label is string => typeof label === "string") }
+      : {}),
   };
 }
 

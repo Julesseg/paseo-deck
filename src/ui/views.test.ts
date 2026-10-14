@@ -1018,8 +1018,8 @@ describe("fenced code highlighter", () => {
 });
 
 describe("terminal appearance", () => {
-  it("renders workspace activity as monochrome letters without sidebar metadata", async () => {
-    const terminal = new RecordingTerminal(100, 22);
+  it("renders native Workspace activity as monochrome letters", async () => {
+    const terminal = new RecordingTerminal(100, 40);
     const base = state();
     const agent = {
       id: "session",
@@ -2744,8 +2744,8 @@ describe("DeckTui viewport and focus", () => {
     await terminal.waitForRender();
     await deck.stop();
     expect(timeline.buffer.mode).toBe("visual");
-    expect(timeline.buffer.line).toBe(before.line + 2);
-    expect(timeline.buffer.anchor?.line).toBe((before.anchor ?? -1) + 2);
+    expect(timeline.buffer.line).toBe(before.line + 3);
+    expect(timeline.buffer.anchor?.line).toBe((before.anchor ?? -1) + 3);
     expect(timeline.selectedItem()?.id).toBe("second");
   });
 
@@ -3250,6 +3250,7 @@ describe("DeckTui viewport and focus", () => {
       terminal,
       {
         ...base,
+        focus: "composer",
         selectedAgentId: "agent",
         directory: {
           ...base.directory,
@@ -3434,7 +3435,7 @@ describe("DeckTui viewport and focus", () => {
   });
 
   it("contains unsafe wide markdown deltas while retaining the surrounding panes", async () => {
-    const terminal = new RecordingTerminal(42, 14);
+    const terminal = new RecordingTerminal(42, 20);
     const base = state();
     const timeline = {
       recoveryRevision: 0,
@@ -3485,7 +3486,7 @@ describe("DeckTui viewport and focus", () => {
     expect(wideLines.join("\n")).toContain("Projects");
     expect(wideLines.join("\n")).toContain("Prompt");
     expect(wideLines.every((line) => terminalDisplayWidth(line) <= 42)).toBe(true);
-    terminal.setSize(30, 14);
+    terminal.setSize(30, 20);
     deck.update({
       ...base,
       selectedAgentId: "agent",

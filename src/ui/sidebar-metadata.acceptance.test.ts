@@ -40,6 +40,30 @@ const reviewWorkspace = directory.workspaces[0];
 const missingWorkspace = directory.workspaces[1];
 if (!reviewWorkspace || !missingWorkspace) throw new Error("Missing Sidebar fixtures");
 
+it("separates Workspace cards and shows plain metadata and native Workspace labels", async () => {
+  const snapshot = {
+    ...directory,
+    workspaces: directory.workspaces.map((workspace) => ({
+      ...workspace,
+      labels: ["urgent", "design"],
+    })),
+  };
+  const f = await fixture({}, { treeGrouping: "project", expandedIds: new Set(["p"]) }, snapshot);
+  try {
+    const lines = await f.frame();
+    const first = lines.findIndex((line) => line.includes("Review workspace"));
+    const second = lines.findIndex((line) => line.includes("Missing native time"));
+    expect(lines[first + 1]).toContain("Ready to review");
+    expect(lines[first + 1]).not.toContain("[/]");
+    expect(lines[first + 1]).not.toContain("[ Ready");
+    expect(lines[first + 2]).toContain("urgent");
+    expect(lines[first + 2]).toContain("design");
+    expect(lines[second - 1]?.slice(0, 50).trim()).toBe("");
+  } finally {
+    await f.close();
+  }
+});
+
 async function fixture(
   options: DeckTuiOptions = {},
   initial: Partial<AppState> = {},
@@ -99,7 +123,8 @@ it("renders Project metadata and native ages below Workspace titles, switching t
   try {
     const lines = await f.frame();
     const title = lines.findIndex((line) => line.includes("Review workspace"));
-    expect(lines[title + 1]).toContain("[/] [ Design project ]");
+    expect(lines[title + 1]).toContain(" Design project ");
+    expect(lines[title + 1]).not.toContain("[/]");
     expect(lines[title + 1]).toContain("[t] 3m");
     const missing = lines.findIndex((line) => line.includes("Missing native time"));
     expect(lines[missing + 1]).toContain("[t] -");
@@ -110,8 +135,62 @@ it("renders Project metadata and native ages below Workspace titles, switching t
     await f.input("l");
     const project = await f.frame();
     const projectTitle = project.findIndex((line) => line.includes("Review workspace"));
-    expect(project[projectTitle + 1]).toContain("[/] [ Ready to review ]");
+    expect(project[projectTitle + 1]).toContain(" Ready to review ");
     expect(project[projectTitle + 1]).toContain("[t] 3m");
+  } finally {
+    await f.close();
+  }
+});
+
+it("uses the newest native Session activity when the Workspace timestamp is unavailable", async () => {
+  const f = await fixture(
+    {},
+    {},
+    {
+      ...directory,
+      workspaces: [{ ...reviewWorkspace, activityAt: null }],
+      agents: [
+        {
+          id: "older",
+          workspaceId: "w",
+          title: "Older",
+          status: "idle",
+          archived: false,
+          availableModeIds: [],
+          availableThinkingLevels: [],
+          pendingPermissions: [],
+          needsAttention: false,
+          lastActivityAt: "2026-10-13T11:00:00Z",
+        },
+        {
+          id: "latest",
+          workspaceId: "w",
+          title: "Latest",
+          status: "idle",
+          archived: false,
+          availableModeIds: [],
+          availableThinkingLevels: [],
+          pendingPermissions: [],
+          needsAttention: false,
+          lastActivityAt: "2026-10-13T11:57:00Z",
+        },
+      ],
+    },
+  );
+  try {
+    const lines = await f.frame();
+    const title = lines.findIndex((line) => line.includes("Review workspace"));
+    expect(lines[title + 1]).toContain("[t] 3m");
+    const latest = f.app.state.directory.agents.find((agent) => agent.id === "latest");
+    if (!latest) throw new Error("Missing Session");
+    f.gateway.emitDirectory({
+      type: "agent-upserted",
+      agent: { ...latest, lastActivityAt: "2026-10-13T11:59:00Z" },
+    });
+    const updated = await f.frame();
+    expect(updated[updated.findIndex((line) => line.includes("Review workspace")) + 1]).toContain(
+      "[t] 1m",
+    );
   } finally {
     await f.close();
   }
@@ -313,7 +392,7 @@ it.each(["unicode", "ascii"] as const)(
       expect(terminalDisplayWidth(metadata.slice(0, metadata.indexOf(clock)))).toBe(
         symbols === "unicode" ? 19 : 17,
       );
-      expect(metadata).toContain(symbols === "unicode" ? "▱ [ 界界界界… ]" : "[/] [ 界... ]");
+      expect(metadata).toContain(symbols === "unicode" ? " 界界界界界界… " : " 界界界界... ");
       expect(metadata).not.toContain("project metadata");
     } finally {
       await f.close();

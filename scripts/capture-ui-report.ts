@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { ApplicationController } from "../src/app/controller.js";
 import type { AppState, SessionDraft } from "../src/contracts/app-state.js";
 import { FakePaseoGateway } from "../src/paseo/fake-gateway.js";
+import { parsePreferences, targetScope } from "../src/runtime/preferences.js";
 import type { TerminalAppearance } from "../src/ui/capabilities.js";
 import { DEFAULT_TREE_WIDTH, shellLayout } from "../src/ui/layout.js";
 import { RecordingTerminal } from "../src/ui/terminal.js";
@@ -1781,9 +1782,17 @@ const sidebarCaptureState: AppState = {
             : new Date(12_000 - ([0, 180_000, 7_200_000, 345_600_000][index] ?? 0)).toISOString(),
         directory: `/demo/${status}`,
         archived: false,
+        labels: status === "attention" ? ["urgent", "design"] : [],
       }),
     ),
     agents: [
+      {
+        ...overflowTemplate,
+        id: "sidebar-native-activity",
+        workspaceId: "sidebar-done",
+        status: "idle",
+        lastActivityAt: new Date(12_000 - 180_000).toISOString(),
+      },
       {
         ...overflowTemplate,
         id: "sidebar-unread",
@@ -1803,6 +1812,29 @@ const sidebarCaptureState: AppState = {
     ),
   ]),
 };
+shots.push({
+  name: "composer-active-context",
+  columns: 200,
+  rows: 28,
+  appearance: { ...sampledTerminalAppearance, background: [232, 228, 219] },
+  state: {
+    ...baseState,
+    focus: "composer",
+    timeline: { ...baseState.timeline, usage: { contextTokens: 334037 } },
+  },
+});
+shots.push({
+  name: "sidebar-saved-default-fullscreen",
+  columns: 200,
+  rows: 45,
+  treeWidth:
+    parsePreferences({
+      version: 1,
+      targets: { [targetScope({ type: "default" })]: { treeWidth: 34 } },
+    }).targets[targetScope({ type: "default" })]?.treeWidth ?? DEFAULT_TREE_WIDTH,
+  state: { ...sidebarCaptureState, treeGrouping: "project" },
+  appearance: sampledTerminalAppearance,
+});
 for (const grouping of ["status", "project"] as const) {
   for (const mode of [
     "populated",
