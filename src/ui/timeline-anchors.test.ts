@@ -16,7 +16,7 @@ function state(text: string): AppState {
     directory: emptyDirectory(),
     expandedIds: new Set(),
     filter: "",
-    treeOrder: "attention",
+    treeOrder: "recent",
     showArchived: false,
     attentionOnly: false,
     focus: "timeline",
@@ -53,7 +53,7 @@ it("keeps the character under the Timeline cursor through narrow reflow", async 
   deck.start();
   try {
     await terminal.waitForRender();
-    for (const key of ["g", "g", "j", "8", "w"]) terminal.sendInput(key);
+    for (const key of ["g", "g", "8", "w"]) terminal.sendInput(key);
     await terminal.waitForRender();
     const before = terminal.viewportCursor();
     const character = terminal.viewport()[before.row]?.[before.column];
@@ -74,7 +74,7 @@ it("restores a Session's exact cursor after visiting another Session", async () 
   deck.start();
   try {
     await terminal.waitForRender();
-    for (const key of ["g", "g", "j", "8", "w"]) terminal.sendInput(key);
+    for (const key of ["g", "g", "8", "w"]) terminal.sendInput(key);
     await terminal.waitForRender();
     const before = terminal.viewportCursor();
     expect(terminal.viewport()[before.row]?.[before.column]).toBe("h");
@@ -149,6 +149,7 @@ it("keeps a character selection through reflow and a streaming replacement", asy
       void application.handleIntent(intent);
     },
     {
+      treeWidth: 34,
       copyText: (text) => {
         copied.push(text);
       },
@@ -158,7 +159,7 @@ it("keeps a character selection through reflow and a streaming replacement", asy
   deck.start();
   try {
     await terminal.waitForRender();
-    for (const key of ["g", "g", "j", "8", "w", "v", "e"]) terminal.sendInput(key);
+    for (const key of ["g", "g", "8", "w", "v", "e"]) terminal.sendInput(key);
     await terminal.waitForRender();
     terminal.setSize(48, 30);
     await terminal.waitForRender();
@@ -200,6 +201,7 @@ it("moves a removed cursor entry to the nearest surviving entry and invalidates 
       void application.handleIntent(intent);
     },
     {
+      treeWidth: 34,
       copyText: (text) => {
         copied.push(text);
       },
@@ -209,7 +211,7 @@ it("moves a removed cursor entry to the nearest surviving entry and invalidates 
   deck.start();
   try {
     await terminal.waitForRender();
-    for (const key of ["g", "g", "3", "j", "v", "e"]) terminal.sendInput(key);
+    for (const key of ["g", "g", "j", "v", "e"]) terminal.sendInput(key);
     await terminal.waitForRender();
     deck.update({
       ...initial,
@@ -220,7 +222,7 @@ it("moves a removed cursor entry to the nearest surviving entry and invalidates 
     });
     await terminal.waitForRender();
     const cursor = terminal.viewportCursor();
-    expect(terminal.viewport()[cursor.row]?.trim()).toBe("You");
+    expect(terminal.viewport()[cursor.row]?.trim()).toBe("third");
     expect(terminal.viewport().join("\n")).toContain("Selection cleared:");
     terminal.sendInput("y");
     await terminal.waitForRender();
@@ -245,6 +247,7 @@ it("invalidates a selection when its text is lost inside a surviving entry", asy
       void application.handleIntent(intent);
     },
     {
+      treeWidth: 34,
       copyText: (text) => {
         copied.push(text);
       },
@@ -254,7 +257,7 @@ it("invalidates a selection when its text is lost inside a surviving entry", asy
   deck.start();
   try {
     await terminal.waitForRender();
-    for (const key of ["g", "g", "j", "8", "w", "v", "e"]) terminal.sendInput(key);
+    for (const key of ["g", "g", "8", "w", "v", "e"]) terminal.sendInput(key);
     await terminal.waitForRender();
     deck.update({ ...application.state, timeline: state("alpha").timeline });
     await terminal.waitForRender();
@@ -306,11 +309,14 @@ it("preserves duplicate rows by item and text position across gateway append, pr
       items: initial.timeline.items,
     });
     await terminal.waitForRender();
-    for (const key of ["g", "g", "3", "j", "l", "l"]) terminal.sendInput(key);
+    for (const key of ["g", "g", "2", "j", "^"]) {
+      terminal.sendInput(key);
+      await terminal.waitForRender();
+    }
     await terminal.waitForRender();
     const cursor = terminal.viewportCursor();
     expect(terminal.viewport()[cursor.row]?.trim()).toBe("same");
-    const firstSameRow = terminal.viewport().findIndex((line) => line.trim() === "same");
+    const firstSameRow = terminal.viewport().findIndex((line) => line.trimEnd().endsWith("same"));
     expect(cursor.row).toBeGreaterThan(firstSameRow);
     const appended = {
       epoch: "e",
@@ -444,6 +450,7 @@ it("keeps every reflowed row spanned by a line Visual selection", async () => {
       void application.handleIntent(intent);
     },
     {
+      treeWidth: 34,
       copyText: (text) => {
         copied.push(text);
       },
@@ -481,6 +488,7 @@ it("retains the saved Session selection while its history loads on return", asyn
       void application.handleIntent(intent);
     },
     {
+      treeWidth: 34,
       copyText: (text) => {
         copied.push(text);
       },
@@ -490,7 +498,7 @@ it("retains the saved Session selection while its history loads on return", asyn
   deck.start();
   try {
     await terminal.waitForRender();
-    for (const key of ["g", "g", "j", "8", "w", "v", "e"]) terminal.sendInput(key);
+    for (const key of ["g", "g", "8", "w", "v", "e"]) terminal.sendInput(key);
     await terminal.waitForRender();
     deck.update({ ...state("another Session"), selectedAgentId: "other" });
     await terminal.waitForRender();

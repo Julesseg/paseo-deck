@@ -18,6 +18,23 @@ const validScope = `v1-${"a".repeat(64)}`;
 const portablePath = (path: string): string => path.replaceAll("\\", "/");
 
 describe("preferences", () => {
+  it("migrates the old automatic Sidebar width while preserving newly chosen widths", async () => {
+    const scope = targetScope({ type: "default" });
+    let bytes = JSON.stringify({ version: 1, targets: { [scope]: { treeWidth: 34 } } });
+    const fs = {
+      readFile: async () => bytes,
+      writeAtomic: async (_path: string, value: string) => {
+        bytes = value;
+      },
+      remove: async () => {},
+    };
+    const session = await PreferenceSession.open({ type: "default" }, { fs, path: "/p" });
+    expect(session.treeWidth()).toBe(51);
+    session.present({ treeWidth: 34 });
+    await session.flush();
+    const restored = await PreferenceSession.open({ type: "default" }, { fs, path: "/p" });
+    expect(restored.treeWidth()).toBe(34);
+  });
   it("ignores tabs saved by older versions", () => {
     const parsed = parsePreferences({
       version: 1,
@@ -29,7 +46,7 @@ describe("preferences", () => {
         },
       },
     });
-    expect(parsed.targets[validScope]).toEqual({ treeOrder: "alphabetical" });
+    expect(parsed.targets[validScope]).toEqual({ treeOrder: "recent" });
     const restored = applyTargetPreferences(createInitialState(), parsed.targets[validScope]);
     expect(restored.tabOrder).toEqual({});
     expect(restored.activeTabIds).toEqual({});
@@ -196,7 +213,7 @@ describe("preferences", () => {
     const base = createInitialState();
     const state = {
       ...base,
-      treeOrder: "alphabetical" as const,
+      treeOrder: "recent" as const,
       showArchived: true,
       expandedIds: new Set(["project", "workspace"]),
       selectedAgentId: "SELECTION_MARKER",
@@ -265,7 +282,9 @@ describe("preferences", () => {
       targets: {
         scope: {
           treeWidth: 33,
-          treeOrder: "alphabetical",
+          treeWidthVersion: 2,
+          treeGrouping: "status",
+          treeOrder: "recent",
           showArchived: true,
           expandedIds: ["project", "workspace"],
         },
@@ -304,7 +323,7 @@ describe("preferences", () => {
     ).toEqual({
       version: 1,
       global: { theme: "plain" },
-      targets: { [validScope]: { treeWidth: 48, expandedIds: ["w"] } },
+      targets: { [validScope]: { treeWidth: 72, expandedIds: ["w"] } },
     });
     expect(
       parsePreferences({
@@ -334,7 +353,7 @@ describe("preferences", () => {
       version: 1,
       global: { theme: "ember" },
       targets: {
-        [validScope]: { treeWidth: 28, treeOrder: "attention" },
+        [validScope]: { treeWidth: 28, treeOrder: "recent" },
         [otherScope]: { treeWidth: 44, showArchived: true, expandedIds: ["project"] },
       },
     });
@@ -400,7 +419,7 @@ describe("preferences", () => {
 
   it("seeds persisted expansion before hydration without retaining unrelated state", () => {
     const state = applyTargetPreferences(createInitialState(), {
-      treeOrder: "alphabetical",
+      treeOrder: "recent",
       expandedIds: ["project", "workspace"],
     });
     expect(state.expandedIds).toEqual(new Set(["project", "workspace"]));
@@ -547,7 +566,7 @@ describe("preferences", () => {
     a.present({ treeWidth: 26, theme: "plain" });
     a.observe({
       ...a.initialState(),
-      treeOrder: "alphabetical",
+      treeOrder: "recent",
       showArchived: true,
       expandedIds: new Set(["pa", "wa"]),
     });
@@ -561,7 +580,7 @@ describe("preferences", () => {
       { fs, path: "/p" },
     );
     expect(restored.initialState()).toMatchObject({
-      treeOrder: "alphabetical",
+      treeOrder: "recent",
       showArchived: true,
     });
     expect(restored.initialState().expandedIds).toEqual(new Set(["pa", "wa"]));

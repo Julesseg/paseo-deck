@@ -50,7 +50,7 @@ function state(): AppState {
     },
     expandedIds: new Set(),
     filter: "",
-    treeOrder: "attention",
+    treeOrder: "recent",
     showArchived: false,
     attentionOnly: false,
     focus: "tree",
@@ -629,7 +629,7 @@ describe("composer controls", () => {
     const terminalView = terminal.viewport().join("\n");
     expect(terminalView).toContain("build");
     expect(terminalView).toContain("terminal sample");
-    expect(terminalView).toContain("terminal build");
+    expect(terminalView).not.toContain("terminal build");
     expect(terminalView).not.toContain("session sample");
     expect(terminalView).not.toContain("Prompt →");
     expect(terminalView).not.toContain("Session activity");
@@ -970,7 +970,7 @@ describe("composer controls", () => {
         .viewport()
         .findIndex((line) => line.includes(`${mode.toUpperCase()} Prompt`));
       expect(headingRow).toBeGreaterThanOrEqual(0);
-      expect(terminal.viewportInverseCells()[headingRow + 1]?.some(Boolean)).toBe(true);
+      expect(terminal.viewportInverseCells()[headingRow + 2]?.some(Boolean)).toBe(true);
     }
     await deck.stop();
   });
@@ -1018,8 +1018,8 @@ describe("fenced code highlighter", () => {
 });
 
 describe("terminal appearance", () => {
-  it("renders workspace activity as monochrome letters without sidebar metadata", async () => {
-    const terminal = new RecordingTerminal(100, 22);
+  it("renders native Workspace activity as monochrome letters", async () => {
+    const terminal = new RecordingTerminal(100, 40);
     const base = state();
     const agent = {
       id: "session",
@@ -1036,9 +1036,10 @@ describe("terminal appearance", () => {
       ...base,
       directory: {
         ...base.directory,
-        workspaces: ["attention", "working", "idle", "done"].map((id) => ({
+        workspaces: ["attention", "running", "needs_input", "done"].map((id) => ({
           id,
           title: id.slice(0, 1).toUpperCase() + id.slice(1),
+          status: id as "attention" | "running" | "needs_input" | "done",
           directory: `/${id}`,
           archived: false,
         })),
@@ -1047,6 +1048,12 @@ describe("terminal appearance", () => {
           { ...agent, id: "ended", workspaceId: "done", status: "stopped", needsAttention: false },
         ],
       },
+      expandedIds: new Set([
+        "activity:attention",
+        "activity:running",
+        "activity:needs_input",
+        "activity:done",
+      ]),
       workspaceTerminals: {
         working: [
           {
@@ -1070,8 +1077,8 @@ describe("terminal appearance", () => {
       .join("\n");
     await deck.stop();
     expect(sidebar).toMatch(/A Attention/);
-    expect(sidebar).toMatch(/W Working/);
-    expect(sidebar).toMatch(/I Idle/);
+    expect(sidebar).toMatch(/R Running/);
+    expect(sidebar).toMatch(/W Needs_input/);
     expect(sidebar).toMatch(/D Done/);
     expect(sidebar).not.toContain("Hidden session");
     expect(sidebar).not.toContain("/working");
@@ -1091,9 +1098,7 @@ describe("terminal appearance", () => {
     await deck.stop();
 
     expect(lines.every((line) => !line.startsWith("│"))).toBe(true);
-    expect(
-      backgrounds.every((line) => line.slice(0, 34).every((color) => color === "#1f1d1b")),
-    ).toBe(true);
+    expect(backgrounds.every((line) => line[50] === "#1f1d1b")).toBe(true);
   });
 
   it("shows an active workspace without exposing session rows in the sidebar", async () => {
@@ -1170,8 +1175,8 @@ describe("terminal appearance", () => {
     const sidebarRow = lines.findIndex((line) => line.includes("Projects / workspaces"));
     const composerRow = lines.findIndex((line) => line.includes("Prompt →"));
     expect(backgrounds[sidebarRow]?.[lines[sidebarRow]?.indexOf("Projects") ?? -1]).toBe("#e8ded4");
-    expect(backgrounds[sidebarRow]?.[40]).toBeUndefined();
-    expect(backgrounds[composerRow]?.[40]).toBe("#e2d8cf");
+    expect(backgrounds[sidebarRow]?.[60]).toBeUndefined();
+    expect(backgrounds[composerRow]?.[60]).toBe("#e2d8cf");
     expect(lines[composerRow]).not.toMatch(/[┌┐└┘│]/u);
   });
 
@@ -1314,7 +1319,7 @@ describe("terminal appearance", () => {
     expect(terminal.viewport().every((line) => terminalDisplayWidth(line) <= 52)).toBe(true);
   });
 
-  it("preserves remote tree, status, composer, and notification labels in ASCII mode", async () => {
+  it("preserves remote tree and Composer labels while omitting removed status details in ASCII mode", async () => {
     const terminal = new RecordingTerminal(100, 18);
     const base = state();
     const uiState: AppState = {
@@ -1355,8 +1360,9 @@ describe("terminal appearance", () => {
 
     expect(rendered).toContain("Workspace → •");
     expect(rendered).toContain("Agent → •");
-    expect(rendered).toContain("Provider →/Model •");
-    expect(rendered).toContain("Notic");
+    expect(rendered).toContain("[mm] Model *");
+    expect(rendered).not.toContain("Provider →/Model •");
+    expect(rendered).not.toContain("Notice");
     expect(terminal.viewport().every((line) => terminalDisplayWidth(line) <= 100)).toBe(true);
   });
 
@@ -1465,7 +1471,7 @@ describe("terminal appearance", () => {
     // runners; retain a bounded responsiveness check without treating those
     // platforms as a rendering failure.
     expect(elapsed).toBeLessThan(8_000);
-    expect(terminal.viewport().join("\n")).toContain("Assistant");
+    expect(terminal.viewport().join("\n")).toContain("A completed response");
   }, 10_000);
 
   it("keeps empty-state actions visible instead of clipping them from their panes", async () => {
@@ -1740,7 +1746,7 @@ describe("creation prompt", () => {
 });
 
 describe("DeckTui viewport and focus", () => {
-  it("renders reconnect attempts and elapsed time from the injected render clock", async () => {
+  it("keeps stale Timeline presentation during reconnect without a bottom status row", async () => {
     const terminal = new RecordingTerminal();
     const clock = new FakeRenderClock();
     clock.current = 1_000;
@@ -1756,10 +1762,12 @@ describe("DeckTui viewport and focus", () => {
     );
     deck.start();
     await terminal.waitForRender();
-    expect(terminal.viewport().join("\n")).toContain("reconnecting #2 · 0s · stale");
+    expect(terminal.viewport().join("\n")).toContain("Timeline is stale while Paseo reconnects");
+    expect(terminal.viewport().join("\n")).not.toContain("reconnecting #2");
     clock.advance(1_000);
     await terminal.waitForRender();
-    expect(terminal.viewport().join("\n")).toContain("reconnecting #2 · 1s · stale");
+    expect(terminal.viewport().join("\n")).toContain("Timeline is stale while Paseo reconnects");
+    expect(terminal.viewport().join("\n")).not.toContain("reconnecting #2");
     await deck.stop();
     const writesAfterStop = terminal.writes.length;
     clock.advance(5_000);
@@ -1890,7 +1898,7 @@ describe("DeckTui viewport and focus", () => {
     await terminal.waitForRender();
     await deck.stop();
 
-    expect(terminal.viewport().join("\n")).toContain("You");
+    expect(terminal.viewport().join("\n")).not.toMatch(/You ·/u);
     expect(terminal.viewport().join("\n")).toContain("first");
   });
 
@@ -1999,7 +2007,7 @@ describe("DeckTui viewport and focus", () => {
       type: "set-timeline-navigation",
       agentId: "agent",
       following: false,
-      anchor: { epoch: "pause", sequence: 1 },
+      anchor: { epoch: "pause", sequence: 2 },
     });
 
     transcript.scrollToEnd();
@@ -2245,7 +2253,7 @@ describe("DeckTui viewport and focus", () => {
     expect(terminal.viewport().join("\n")).toContain("Active session timeline");
   });
 
-  it("renders Markdown assistant streaming and timestamp metadata", async () => {
+  it("renders Markdown assistant streaming without author or timestamp headings", async () => {
     const terminal = new RecordingTerminal(80, 14);
     const deck = new DeckTui(
       terminal,
@@ -2275,7 +2283,9 @@ describe("DeckTui viewport and focus", () => {
     deck.start();
     await terminal.waitForRender();
     await deck.stop();
-    expect(terminal.viewport().join("\n")).toContain("Assistant · streaming… · 10:01");
+    expect(terminal.viewport().join("\n")).toContain("partial");
+    expect(terminal.viewport().join("\n")).not.toContain("Assistant ·");
+    expect(terminal.viewport().join("\n")).not.toContain("10:01");
   });
 
   it("renders fenced assistant code through the terminal while preserving its whitespace", async () => {
@@ -2303,13 +2313,14 @@ describe("DeckTui viewport and focus", () => {
         },
       },
       () => undefined,
+      { treeWidth: 34 },
     );
     deck.start();
     await terminal.waitForRender();
     await deck.stop();
 
     const viewport = terminal.viewport().join("\n");
-    expect(viewport).toContain("Assistant · 10:01");
+    expect(viewport).not.toContain("Assistant · 10:01");
     expect(viewport).toContain("  const answer = 1;");
     expect(viewport).toContain("  return answer;");
   });
@@ -2538,6 +2549,8 @@ describe("DeckTui viewport and focus", () => {
     await terminal.waitForRender();
     expect(terminal.writes.join("")).toContain("\u001b[2 q");
     expect(terminal.writes.join("")).toContain("\u001b[?25h");
+    for (const key of ["g", "g", "j", "^"]) terminal.sendInput(key);
+    await terminal.waitForRender();
     const row = terminal.viewport().findIndex((line) => line.includes("docs"));
     expect(row).toBeGreaterThan(0);
     expect(terminal.viewportBackgrounds()[row]).toContain("#332e27");
@@ -3075,6 +3088,9 @@ describe("DeckTui viewport and focus", () => {
     expect(terminal.viewport().every((line) => terminalDisplayWidth(line) <= 30)).toBe(true);
     terminal.setSize(30, 12);
     await terminal.waitForRender();
+    expect(terminal.viewport().join("\n")).toContain("[mm]");
+    deck.update({ ...state(), focus: "composer", composerMode: "normal" });
+    await terminal.waitForRender();
     expect(terminal.viewport().join("\n")).toContain("Prompt");
     await deck.stop();
   });
@@ -3185,7 +3201,10 @@ describe("DeckTui viewport and focus", () => {
   it("batches streamed redraws while rendering the latest delta and focus change promptly", async () => {
     const terminal = new RecordingTerminal(80, 16);
     const clock = new FakeRenderClock();
-    const deck = new DeckTui(terminal, state(), () => undefined, { renderClock: clock });
+    const deck = new DeckTui(terminal, state(), () => undefined, {
+      renderClock: clock,
+      treeWidth: 34,
+    });
     const requestRender = vi.spyOn(deck.tui, "requestRender");
     const streamed = (text: string): AppState => ({
       ...state(),
@@ -3233,6 +3252,7 @@ describe("DeckTui viewport and focus", () => {
       terminal,
       {
         ...base,
+        focus: "composer",
         selectedAgentId: "agent",
         directory: {
           ...base.directory,
@@ -3313,7 +3333,7 @@ describe("DeckTui viewport and focus", () => {
     await deck.stop();
     expect(intents).toEqual([{ type: "close-modal" }]);
   });
-  it("shows mode and token context in the status line when space allows", async () => {
+  it("keeps Session settings and token context in the Composer without bottom status extras", async () => {
     const terminal = new RecordingTerminal(120, 18);
     const base = state();
     const deck = new DeckTui(
@@ -3358,8 +3378,10 @@ describe("DeckTui viewport and focus", () => {
     await terminal.waitForRender();
     await deck.stop();
 
-    expect(terminal.viewport().join("\n")).toContain(
-      "ready/one · plan · low · context 15/100 · in 12 · out 3",
+    expect(terminal.viewport().join("\n")).toContain("[mm] one  [mt] low  [mo] plan");
+    expect(terminal.viewport().join("\n")).toContain("context 15");
+    expect(terminal.viewport().join("\n")).not.toMatch(
+      /ready\/one|context 15\/100|in 12|out 3|Directory refreshed/u,
     );
     expect(terminal.viewport().join("\n")).not.toContain("Sidebar:");
   });
@@ -3410,12 +3432,12 @@ describe("DeckTui viewport and focus", () => {
     const lines = terminal.viewport();
     expect(lines.join("\n")).toContain("Projects");
     expect(lines.join("\n")).not.toContain("Tabs");
-    expect(lines.join("\n")).toContain("Prompt");
+    expect(lines.join("\n")).toContain("[mm]");
     expect(lines.every((line) => line.length <= 30)).toBe(true);
   });
 
   it("contains unsafe wide markdown deltas while retaining the surrounding panes", async () => {
-    const terminal = new RecordingTerminal(42, 14);
+    const terminal = new RecordingTerminal(42, 20);
     const base = state();
     const timeline = {
       recoveryRevision: 0,
@@ -3466,7 +3488,7 @@ describe("DeckTui viewport and focus", () => {
     expect(wideLines.join("\n")).toContain("Projects");
     expect(wideLines.join("\n")).toContain("Prompt");
     expect(wideLines.every((line) => terminalDisplayWidth(line) <= 42)).toBe(true);
-    terminal.setSize(30, 14);
+    terminal.setSize(30, 20);
     deck.update({
       ...base,
       selectedAgentId: "agent",
@@ -3508,7 +3530,7 @@ describe("DeckTui viewport and focus", () => {
     const lines = terminal.viewport();
     expect(lines.join("\n")).toContain("Projects");
     expect(lines.join("\n")).toContain("Prompt");
-    expect(lines.join("\n")).toContain("conne");
+    expect(lines.join("\n")).not.toContain("connected");
     expect(lines.join("\n")).toContain("␛[2J");
     expect(lines.every((line) => terminalDisplayWidth(line) <= 30)).toBe(true);
   });
@@ -3536,6 +3558,8 @@ describe("DeckTui viewport and focus", () => {
     await terminal.waitForRender();
     expect(terminal.viewport().join("\n")).not.toContain("Tab  Focus next pane");
     terminal.sendInput("G");
+    terminal.sendInput("k");
+    await terminal.waitForRender();
     terminal.sendInput("k");
     await terminal.waitForRender();
     expect(terminal.viewport().join("\n")).toContain("h / Left  Collapse selected branch");
@@ -3609,8 +3633,10 @@ describe("DeckTui viewport and focus", () => {
     await terminal.waitForRender();
     const wideTree = terminal.viewport().slice(0, 8).join("\n");
     expect(wideTree).toContain("Main");
-    expect(wideTree).toContain("No timeline selected");
+    expect(wideTree).not.toContain("No timeline selected");
     deck.update({ ...resizedState, focus: "composer" });
+    await terminal.waitForRender();
+    expect(terminal.viewport().join("\n")).toContain("No timeline selected");
     terminal.sendInput("x");
     await deck.stop();
 
@@ -3760,7 +3786,7 @@ describe("DeckTui viewport and focus", () => {
     await terminal.waitForRender();
     await deck.stop();
 
-    expect(preferences).toEqual([{ treeWidth: 46 }]);
+    expect(preferences).toEqual([{ treeWidth: 70 }]);
   });
 
   it("invokes palette-visible presentation commands", async () => {
@@ -3780,7 +3806,7 @@ describe("DeckTui viewport and focus", () => {
     await terminal.waitForRender();
     await deck.stop();
 
-    expect(preferences).toEqual([{ treeWidth: 34, theme: "plain" }]);
+    expect(preferences).toEqual([{ treeWidth: 51, theme: "plain" }]);
   });
 
   it("renders chrome appropriate to detected terminal capabilities", async () => {
@@ -3835,8 +3861,8 @@ describe("DeckTui viewport and focus", () => {
     await deck.stop();
 
     expect(preferences).toEqual([
-      { treeWidth: 34, theme: "plain" },
-      { treeWidth: 34, theme: "ember" },
+      { treeWidth: 51, theme: "plain" },
+      { treeWidth: 51, theme: "ember" },
     ]);
     expect(terminal.writes.join("")).not.toContain("\u001b[38;");
   });

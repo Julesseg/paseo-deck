@@ -1,6 +1,7 @@
 import { expect, it } from "vitest";
 import { ApplicationController } from "../app/controller.js";
 import { FakePaseoGateway } from "../paseo/fake-gateway.js";
+import { createInitialState } from "../state/store.js";
 import { RecordingTerminal } from "./terminal.js";
 import { DeckTui } from "./views.js";
 
@@ -26,7 +27,9 @@ async function fixture() {
       { id: "b", projectId: "p", title: "Beta", directory: "/beta", archived: false },
     ],
   });
-  const app = new ApplicationController(gateway);
+  const app = new ApplicationController(gateway, {
+    initialState: { ...createInitialState(), treeGrouping: "project", expandedIds: new Set() },
+  });
   await app.start();
   const terminal = new RecordingTerminal(110, 35);
   const tui = new DeckTui(terminal, app.state, (intent) => {
@@ -46,7 +49,7 @@ async function fixture() {
   };
 }
 
-it("Sidebar g waits for gg or g?, Project Enter is inert, and movement leaves Active workspace alone", async () => {
+it("Sidebar g waits for gg or g?, Project Enter toggles expansion, and movement leaves Active workspace alone", async () => {
   const f = await fixture();
   try {
     f.terminal.sendInput("\u0013");
@@ -60,7 +63,7 @@ it("Sidebar g waits for gg or g?, Project Enter is inert, and movement leaves Ac
     expect(f.app.state.sidebarSelection).toEqual({ kind: "project", id: "p" });
     const expanded = f.app.state.expandedIds.has("p");
     f.terminal.sendInput("\r");
-    expect(f.app.state.expandedIds.has("p")).toBe(expanded);
+    expect(f.app.state.expandedIds.has("p")).toBe(!expanded);
     expect(f.app.state.selectedWorkspaceId).toBe(active);
     f.terminal.sendInput("g");
     f.terminal.sendInput("?");
@@ -173,7 +176,7 @@ it("activity and directory updates keep focused Workspace ordering and highlight
     f.terminal.sendInput("\r");
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(f.app.state.selectedWorkspaceId).toBe("b");
-    expect(f.app.state.focus).toBe("tree");
+    expect(f.app.state.focus).toBe("composer");
   } finally {
     await f.stop();
   }
@@ -184,7 +187,14 @@ it("all three Sidebar filters combine on the rendered hierarchy without changing
   try {
     f.gateway.emitDirectory({
       type: "workspace-upserted",
-      workspace: { id: "b", projectId: "p", title: "Beta", directory: "/beta", archived: true },
+      workspace: {
+        id: "b",
+        projectId: "p",
+        title: "Beta",
+        status: "attention",
+        directory: "/beta",
+        archived: true,
+      },
     });
     f.gateway.emitDirectory({
       type: "agent-upserted",
@@ -225,9 +235,9 @@ it("all three Sidebar filters combine on the rendered hierarchy without changing
       f.terminal.sendInput("\r");
       await f.terminal.waitForRender();
       const text = f.terminal.viewport().join("\n");
-      expect(new RegExp(`(?:[AIWD●]) ${name || attention ? "Beta" : "Alpha"}\\s`).test(text)).toBe(
-        expected,
-      );
+      expect(
+        new RegExp(`(?:[?AFWRD●]) ${name || attention ? "Beta" : "Alpha"}\\s`).test(text),
+      ).toBe(expected);
       expect(f.app.state.selectedWorkspaceId).toBe(active);
       expect(f.app.state.activeSessionId).toBe(tab);
     }

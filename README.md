@@ -8,7 +8,7 @@ Paseo Deck is a fast, keyboard-first terminal client for managing several Paseo 
 
 - Node.js 22.19 or newer
 - npm
-- A compatible Paseo daemon and `paseo` executable (tested with 0.8.0)
+- A compatible Paseo daemon and `paseo` executable (tested with 0.11.2)
 
 ## Install and run
 
@@ -53,7 +53,7 @@ CI enforces one required `check` result backed by:
 
 - formatting, lint, strict type checking, tests, coverage thresholds, and a production build on Node.js 22;
 - tests and packed executable smoke checks on Node.js 24, macOS, and Windows;
-- an isolated Paseo 0.8.0 daemon smoke test through the production gateway; and
+- an isolated Paseo 0.11.2 daemon smoke test through the production gateway; and
 - an uploaded HTML and LCOV coverage report for each run.
 
 ## Keymap
@@ -76,7 +76,7 @@ capabilities are reported as an actionable notification.
 ## Supported in v0.1
 
 - Project, workspace, and session discovery with filtering and attention markers
-- Attention-first or alphabetical ordering, archived visibility, persistent collapse state, and adjustable tree width
+- Most-recent activity first within each group, archived visibility, persistent collapse state, and adjustable tree width
 - Existing history plus live user, assistant, reasoning, tool, error, permission, and turn events
 - Timeline navigation by turn and error, source-text search, OSC 52 copy, and pause/follow indicators for streaming output
 - Follow-up prompts and provider/model-aware session creation
@@ -106,8 +106,8 @@ Preferences never contain prompts, prompt history, timeline content, agent or pr
 ## Known limitations
 
 - v0.1 does not include embedded PTYs, browser panes, schedules, mobile relay pairing, or SSH transport.
-- Most operations use the public SDK. Stop, Session rename, standalone thinking-level changes and operational mode use documented shell-free CLI commands. Narrow owned package-exported internal SDK adapters handle Git metadata, supported Session model/dependent-thinking changes and Terminal rename/metadata reads; see [architecture](docs/architecture.md).
-- The stable 0.8.0 client reports a directory subscription ID but does not expose a public per-observation release handle, connection-state stream, or guaranteed directory-demand restoration after reconnect. Paseo Deck releases all local listeners immediately and releases server demand when the client closes; use palette **Refresh directory / reconnect** to reconnect and refresh the directory explicitly after a transport interruption. Focused timeline demand is restored by the SDK, and a replacement event triggers a fresh projected-history fetch.
+- Most operations use the public SDK. Stop, Session rename, standalone thinking-level changes and operational mode use documented shell-free CLI commands. Narrow owned package-exported internal SDK adapters handle Git metadata, supported Session model/dependent-thinking changes, Terminal rename/metadata reads, per-Session completion acknowledgement, and draft provider command discovery; see [architecture](docs/architecture.md).
+- The pinned 0.11.2 client exposes owned Agent and Workspace directory query subscriptions. Deck releases their server demand when its directory observation ends, and the SDK restores the same owned queries after reconnect. Deck samples public connection state every 200 ms to trigger controller snapshot/timeline recovery; palette **Refresh directory / reconnect** remains available for explicit recovery. Focused timeline demand is restored by the SDK, and a replacement event triggers a fresh projected-history fetch.
 - Markdown rendering and fenced-code highlighting are intentionally compact for terminal use.
 - SSH targets and relay pairing offers are rejected with an actionable error; use a local or direct TCP target.
 - Preference writes assume one Paseo Deck process at a time. Concurrent processes share the same file, so the last process to save can replace presentation changes made by another running process.

@@ -24,6 +24,7 @@ import {
   hasUnsentWork,
 } from "../state/composer.js";
 import { activeLaunchWorkspaceId, launchDraft, NEW_WORKSPACE_DRAFT_ID } from "../state/launch.js";
+import { providerCommandContext, providerCommandContextKey } from "../state/provider-commands.js";
 import {
   type AppAction,
   activeNotification,
@@ -33,7 +34,12 @@ import {
 } from "../state/store.js";
 import type { UiIntent } from "../ui/controller.js";
 import { sanitizeTerminalText } from "../ui/text-safety.js";
-import { deriveTreeRows, type TreeRow, workspaceTabs } from "../ui/view-model.js";
+import {
+  deriveTreeRows,
+  type TreeRow,
+  workspaceActivityGroups,
+  workspaceTabs,
+} from "../ui/view-model.js";
 
 export interface ApplicationControllerOptions {
   onQuit?: () => void | Promise<void>;
@@ -67,7 +73,10 @@ export class ApplicationController {
   #directoryObservation: Observation | undefined;
   #timelineObservation: Observation | undefined;
   #observedAgentId: string | undefined;
+  #visible = true;
+  readonly #acknowledgingCompletions = new Set<string>();
   #focusGeneration = 0;
+  #providerCommandGeneration = 0;
   #creationGeneration = 0;
   #recoveryGeneration = 0;
   #nextRetryToken = 0;
@@ -132,7 +141,11 @@ export class ApplicationController {
         update: { type: "connection-changed", state: "connected" },
       });
       if (!this.#state.selectedWorkspaceId) {
-        const expandedIds = new Set(this.#state.directory.projects.map((project) => project.id));
+        const expandedIds = new Set([
+          ...this.#state.expandedIds,
+          ...workspaceActivityGroups.map(([status]) => `activity:${status}`),
+          ...this.#state.directory.projects.map((project) => project.id),
+        ]);
         const first = deriveTreeRows({ ...this.#state, expandedIds }).find(
           (row) => row.kind === "workspace",
         );
@@ -160,6 +173,7 @@ export class ApplicationController {
   }
 
   async releaseObservations(): Promise<void> {
+    this.#providerCommandGeneration += 1;
     this.#focusGeneration += 1;
     const observations = [this.#timelineObservation, this.#directoryObservation];
     this.#timelineObservation = undefined;
@@ -272,6 +286,7 @@ export class ApplicationController {
         return;
       }
       this.#timelineObservation = observation;
+      this.acknowledgeSeenCompletion();
     } catch (error) {
       this.apply({
         type: "timeline",
@@ -299,6 +314,11 @@ export class ApplicationController {
           .find((item) => item.id === intent.terminalId);
         if (!terminal) return;
         const generation = ++this.#focusGeneration;
+        this.apply({ type: "open-terminal-tab", terminalId: terminal.id });
+        const previousTimeline = this.#timelineObservation;
+        this.#timelineObservation = undefined;
+        this.#observedAgentId = undefined;
+        void previousTimeline?.release();
         try {
           const capture = await this.gateway.captureTerminal(terminal.id, { start: -2000 });
           if (generation !== this.#focusGeneration) return;
@@ -307,11 +327,6 @@ export class ApplicationController {
             terminalId: terminal.id,
             lines: capture.lines.map(sanitizeObservedTerminal),
           });
-          this.apply({ type: "open-terminal-tab", terminalId: terminal.id });
-          const previousTimeline = this.#timelineObservation;
-          this.#timelineObservation = undefined;
-          this.#observedAgentId = undefined;
-          void previousTimeline?.release();
           await this.#terminalObservations.get(terminal.id)?.release();
           const observation = await this.gateway.observeTerminal(terminal.id, (update) => {
             if (update.type === "exited") {
@@ -499,6 +514,19 @@ export class ApplicationController {
         if (intent.focus === "tree") this.beginSidebarNavigation();
         else this.apply({ type: "set-focus", focus: intent.focus });
         return;
+      case "focus-composer-insert":
+        if (
+          !this.#state.activeTerminalId &&
+          (activeLaunchWorkspaceId(this.#state) ||
+            activeSessionDraftWorkspaceId(this.#state) ||
+            this.#state.directory.agents.some(
+              (agent) => agent.id === this.#state.activeSessionId && !agent.archived,
+            ))
+        ) {
+          this.apply({ type: "set-focus", focus: "composer" });
+          this.apply({ type: "set-composer-mode", mode: "insert" });
+        }
+        return;
       case "set-composer-mode":
         this.apply({ type: "set-composer-mode", mode: intent.mode });
         return;
@@ -513,12 +541,20 @@ export class ApplicationController {
       case "open-filter":
         this.apply({ type: "open-modal", modal: { type: "filter", query: this.#state.filter } });
         return;
-      case "toggle-tree-order":
+      case "toggle-tree-grouping": {
         this.apply({
-          type: "set-tree-order",
-          order: this.#state.treeOrder === "alphabetical" ? "attention" : "alphabetical",
+          type: "set-tree-grouping",
+          grouping: (this.#state.treeGrouping ?? "status") === "status" ? "project" : "status",
         });
+        const selectedWorkspace =
+          this.#state.sidebarSelection?.kind === "workspace"
+            ? this.#state.sidebarSelection.id
+            : undefined;
+        if (selectedWorkspace)
+          this.apply({ type: "reveal-workspace", workspaceId: selectedWorkspace });
+        this.captureSidebarPositions();
         return;
+      }
       case "toggle-archived":
         this.apply({ type: "toggle-archived" });
         return;
@@ -1369,7 +1405,67 @@ export class ApplicationController {
         this.#state = reduceApp(this.#state, { type: "open-modal", modal: { ...captured, error } });
     }
     this.pruneRetries();
+    const contextKey = providerCommandContextKey(this.#state);
+    if (contextKey !== this.#state.providerCommands?.contextKey) {
+      this.#state = { ...this.#state, providerCommands: { contextKey, items: [] } };
+      const generation = ++this.#providerCommandGeneration;
+      const context = providerCommandContext(this.#state);
+      if (context)
+        void this.gateway
+          .getProviderCommands(context)
+          .then((items) => {
+            if (
+              this.quitting ||
+              generation !== this.#providerCommandGeneration ||
+              providerCommandContextKey(this.#state) !== contextKey
+            )
+              return;
+            this.#state = { ...this.#state, providerCommands: { contextKey, items } };
+            for (const listener of this.#listeners) listener(this.#state);
+          })
+          .catch(() => {});
+    }
     for (const listener of this.#listeners) listener(this.#state);
+    if (action.type === "directory" || action.type === "open-session-tab")
+      this.acknowledgeSeenCompletion();
+  }
+
+  setVisible(visible: boolean): void {
+    this.#visible = visible;
+    if (visible) this.acknowledgeSeenCompletion();
+  }
+
+  private acknowledgeSeenCompletion(): void {
+    const agentId = this.#state.selectedAgentId;
+    if (
+      !this.#visible ||
+      this.#state.connection !== "connected" ||
+      !agentId ||
+      this.#state.activeTerminalId ||
+      this.#observedAgentId !== agentId ||
+      !this.#timelineObservation ||
+      this.#acknowledgingCompletions.has(agentId)
+    )
+      return;
+    const active = this.#state.selectedWorkspaceId
+      ? this.#state.activeTabIds[this.#state.selectedWorkspaceId]
+      : undefined;
+    const agent = this.#state.directory.agents.find((item) => item.id === agentId);
+    if (
+      active !== `session:${agentId}` ||
+      !agent?.needsAttention ||
+      agent.attentionReason !== "finished" ||
+      agent.pendingPermissions.length > 0
+    )
+      return;
+    this.#acknowledgingCompletions.add(agentId);
+    void this.gateway.acknowledgeAgentCompletion(agentId).then(
+      () => this.#acknowledgingCompletions.delete(agentId),
+      (error) => {
+        this.#acknowledgingCompletions.delete(agentId);
+        this.reportError("Could not acknowledge the displayed Session's completion.", error);
+      },
+    );
   }
 
   private async openPermission(
@@ -1412,11 +1508,58 @@ export class ApplicationController {
       this.apply({
         type: "select-sidebar",
         selection: { kind: row.kind, id: row.id },
-        order: rows.map((item) => item.id),
+        order: this.sidebarOrder(),
+        groups: this.sidebarGroups(),
       });
       return;
     }
     this.apply({ type: "set-focus", focus: "tree" });
+  }
+
+  private sidebarGroups(): NonNullable<AppState["sidebarGroups"]> {
+    return Object.fromEntries(
+      this.#state.directory.workspaces.map((workspace) => [
+        workspace.id,
+        (this.#state.treeGrouping ?? "status") === "status"
+          ? workspace.status
+            ? `activity:${workspace.status}`
+            : null
+          : this.#state.directory.projects.some((project) => project.id === workspace.projectId)
+            ? (workspace.projectId ?? null)
+            : null,
+      ]),
+    );
+  }
+
+  private sidebarOrder(): readonly string[] {
+    if (this.#state.sidebarOrder) return this.#state.sidebarOrder;
+    const expandedIds = new Set([
+      ...this.#state.expandedIds,
+      ...workspaceActivityGroups.map(([status]) => `activity:${status}`),
+      ...this.#state.directory.projects.map((project) => project.id),
+    ]);
+    return deriveTreeRows({
+      ...this.#state,
+      expandedIds,
+      filter: "",
+      attentionOnly: false,
+      showArchived: true,
+    }).map((row) => row.id);
+  }
+
+  private captureSidebarPositions(): void {
+    if (this.#state.focus !== "tree") return;
+    const rows = deriveTreeRows(this.#state);
+    const selection = this.#state.sidebarSelection;
+    const row =
+      rows.find((item) => item.id === selection?.id && item.kind === selection.kind) ?? rows[0];
+    if (row)
+      this.apply({
+        type: "select-sidebar",
+        selection: { kind: row.kind, id: row.id },
+        order: this.sidebarOrder(),
+        groups: this.sidebarGroups(),
+      });
   }
 
   private async moveSelectionBoundary(boundary: "start" | "end"): Promise<void> {
@@ -1432,13 +1575,14 @@ export class ApplicationController {
         kind: row.kind,
         id: row.id,
       },
-      order: deriveTreeRows(this.#state).map((item) => item.id),
+      order: this.sidebarOrder(),
+      groups: this.sidebarGroups(),
     });
   }
 
   private collapseOrExpand(direction: -1 | 1): void {
     const selection = this.#state.sidebarSelection;
-    const id = selection?.kind === "project" ? selection.id : undefined;
+    const id = selection && selection.kind !== "workspace" ? selection.id : undefined;
     if (!id) return;
     const expanded = this.#state.expandedIds.has(id);
     if ((direction === 1 && !expanded) || (direction === -1 && expanded)) {
@@ -1448,15 +1592,26 @@ export class ApplicationController {
 
   private async openSelection(): Promise<void> {
     const selection = this.#state.sidebarSelection;
+    if (selection && selection.kind !== "workspace") {
+      this.apply({ type: "toggle-expanded", id: selection.id });
+      return;
+    }
     if (selection?.kind === "workspace") {
+      if (!this.#state.directory.workspaces.some((workspace) => workspace.id === selection.id))
+        return;
       this.#focusGeneration += 1;
       const previous = this.#timelineObservation;
       this.#timelineObservation = undefined;
       this.#observedAgentId = undefined;
       void previous?.release();
       this.apply({ type: "activate-workspace", workspaceId: selection.id });
-      await this.showActiveResource();
-      this.apply({ type: "set-focus", focus: "tree" });
+      this.apply({ type: "set-filter", filter: "" });
+      const resource = this.showActiveResource();
+      this.apply({
+        type: "set-focus",
+        focus: this.#state.activeTerminalId ? "timeline" : "composer",
+      });
+      await resource;
       return;
     }
   }
@@ -2567,6 +2722,7 @@ export class ApplicationController {
         return;
       }
       this.#timelineObservation = observation;
+      this.acknowledgeSeenCompletion();
       this.apply({ type: "recovery-stage-succeeded", stage: "timeline" });
     } catch (error) {
       if (recoveryGeneration !== this.#recoveryGeneration) return;

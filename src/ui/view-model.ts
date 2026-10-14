@@ -1,12 +1,18 @@
 import type { AppState } from "../contracts/app-state.js";
-import type { AgentRecord, TimelineEvent, TimelineItem } from "../contracts/domain.js";
+import type {
+  AgentRecord,
+  WorkspaceActivity as NativeWorkspaceActivity,
+  TimelineEvent,
+  TimelineItem,
+  WorkspaceRecord,
+} from "../contracts/domain.js";
 import type { TerminalRecord } from "../contracts/terminal.js";
 import { selectedComposerDraft } from "../state/composer.js";
 import { activeNotification } from "../state/store.js";
 import { projectForWorkspace } from "../state/tree.js";
 import { clipTerminalLine, sanitizeTerminalText, wrapTerminalText } from "./text-safety.js";
 
-export type TreeRowKind = "project" | "workspace";
+export type TreeRowKind = "project" | "activity" | "workspace";
 export type WorkspaceActivity = "attention" | "working" | "idle" | "done";
 export type WorkspaceTab =
   | { kind: "session"; id: string; agent: AgentRecord }
@@ -40,8 +46,8 @@ export interface TreeRow {
   expanded?: boolean;
   selected: boolean;
   attention: boolean;
-  /** Derived from sessions and terminals in the workspace. */
-  activity?: WorkspaceActivity;
+  activity?: NativeWorkspaceActivity;
+  activityAt?: string;
   /** The workspace currently shown in the main pane. */
   active?: boolean;
   /** Number of blank lines before this row, used for semantic grouping. */
@@ -101,6 +107,42 @@ export function activityForWorkspace(
   return "done";
 }
 
+export const workspaceActivityGroups = [
+  ["needs_input", "Waiting for user input"],
+  ["failed", "Failed"],
+  ["attention", "Ready to review"],
+  ["running", "Working"],
+  ["done", "Done"],
+] as const;
+
+export function workspaceActivityGlyph(
+  activity: NativeWorkspaceActivity | undefined,
+  symbols: "unicode" | "ascii" = "ascii",
+): string {
+  if (!activity) return "?";
+  return (
+    symbols === "unicode"
+      ? { needs_input: "?", failed: "×", attention: "◉", running: "▶", done: "✓" }
+      : { needs_input: "W", failed: "F", attention: "A", running: "R", done: "D" }
+  )[activity];
+}
+
+export function workspaceActivityAt(
+  workspace: WorkspaceRecord,
+  agents: readonly AgentRecord[],
+): string | undefined {
+  if (workspace.activityAt && Number.isFinite(Date.parse(workspace.activityAt)))
+    return workspace.activityAt;
+  let latest: string | undefined;
+  for (const agent of agents) {
+    const timestamp = agent.lastActivityAt;
+    if (agent.workspaceId !== workspace.id || !timestamp || !Number.isFinite(Date.parse(timestamp)))
+      continue;
+    if (!latest || Date.parse(timestamp) > Date.parse(latest)) latest = timestamp;
+  }
+  return latest;
+}
+
 export function deriveTreeRows(state: AppState): TreeRow[] {
   const rows: TreeRow[] = [];
   const filter = state.filter.trim().toLocaleLowerCase();
@@ -116,27 +158,46 @@ export function deriveTreeRows(state: AppState): TreeRow[] {
       ? (frozenOrder.get(left) ?? Number.MAX_SAFE_INTEGER) -
         (frozenOrder.get(right) ?? Number.MAX_SAFE_INTEGER)
       : 0;
+  const groupOf = (workspace: (typeof workspaces)[number]): string | null => {
+    const frozen = state.focus === "tree" ? state.sidebarGroups?.[workspace.id] : undefined;
+    if (frozen !== undefined) return frozen;
+    return (state.treeGrouping ?? "status") === "status"
+      ? workspace.status
+        ? `activity:${workspace.status}`
+        : null
+      : (projectForWorkspace(state.directory.projects, workspace)?.id ?? null);
+  };
   const projects = [...state.directory.projects].sort(
     (left, right) =>
       compareFrozen(left.id, right.id) ||
       left.name.localeCompare(right.name) ||
       left.id.localeCompare(right.id),
   );
-  const activity = (workspaceId: string): WorkspaceActivity =>
-    activityForWorkspace(
-      state.directory.agents.filter((agent) => agent.workspaceId === workspaceId),
-      state.workspaceTerminals?.[workspaceId] ?? [],
-      state.staleTerminalIds,
-      state.workspaceHadResources?.has(workspaceId),
+  const activity = (workspaceId: string): NativeWorkspaceActivity | undefined =>
+    workspaces.find((workspace) => workspace.id === workspaceId)?.status;
+  const attention = (workspaceId: string): boolean =>
+    ["needs_input", "failed", "attention"].includes(activity(workspaceId) ?? "") ||
+    state.directory.agents.some(
+      (agent) => agent.workspaceId === workspaceId && !agent.archived && needsIntervention(agent),
+    ) ||
+    (state.workspaceTerminals?.[workspaceId] ?? []).some(
+      (terminal) => terminal.activity === "attention" && !state.staleTerminalIds?.has(terminal.id),
     );
-  const rank: Record<WorkspaceActivity, number> = { attention: 0, working: 1, idle: 2, done: 3 };
+  const activityTime = (value: string | null | undefined): number => {
+    const timestamp = value ? Date.parse(value) : Number.NaN;
+    return Number.isFinite(timestamp) ? timestamp : Number.NEGATIVE_INFINITY;
+  };
+  const activityTimes = new Map(
+    workspaces.map((workspace) => [
+      workspace.id,
+      workspaceActivityAt(workspace, state.directory.agents),
+    ]),
+  );
   const sorted = (items: typeof workspaces) =>
     [...items].sort(
       (left, right) =>
         compareFrozen(left.id, right.id) ||
-        (state.treeOrder === "attention"
-          ? rank[activity(left.id)] - rank[activity(right.id)]
-          : 0) ||
+        activityTime(activityTimes.get(right.id)) - activityTime(activityTimes.get(left.id)) ||
         left.title.localeCompare(right.title) ||
         left.id.localeCompare(right.id),
     );
@@ -144,11 +205,16 @@ export function deriveTreeRows(state: AppState): TreeRow[] {
     sorted(
       items.filter((workspace) => {
         const matches =
-          !filter || projectMatches || workspace.title.toLocaleLowerCase().includes(filter);
-        return matches && (!state.attentionOnly || activity(workspace.id) === "attention");
+          !filter ||
+          projectMatches ||
+          workspace.title.toLocaleLowerCase().includes(filter) ||
+          projectForWorkspace(projects, workspace)?.name.toLocaleLowerCase().includes(filter);
+        return matches && (!state.attentionOnly || attention(workspace.id));
       }),
     );
   const appendWorkspace = (workspace: (typeof workspaces)[number], depth: number): void => {
+    const nativeActivity = activity(workspace.id);
+    const activityAt = activityTimes.get(workspace.id);
     rows.push({
       id: workspace.id,
       kind: "workspace",
@@ -158,16 +224,45 @@ export function deriveTreeRows(state: AppState): TreeRow[] {
         state.sidebarSelection?.kind === "workspace"
           ? state.sidebarSelection.id === workspace.id
           : !state.sidebarSelection && state.selectedWorkspaceId === workspace.id,
-      attention: activity(workspace.id) === "attention",
-      activity: activity(workspace.id),
+      attention: attention(workspace.id),
+      ...(nativeActivity ? { activity: nativeActivity } : {}),
+      ...(activityAt ? { activityAt } : {}),
       active: workspace.id === state.selectedWorkspaceId,
       gapBefore: rows.at(-1)?.kind === "workspace" ? 1 : 0,
     });
   };
+  if ((state.treeGrouping ?? "status") === "status") {
+    const groups = [...workspaceActivityGroups].sort(([left], [right]) =>
+      compareFrozen(`activity:${left}`, `activity:${right}`),
+    );
+    for (const [status, label] of groups) {
+      const children = visible(
+        workspaces.filter((workspace) => groupOf(workspace) === `activity:${status}`),
+        false,
+      );
+      if (!children.length) continue;
+      const id = `activity:${status}`;
+      const expanded = Boolean(filter) || state.expandedIds.has(id);
+      rows.push({
+        id,
+        kind: "activity",
+        activity: status,
+        label,
+        depth: 0,
+        expanded,
+        selected: state.sidebarSelection?.kind === "activity" && state.sidebarSelection.id === id,
+        attention: false,
+      });
+      if (expanded) for (const workspace of children) appendWorkspace(workspace, 1);
+    }
+    for (const workspace of visible(workspaces.filter((workspace) => groupOf(workspace) === null)))
+      appendWorkspace(workspace, 0);
+    return rows;
+  }
   for (const project of projects) {
     const projectMatches = Boolean(filter) && project.name.toLocaleLowerCase().includes(filter);
     const children = visible(
-      workspaces.filter((workspace) => projectForWorkspace(projects, workspace)?.id === project.id),
+      workspaces.filter((workspace) => groupOf(workspace) === project.id),
       projectMatches,
     );
     if (children.length === 0 && (!projectMatches || state.attentionOnly)) continue;
@@ -184,7 +279,7 @@ export function deriveTreeRows(state: AppState): TreeRow[] {
     });
     if (expanded) for (const workspace of children) appendWorkspace(workspace, 1);
   }
-  const roots = workspaces.filter((workspace) => !projectForWorkspace(projects, workspace));
+  const roots = workspaces.filter((workspace) => groupOf(workspace) === null);
   for (const workspace of visible(roots)) appendWorkspace(workspace, 0);
   return rows;
 }
@@ -362,13 +457,11 @@ export function renderDashboard(
     ...deriveTreeRows(state).map((row) => {
       const marker = row.selected ? ">" : " ";
       const branch =
-        row.kind === "project"
+        row.kind !== "workspace"
           ? row.expanded
             ? "▾"
             : "▸"
-          : ({ attention: "A", working: "W", idle: "I", done: "D" } as const)[
-              row.activity ?? "idle"
-            ];
+          : workspaceActivityGlyph(row.activity);
       return `${marker}${"  ".repeat(row.depth)}${branch} ${row.label}`;
     }),
   ];

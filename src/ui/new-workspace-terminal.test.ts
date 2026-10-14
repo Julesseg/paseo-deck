@@ -84,9 +84,14 @@ async function fixture(empty = false, noWorkspace = false) {
   await app.start();
   const terminal = new RecordingTerminal(100, 30);
   const pending: Promise<void>[] = [];
-  const deck = new DeckTui(terminal, app.state, (intent) => {
-    pending.push(app.handleIntent(intent));
-  });
+  const deck = new DeckTui(
+    terminal,
+    app.state,
+    (intent) => {
+      pending.push(app.handleIntent(intent));
+    },
+    { treeWidth: 34 },
+  );
   const unsubscribe = app.subscribe((state) => deck.update(state));
   await deck.start();
   return {

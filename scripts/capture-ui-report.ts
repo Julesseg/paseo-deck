@@ -4,8 +4,13 @@ import { join } from "node:path";
 import { ApplicationController } from "../src/app/controller.js";
 import type { AppState, SessionDraft } from "../src/contracts/app-state.js";
 import { FakePaseoGateway } from "../src/paseo/fake-gateway.js";
+import {
+  applyTargetPreferences,
+  parsePreferences,
+  targetScope,
+} from "../src/runtime/preferences.js";
 import type { TerminalAppearance } from "../src/ui/capabilities.js";
-import { NARROW_SIDEBAR_BREAKPOINT } from "../src/ui/layout.js";
+import { DEFAULT_TREE_WIDTH, shellLayout } from "../src/ui/layout.js";
 import { RecordingTerminal } from "../src/ui/terminal.js";
 import { terminalDisplayWidth } from "../src/ui/text-safety.js";
 import { DeckTui } from "../src/ui/views.js";
@@ -111,6 +116,13 @@ const sampledTerminalAppearance: TerminalAppearance = {
   background: [28, 25, 23],
   symbols: "unicode",
 };
+const completionCatalog = [
+  { name: "clear", description: "Clear context", kind: "command" as const },
+  { name: "review", description: "Review changes", kind: "skill" as const },
+  { name: "research", description: "Research a topic", kind: "skill" as const },
+  { name: "project-check", description: "Project skill", kind: "skill" as const },
+  { name: "plugin-workflow", description: "Plugin skill", kind: "skill" as const },
+];
 const shots: Array<{
   name: string;
   columns: number;
@@ -118,7 +130,109 @@ const shots: Array<{
   state: AppState;
   appearance?: TerminalAppearance;
   input?: readonly string[];
+  treeWidth?: number;
 }> = [
+  ...(
+    [
+      ["leading", 100, 28, sampledTerminalAppearance, baseState, ["i", "/"]],
+      ["inline", 100, 28, sampledTerminalAppearance, baseState, ["i", ..."please /"]],
+      ["selected", 100, 28, sampledTerminalAppearance, baseState, ["i", ..."/re", "\u001b[B"]],
+      ["draft", 100, 28, sampledTerminalAppearance, draftState, ["i", "/"]],
+      [
+        "wrapped",
+        100,
+        28,
+        sampledTerminalAppearance,
+        baseState,
+        ["i", `\u001b[200~${"word ".repeat(12)}\u001b[201~`, "/", "r", "v"],
+      ],
+      [
+        "scrolled-short",
+        30,
+        12,
+        sampledTerminalAppearance,
+        baseState,
+        [
+          "i",
+          "\u001b[200~first\nsecond\nthird\nfourth\nfifth\nsixth\nseventh\n\u001b[201~",
+          "/",
+          "r",
+          "v",
+        ],
+      ],
+      ["narrow", 52, 18, sampledTerminalAppearance, baseState, ["i", "/"]],
+      [
+        "light",
+        100,
+        28,
+        { ...sampledTerminalAppearance, background: [240, 230, 220] },
+        baseState,
+        ["i", "/"],
+      ],
+      [
+        "ascii",
+        100,
+        28,
+        { color: "none", unicode: false, theme: "plain", symbols: "ascii" },
+        baseState,
+        ["i", "/"],
+      ],
+      ["no-popup", 100, 28, sampledTerminalAppearance, baseState, ["i", ..."plain prompt"]],
+    ] satisfies Array<[string, number, number, TerminalAppearance, AppState, string[]]>
+  ).map(([name, columns, rows, appearance, fixture, input]) => ({
+    name: `provider-completion-${name}`,
+    columns,
+    rows,
+    appearance,
+    state: {
+      ...fixture,
+      focus: "composer" as const,
+      composerMode: "normal" as const,
+      composer: { ...fixture.composer, drafts: {} },
+    },
+    input,
+  })),
+  ...(
+    [
+      ["long-settings", 100, 28, sampledTerminalAppearance],
+      ["wide", 160, 36, sampledTerminalAppearance],
+      ["narrow", 52, 18, sampledTerminalAppearance],
+      ["short", 30, 12, sampledTerminalAppearance],
+      ["scrolling", 30, 12, sampledTerminalAppearance],
+      ["light", 100, 28, { ...sampledTerminalAppearance, background: [240, 230, 220] }],
+      ["plain", 100, 28, { color: "none", unicode: true, theme: "plain", symbols: "unicode" }],
+      ["ascii", 100, 28, { color: "none", unicode: false, theme: "plain", symbols: "ascii" }],
+    ] satisfies Array<[string, number, number, TerminalAppearance]>
+  ).map(([name, columns, rows, appearance]) => ({
+    name: `composer-layout-${name}`,
+    columns,
+    rows,
+    appearance,
+    state: {
+      ...baseState,
+      focus: "composer" as const,
+      composerMode: "insert" as const,
+      directory: {
+        ...baseState.directory,
+        agents: baseState.directory.agents.map((agent) =>
+          agent.id === "agent-atlas-1234"
+            ? {
+                ...agent,
+                modelId: "model-with-a-long-configuration-name",
+                thinkingLevel: "high",
+                modeId: "plan",
+              }
+            : agent,
+        ),
+      },
+      timeline: { ...baseState.timeline, usage: { contextTokens: 123456789 } },
+    },
+    input: [
+      name === "scrolling"
+        ? `\u001b[200~${Array.from({ length: 15 }, (_, index) => `line ${index}`).join("\n")}\u001b[201~`
+        : "\u001b[200~Review the Composer layout.\nKeep this prompt intact.\nCursor stays here.\u001b[201~",
+    ],
+  })),
   {
     name: "command-palette-appearance",
     columns: 100,
@@ -1507,6 +1621,514 @@ for (const [placement, state] of [
   });
 }
 
+const timelineStructureState = withTimeline(baseState, "timeline-structure", [
+  {
+    id: "structure-user",
+    type: "user-message",
+    text: "Please check **Timeline** messages and preserve wrapped content while resizing the terminal.",
+  },
+  {
+    id: "structure-assistant",
+    type: "assistant-message",
+    messageId: "structure-assistant",
+    text: "I will check the conversation and tool boundaries.\n\n- Preserve Markdown\n- Preserve copying",
+  },
+  {
+    id: "structure-tool",
+    type: "tool",
+    callId: "structure-tool",
+    name: "read_file",
+    status: "completed",
+    summary: "src/ui/views.ts",
+    output: `First output line\n${"Long tool output with wrapping and content.\n".repeat(5)}`,
+  },
+  {
+    id: "structure-failure",
+    type: "tool",
+    callId: "structure-failure",
+    name: "npm test",
+    status: "failed",
+    failureSummary: "exit 1",
+    output: "Assertion failed: expected readable boundaries.",
+  },
+  {
+    id: "structure-stream",
+    type: "assistant-message",
+    messageId: "structure-stream",
+    text: "The tool boundaries now remain clear while updates stream.",
+    streaming: true,
+  },
+]);
+for (const [name, columns, rows, appearance, input] of [
+  ["conversation", 140, 40, sampledTerminalAppearance, []],
+  ["expanded", 140, 40, sampledTerminalAppearance, ["\u000b", "g", "g", "j", "z", "a", "\u001b"]],
+  ["narrow", 52, 28, sampledTerminalAppearance, []],
+  ["plain", 100, 36, { color: "none", unicode: true, theme: "plain", symbols: "unicode" }, []],
+  ["ascii", 100, 36, { color: "ansi16", unicode: false, theme: "ember", symbols: "ascii" }, []],
+  ["light", 140, 40, { ...sampledTerminalAppearance, background: [245, 245, 244] }, []],
+] as const) {
+  shots.push({
+    name: `timeline-structure-${name}`,
+    columns,
+    rows,
+    state: {
+      ...(name === "expanded"
+        ? withTimeline(
+            baseState,
+            "timeline-structure-expanded",
+            timelineStructureState.timeline.items
+              .filter((event) => event.item.type === "tool")
+              .map((event) => event.item),
+          )
+        : timelineStructureState),
+      focus: "composer",
+    },
+    appearance: appearance as TerminalAppearance,
+    input,
+  });
+}
+
+for (const [name, columns, background] of [
+  ["wide", 240, [28, 25, 23]],
+  ["light", 240, [245, 245, 244]],
+  ["narrow", 92, [28, 25, 23]],
+] as const) {
+  shots.push({
+    name: `timeline-scrollbar-tools-${name}`,
+    columns,
+    rows: 28,
+    treeWidth: 34,
+    state: withTimeline(
+      baseState,
+      "scrollbar-tools",
+      Array.from({ length: 30 }, (_, index) => ({
+        id: `scrollbar-tool-${index}`,
+        type: "tool",
+        callId: `scrollbar-tool-${index}`,
+        name: "shell",
+        status: "completed",
+        summary: `scrollbar-tool-${index}`,
+        output: "Tool output remains inside the reading column.",
+      })),
+    ),
+    appearance: { ...sampledTerminalAppearance, background: [...background] },
+    input: ["\u000b", "g", "g"],
+  });
+}
+
+const workspaceFocusState: AppState = {
+  ...baseState,
+  focus: "composer",
+  composerMode: "normal",
+  activeSessionId: "agent-atlas-1234",
+};
+for (const [name, input] of [
+  [
+    "enter-normal",
+    ["i", "Saved prompt cursor", "\u001b", "0", "l", "l", "\u0013", "/", "Main", "\r", "G", "\r"],
+  ],
+  [
+    "enter-insert",
+    [
+      "i",
+      "Saved prompt cursor",
+      "\u0001",
+      "\u001b[C",
+      "\u001b[C",
+      "\u0013",
+      "/",
+      "Main",
+      "\r",
+      "G",
+      "\r",
+    ],
+  ],
+  [
+    "sidebar-i-highlight",
+    [
+      "i",
+      "Keep the displayed Atlas draft",
+      "\u001b",
+      "0",
+      "l",
+      "\u0013",
+      "/",
+      "Theme",
+      "\r",
+      "G",
+      "i",
+    ],
+  ],
+  ["timeline-i", ["i", "Keep the displayed Atlas draft", "\u001b", "0", "l", "\u000b", "i"]],
+] as const) {
+  shots.push({
+    name: `workspace-focus-${name}`,
+    columns: 110,
+    rows: 35,
+    state: workspaceFocusState,
+    input,
+  });
+}
+shots.push({
+  name: "workspace-focus-empty-launch",
+  columns: 110,
+  rows: 35,
+  state: launchState,
+  input: ["\u0013", "/", "Main", "\r", "G", "\r"],
+});
+const focusTerminalShot = shots.find((shot) => shot.name === "terminal-direct-input");
+if (focusTerminalShot)
+  shots.push({
+    ...focusTerminalShot,
+    name: "workspace-focus-terminal-literal",
+    columns: 110,
+    rows: 35,
+    input: ["i", "\u001b[200~literal i\u001b[201~"],
+  });
+
+const sidebarCaptureState: AppState = {
+  ...emptyState,
+  connection: "connected",
+  focus: "tree",
+  treeGrouping: "status",
+  treeOrder: "recent",
+  directory: {
+    ...baseState.directory,
+    projects: [{ id: "sidebar-project", name: "Design systems" }],
+    workspaceLabels: [
+      { name: "urgent", color: "red" },
+      { name: "design", color: "sky" },
+    ],
+    workspaces: (["needs_input", "failed", "attention", "running", "done"] as const).map(
+      (status, index) => ({
+        id: `sidebar-${status}`,
+        projectId: "sidebar-project",
+        title:
+          [
+            "Waiting workspace",
+            "Failed workspace",
+            "Unread workspace",
+            "Mixed Working and unread",
+            "Done workspace",
+          ][index] ?? status,
+        status,
+        activityAt:
+          index === 4
+            ? null
+            : new Date(12_000 - ([0, 180_000, 7_200_000, 345_600_000][index] ?? 0)).toISOString(),
+        directory: `/demo/${status}`,
+        archived: false,
+        labels: status === "attention" ? ["urgent", "design"] : [],
+      }),
+    ),
+    agents: [
+      {
+        ...overflowTemplate,
+        id: "sidebar-native-activity",
+        workspaceId: "sidebar-done",
+        status: "idle",
+        lastActivityAt: new Date(12_000 - 180_000).toISOString(),
+      },
+      {
+        ...overflowTemplate,
+        id: "sidebar-unread",
+        workspaceId: "sidebar-running",
+        status: "idle",
+        needsAttention: true,
+        attentionReason: "finished",
+      },
+    ],
+  },
+  selectedWorkspaceId: "sidebar-needs_input",
+  sidebarSelection: { kind: "workspace", id: "sidebar-needs_input" },
+  expandedIds: new Set([
+    "sidebar-project",
+    ...["needs_input", "failed", "attention", "running", "done"].map(
+      (status) => `activity:${status}`,
+    ),
+  ]),
+};
+shots.push({
+  name: "composer-active-context",
+  columns: 200,
+  rows: 28,
+  appearance: { ...sampledTerminalAppearance, background: [232, 228, 219] },
+  state: {
+    ...baseState,
+    focus: "composer",
+    timeline: { ...baseState.timeline, usage: { contextTokens: 334037 } },
+  },
+});
+shots.push({
+  name: "sidebar-saved-default-fullscreen",
+  columns: 200,
+  rows: 45,
+  treeWidth:
+    parsePreferences({
+      version: 1,
+      targets: { [targetScope({ type: "default" })]: { treeWidth: 34 } },
+    }).targets[targetScope({ type: "default" })]?.treeWidth ?? DEFAULT_TREE_WIDTH,
+  state: { ...sidebarCaptureState, treeGrouping: "project" },
+  appearance: sampledTerminalAppearance,
+});
+for (const grouping of ["status", "project"] as const) {
+  for (const mode of [
+    "populated",
+    "collapsed",
+    "empty-filter",
+    "long-metadata",
+    "crowded-labels",
+    "drawer",
+    "short",
+    "plain",
+    "ascii",
+    "light",
+    "frozen-badge",
+  ] as const) {
+    shots.push({
+      name: `sidebar-metadata-${grouping}-${mode}`,
+      columns: mode === "drawer" ? 92 : mode === "long-metadata" ? 90 : 130,
+      rows: mode === "short" ? 12 : 45,
+      ...(mode === "long-metadata" ? { treeWidth: 18 } : {}),
+      appearance:
+        mode === "ascii"
+          ? { color: "none", unicode: false, theme: "plain", symbols: "ascii" }
+          : mode === "plain"
+            ? { color: "none", unicode: true, theme: "plain", symbols: "unicode" }
+            : mode === "light"
+              ? { ...sampledTerminalAppearance, background: [240, 230, 220] }
+              : sampledTerminalAppearance,
+      state: {
+        ...sidebarCaptureState,
+        treeGrouping: grouping,
+        ...(mode === "long-metadata"
+          ? {
+              directory: {
+                ...sidebarCaptureState.directory,
+                projects: [
+                  { id: "sidebar-project", name: "Design systems 界界 with long project metadata" },
+                ],
+              },
+            }
+          : {}),
+        ...(mode === "crowded-labels"
+          ? {
+              directory: {
+                ...sidebarCaptureState.directory,
+                workspaces: sidebarCaptureState.directory.workspaces.map((workspace) =>
+                  workspace.status === "attention"
+                    ? { ...workspace, labels: ["urgent", "design", "long-native-workspace-label"] }
+                    : workspace,
+                ),
+              },
+            }
+          : {}),
+        ...(mode === "collapsed"
+          ? {
+              expandedIds: new Set<string>(),
+              sidebarSelection: {
+                kind: grouping === "status" ? ("activity" as const) : ("project" as const),
+                id: grouping === "status" ? "activity:needs_input" : "sidebar-project",
+              },
+            }
+          : {}),
+        ...(mode === "empty-filter" ? { filter: "no matching workspace" } : {}),
+        ...(mode === "frozen-badge"
+          ? {
+              directory: {
+                ...sidebarCaptureState.directory,
+                workspaces: sidebarCaptureState.directory.workspaces.map((workspace) =>
+                  workspace.id === "sidebar-running"
+                    ? { ...workspace, status: "failed" as const }
+                    : workspace,
+                ),
+              },
+              sidebarGroups: Object.fromEntries(
+                sidebarCaptureState.directory.workspaces.map((workspace) => [
+                  workspace.id,
+                  grouping === "status" ? `activity:${workspace.status}` : "sidebar-project",
+                ]),
+              ),
+              sidebarOrder: sidebarCaptureState.directory.workspaces.map(
+                (workspace) => workspace.id,
+              ),
+            }
+          : {}),
+      },
+      ...(mode === "short" ? { input: ["G"] } : {}),
+    });
+  }
+}
+
+for (const mode of ["dark", "light"] as const) {
+  const colors = [
+    "violet",
+    "sky",
+    "emerald",
+    "orange",
+    "pink",
+    "indigo",
+    "teal",
+    "red",
+    "amber",
+    "blue",
+  ] as const;
+  shots.push({
+    name: `sidebar-label-palette-${mode}`,
+    columns: 130,
+    rows: 45,
+    appearance: {
+      ...sampledTerminalAppearance,
+      background: mode === "dark" ? [28, 25, 23] : [240, 230, 220],
+    },
+    state: {
+      ...sidebarCaptureState,
+      treeGrouping: "project",
+      directory: {
+        ...sidebarCaptureState.directory,
+        workspaceLabels: colors.map((color) => ({ name: color, color })),
+        workspaces: colors.map((color) => ({
+          id: `palette-${color}`,
+          projectId: "sidebar-project",
+          title: `${color} Workspace`,
+          directory: "/demo/palette",
+          status: "done",
+          activityAt: new Date(12000 - 180000).toISOString(),
+          archived: false,
+          labels: [color],
+        })),
+        agents: [],
+      },
+      selectedWorkspaceId: "palette-violet",
+      sidebarSelection: { kind: "workspace", id: "palette-violet" },
+    },
+  });
+}
+for (const grouping of ["status", "project"] as const) {
+  const raw = JSON.stringify({
+    version: 1,
+    targets: { [targetScope({ type: "default" })]: { treeOrder: "alphabetical" } },
+  });
+  const preferences = parsePreferences(JSON.parse(raw)).targets[targetScope({ type: "default" })];
+  shots.push({
+    name: `sidebar-recent-order-${grouping}`,
+    columns: 130,
+    rows: 35,
+    appearance: sampledTerminalAppearance,
+    state: applyTargetPreferences(
+      {
+        ...sidebarCaptureState,
+        treeGrouping: grouping,
+        focus: "composer",
+        selectedWorkspaceId: "order-new",
+        sidebarSelection: { kind: "workspace", id: "order-new" },
+        directory: {
+          ...sidebarCaptureState.directory,
+          workspaces: [
+            {
+              id: "order-old",
+              projectId: "sidebar-project",
+              title: "Alpha old",
+              status: "done",
+              activityAt: new Date(12000 - 7200000).toISOString(),
+              directory: "/demo/old",
+              archived: false,
+            },
+            {
+              id: "order-new",
+              projectId: "sidebar-project",
+              title: "Zulu newest",
+              status: "done",
+              activityAt: null,
+              directory: "/demo/new",
+              archived: false,
+            },
+            {
+              id: "order-missing",
+              projectId: "sidebar-project",
+              title: "Missing activity",
+              status: "done",
+              activityAt: null,
+              directory: "/demo/missing",
+              archived: false,
+            },
+          ],
+          agents: [
+            {
+              ...overflowTemplate,
+              id: "order-session",
+              workspaceId: "order-new",
+              lastActivityAt: new Date(12000 - 180000).toISOString(),
+              pendingPermissions: [],
+              needsAttention: false,
+              status: "idle",
+            },
+          ],
+        },
+      },
+      preferences,
+    ),
+  });
+}
+
+for (const origin of ["composer", "timeline"] as const) {
+  for (const stage of ["closed", "open", "canceled", "confirmed"] as const) {
+    const input = [
+      "i",
+      "needle saved draft",
+      "\u001b",
+      ...(origin === "timeline" ? ["\u000b"] : []),
+      ...(stage === "closed"
+        ? []
+        : [
+            "/",
+            "needle",
+            ...(stage === "canceled" ? ["\u001b"] : stage === "confirmed" ? ["\r"] : []),
+          ]),
+    ];
+    shots.push({
+      name: `search-slot-${origin}-desktop-${stage}`,
+      columns: 100,
+      rows: 28,
+      appearance: sampledTerminalAppearance,
+      state: {
+        ...withTimeline(baseState, "search-slot", [
+          {
+            id: "search-slot-message",
+            type: "assistant-message",
+            messageId: "search-slot-message",
+            text: "needle Timeline content",
+          },
+        ]),
+        focus: "composer",
+        composerMode: "normal",
+        composer: { ...baseState.composer, drafts: {} },
+      },
+      input,
+    });
+  }
+}
+for (const [mode, columns, rows, appearance] of [
+  ["narrow", 52, 18, sampledTerminalAppearance],
+  ["short", 30, 12, sampledTerminalAppearance],
+  ["light", 100, 28, { ...sampledTerminalAppearance, background: [240, 230, 220] }],
+] as const) {
+  for (const stage of ["closed", "open"] as const)
+    shots.push({
+      name: `search-slot-composer-${mode}-${stage}`,
+      columns,
+      rows,
+      appearance: appearance as TerminalAppearance,
+      state: {
+        ...baseState,
+        focus: "composer",
+        composerMode: "normal",
+        composer: { ...baseState.composer, drafts: {} },
+      },
+      input: ["i", "needle saved draft", "\u001b", ...(stage === "open" ? ["/", "needle"] : [])],
+    });
+}
+
 // Populate interactive Composer selections through actual editing so cursor history is reproducible.
 for (const shot of shots) {
   if (!shot.name.startsWith("composer-visual")) continue;
@@ -1526,6 +2148,7 @@ for (const shot of shots.filter(
   const terminal = new RecordingTerminal(shot.columns, shot.rows);
   const gateway = new FakePaseoGateway(shot.state.directory);
   gateway.terminals = Object.values(shot.state.workspaceTerminals ?? {}).flat();
+  if (shot.name.startsWith("provider-completion-")) gateway.providerCommands = completionCatalog;
   await gateway.connect();
   const app = new ApplicationController(gateway, { initialState: shot.state });
   const pending = new Set<Promise<void>>();
@@ -1548,6 +2171,7 @@ for (const shot of shots.filter(
     },
     {
       appearance: shot.appearance ?? sampledTerminalAppearance,
+      ...(shot.treeWidth === undefined ? {} : { treeWidth: shot.treeWidth }),
       renderClock: {
         now: () => clockMilliseconds,
         setTimeout: (callback) => {
@@ -1573,6 +2197,7 @@ for (const shot of shots.filter(
   await terminal.waitForRender();
   const viewport = terminal.viewport();
   const backgrounds = terminal.viewportBackgrounds();
+  const foregrounds = terminal.viewportForegrounds();
   const emittedCursor = terminal.viewportCursor();
   const cursor =
     emittedCursor.row >= 0 &&
@@ -1587,7 +2212,9 @@ for (const shot of shots.filter(
     "terminal-direct-empty": "terminal-insert",
   };
   const baselineName = renamedBaseline[shot.name] ?? shot.name;
-  const beforePath = join("/tmp/paseo-spec-72/before-png", `${baselineName}.png`);
+  const beforePath = shot.name.startsWith("sidebar-metadata-")
+    ? join("/tmp/paseo-deck-seven-issues/99-captures/before", `${baselineName}.png`)
+    : join("/tmp/paseo-spec-72/before-png", `${baselineName}.png`);
   const hasBefore = await access(beforePath).then(
     () => true,
     () => false,
@@ -1599,9 +2226,10 @@ for (const shot of shots.filter(
     before: hasBefore
       ? {
           path: beforePath,
-          sourceRevision: "6591925",
-          limitation:
-            "Pinned old fixtures and old controls; compare geometry/behavior with the recorded input differences, not equivalent input sequences.",
+          sourceRevision: shot.name.startsWith("sidebar-metadata-") ? "b59d562" : "6591925",
+          limitation: shot.name.startsWith("sidebar-metadata-")
+            ? "Matched grouping/metadata fixture and terminal dimensions; baseline has grouping but no second metadata line or new width/drawer geometry."
+            : "Pinned old fixtures and old controls; compare geometry/behavior with the recorded input differences, not equivalent input sequences.",
         }
       : null,
     missingBefore: hasBefore
@@ -1619,15 +2247,24 @@ for (const shot of shots.filter(
     focus: app.state.focus,
     composerMode: app.state.composerMode ?? "normal",
     timelineMode: app.state.timelineMode ?? "normal",
+    ...(shot.name.startsWith("workspace-focus")
+      ? {
+          activeTabIds: app.state.activeTabIds,
+          selectedWorkspaceId: app.state.selectedWorkspaceId,
+          sidebarSelection: app.state.sidebarSelection,
+          filter: app.state.filter,
+          terminalInput: gateway.terminalInput,
+        }
+      : {}),
     emittedCursor,
     cursor: cursor ?? null,
     limitations:
-      "Synthetic terminal cells/backgrounds only; foreground colors are not recorded and SVG root/text colors are fixed, so injected light-background shots do not establish foreground contrast. SVG cursor is a rectangle at emitted position, not proof of physical cursor shape, keyboard delivery, clipboard or daemon support.",
+      "Headless terminal cells with RGB foreground/background colors; default and indexed foregrounds use a simulated light/dark SVG text color; SVG ground uses the injected terminal background. Light shots establish RGB pill contrast only; they do not establish the physical terminal theme. SVG cursor is a rectangle at emitted position, not proof of physical cursor shape, keyboard delivery, clipboard or daemon support.",
   };
   manifest.push(metadata);
   await writeFile(
     join(outputDirectory, `${shot.name}.cells.json`),
-    JSON.stringify({ ...metadata, viewport, backgrounds }, null, 2),
+    JSON.stringify({ ...metadata, viewport, backgrounds, foregrounds }, null, 2),
   );
   unsubscribe();
   await app.releaseObservations();
@@ -1641,10 +2278,13 @@ for (const shot of shots.filter(
       shot.columns,
       shot.rows,
       `Paseo Deck ${shot.name.replaceAll("-", " ")}`,
-      shot.columns >= NARROW_SIDEBAR_BREAKPOINT && (shot.appearance?.theme ?? "ember") === "ember"
-        ? { columns: 34, color: "#1f1d1b" }
+      !shellLayout(shot.columns, shot.rows, shot.treeWidth ?? DEFAULT_TREE_WIDTH).narrow &&
+        (shot.appearance?.theme ?? "ember") === "ember"
+        ? { columns: shot.treeWidth ?? DEFAULT_TREE_WIDTH, color: "#1f1d1b" }
         : undefined,
       cursor,
+      foregrounds,
+      shot.appearance?.background,
     ),
     "utf8",
   );
@@ -1653,6 +2293,14 @@ for (const shot of shots.filter(
 await writeFile(join(outputDirectory, "manifest.json"), JSON.stringify(manifest, null, 2));
 
 function captureRequirements(name: string): string {
+  if (name.startsWith("sidebar-metadata-"))
+    return "#98/#99; native buckets, two-line metadata, folder pills, compact age, decorative spacing, frozen positions and responsive Sidebar";
+  if (name.startsWith("provider-completion-"))
+    return "#103 provider-scoped Insert completion; eligibility, selection, anchoring and constrained layouts";
+  if (name.startsWith("workspace-focus"))
+    return "#100; Workspace activation focus, saved Composer cursor/mode, displayed versus highlighted Workspace and Terminal passthrough";
+  if (name.startsWith("composer-layout"))
+    return "#102; Composer spacing, removed bottom status row, complete padded token count and editor sizing";
   if (name.includes("search")) return "#72 appendix 2/14; bottom Main query and retained settings";
   if (name.includes("new-workspace") || name.startsWith("launch"))
     return "#72 appendix 19; Project/placement/Base/first Tab and partial-success states";
@@ -1805,7 +2453,7 @@ function syntheticState(): AppState {
     selectedAgentId: "agent-atlas-1234",
     expandedIds: new Set(["live-project", "workspace-main", "workspace-theme", "workspace-orphan"]),
     filter: "",
-    treeOrder: "attention",
+    treeOrder: "recent",
     showArchived: false,
     attentionOnly: false,
     focus: "tree",
@@ -1911,7 +2559,14 @@ function terminalSvg(
   title: string,
   sidebar?: { columns: number; color: string },
   cursor?: { row: number; column: number },
+  foregrounds?: ReadonlyArray<ReadonlyArray<string | undefined>>,
+  background?: readonly [number, number, number],
 ): string {
+  const ground = background ? `rgb(${background.join(",")})` : "#1c1917";
+  const fallbackForeground =
+    background && background.reduce((sum, channel) => sum + channel, 0) > 384
+      ? "#1c1917"
+      : "#f5f5f4";
   const cellWidth = 9;
   const lineHeight = 18;
   const padding = 16;
@@ -1929,7 +2584,7 @@ function terminalSvg(
       for (const { segment } of graphemes.segment(line)) {
         if (segment !== " " && segment !== "" && segment !== "")
           glyphs.push(
-            `<text x="${padding + column * cellWidth}" y="${chromeHeight + padding + (row + 1) * lineHeight - 4}">${escapeXml(segment)}</text>`,
+            `<text x="${padding + column * cellWidth}" y="${chromeHeight + padding + (row + 1) * lineHeight - 4}" fill="${foregrounds?.[row]?.[column] ?? fallbackForeground}">${escapeXml(segment)}</text>`,
           );
         column += terminalDisplayWidth(segment);
       }
@@ -1973,7 +2628,7 @@ function terminalSvg(
     : "";
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">
   <title>${escapeXml(title)}</title>
-  <rect width="${width}" height="${height}" rx="12" fill="#1c1917"/>
+  <rect width="${width}" height="${height}" rx="12" fill="${ground}"/>
   <rect width="${width}" height="${chromeHeight}" rx="12" fill="#292524"/>
   <rect y="20" width="${width}" height="12" fill="#292524"/>
   <circle cx="18" cy="16" r="5" fill="#ef4444"/>

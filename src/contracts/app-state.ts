@@ -6,14 +6,15 @@ import type {
   TimelineEvent,
   UsageSummary,
 } from "./domain.js";
-import type { WorkspacePlacement } from "./gateway.js";
+import type { ProviderCommand, WorkspacePlacement } from "./gateway.js";
 import type { TerminalProfile, TerminalRecord } from "./terminal.js";
 
 export type FocusArea = "tree" | "timeline" | "composer";
 export type ComposerMode = "normal" | "insert" | "visual";
 export type TimelineMode = "normal" | "visual";
-export type TreeOrder = "attention" | "alphabetical";
-export type SidebarSelection = { kind: "project" | "workspace"; id: string };
+export type TreeOrder = "recent";
+export type SidebarGrouping = "status" | "project";
+export type SidebarSelection = { kind: "project" | "activity" | "workspace"; id: string };
 export type TabId = `session:${string}` | `terminal:${string}` | `draft:${string}`;
 export interface SessionDraft {
   providerId?: string | undefined;
@@ -217,6 +218,7 @@ export interface AppState {
   sidebarSelection?: SidebarSelection;
   /** Visible row order captured on entry to sidebar navigation. */
   sidebarOrder?: readonly string[];
+  sidebarGroups?: Readonly<Record<string, string | null>>;
   /** The session whose timeline/composer are active. */
   activeSessionId?: string;
   /** Current-run resource order, grouped by workspace. */
@@ -229,6 +231,7 @@ export interface AppState {
   expandedIds: ReadonlySet<string>;
   filter: string;
   treeOrder: TreeOrder;
+  treeGrouping?: SidebarGrouping;
   showArchived: boolean;
   attentionOnly: boolean;
   focus: FocusArea;
@@ -240,6 +243,7 @@ export interface AppState {
   timeline: FocusedTimelineState;
   timelineNavigation: Readonly<Record<string, TimelineNavigationState>>;
   composer: ComposerState;
+  providerCommands?: { contextKey: string; items: readonly ProviderCommand[] };
   /** Successful creation choices, isolated by workspace for the current run. */
   creationDefaults: Readonly<Record<string, CreationDefaults>>;
   /** Workspace terminals are presentation tabs, never session tabs. */

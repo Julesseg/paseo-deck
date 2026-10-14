@@ -71,6 +71,7 @@ export type UiIntent =
   | { type: "collapse-or-expand"; direction: -1 | 1 }
   | { type: "select-or-open" }
   | { type: "set-focus"; focus: FocusArea }
+  | { type: "focus-composer-insert" }
   | { type: "set-composer-mode"; mode: "normal" | "insert" | "visual" }
   | { type: "set-timeline-mode"; mode: "normal" | "visual" }
   | { type: "scroll-timeline"; direction: -1 | 1 }
@@ -78,7 +79,7 @@ export type UiIntent =
   | { type: "open-command-palette" }
   | { type: "invoke-command"; id: string }
   | { type: "open-filter" }
-  | { type: "toggle-tree-order" }
+  | { type: "toggle-tree-grouping" }
   | { type: "toggle-archived" }
   | { type: "toggle-attention-only" }
   | { type: "adjust-tree-width"; delta: -2 | 2 }
@@ -372,6 +373,7 @@ export class DeckController {
         direction: data === "n" ? 1 : -1,
       });
     if (hasCount) return done();
+    if (data === "i" && !visual) return done({ type: "focus-composer-insert" });
     if (["\u0006", "\u0002", "\u001b[5~", "\u001b[6~"].includes(data))
       return done({
         type: "timeline-page",
@@ -462,6 +464,8 @@ export class DeckController {
         this.#tabPrefix = "g";
         return true;
       }
+      if (data === "i") return this.send({ type: "focus-composer-insert" });
+      if (data === "o") return true;
     }
     const normalBuffer =
       state.modal.type === "none" &&

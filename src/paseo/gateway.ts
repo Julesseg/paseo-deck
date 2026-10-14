@@ -18,11 +18,15 @@ import type {
   ToolDetail,
   ToolDetailKind,
   UsageSummary,
+  WorkspaceActivity,
+  WorkspaceLabelRecord,
   WorkspaceRecord,
 } from "../contracts/domain.js";
 import type {
   Observation,
   PaseoGateway,
+  ProviderCommand,
+  ProviderCommandContext,
   WorkspaceCreateOptions,
   WorkspacePlacement,
 } from "../contracts/gateway.js";
@@ -35,10 +39,13 @@ import type {
   TerminalStreamUpdate,
 } from "../contracts/terminal.js";
 import { existingModelSwitchReason } from "../domain/session-settings.js";
+import { type AttentionClient, createAttentionClient } from "./attention.js";
 import { type CliRunner, createCliRunner, runJson } from "./cli.js";
 import { PaseoGatewayError, paseoFailure } from "./errors.js";
+import { createProviderCommandsClient, type ProviderCommandsClient } from "./provider-commands.js";
 import { createSessionSettingsClient, type SessionSettingsClient } from "./session-settings.js";
 import { type PaseoTarget, type PaseoTargetInput, targetFromDaemonStatus } from "./target.js";
+import { createWorkspaceLabelsClient, type WorkspaceLabelsClient } from "./workspace-labels.js";
 
 import {
   createWorkspaceMetadataClient,
@@ -64,9 +71,12 @@ type ClientSurface = PaseoClient;
 export interface PaseoGatewayOptions extends PaseoTargetInput {
   cliRunner?: CliRunner;
   fetchRemote?: (directory: string, branch: string) => Promise<void>;
+  createAttentionClient?: (target: PaseoTarget) => AttentionClient;
   createSettingsClient?: (target: PaseoTarget) => SessionSettingsClient;
   createMetadataClient?: (target: PaseoTarget) => WorkspaceMetadataClient;
+  createCommandsClient?: (target: PaseoTarget) => ProviderCommandsClient;
   createClient?: (target: PaseoTarget) => ClientSurface;
+  createLabelsClient?: (target: PaseoTarget) => WorkspaceLabelsClient;
 }
 
 export class ProductionPaseoGateway implements PaseoGateway {
@@ -76,8 +86,29 @@ export class ProductionPaseoGateway implements PaseoGateway {
   private target: PaseoTarget | undefined;
   private focused: Observation | undefined;
   private focusGeneration = 0;
+  private attention: Promise<AttentionClient> | undefined;
   private settings: Promise<SessionSettingsClient> | undefined;
+  private commandsClient: Promise<ProviderCommandsClient> | undefined;
   private metadata: Promise<WorkspaceMetadataClient> | undefined;
+  private labelsClient: Promise<WorkspaceLabelsClient> | undefined;
+  private labelDefinitions: readonly WorkspaceLabelRecord[] = [];
+
+  private async workspaceLabelsClient(): Promise<WorkspaceLabelsClient> {
+    if (!this.labelsClient) {
+      const target = this.target;
+      if (!target) throw new PaseoGatewayError("Paseo Deck is not connected.");
+      const client = (this.options.createLabelsClient ?? createWorkspaceLabelsClient)(target);
+      this.labelsClient = client
+        .connect()
+        .then(() => client)
+        .catch(async (error) => {
+          this.labelsClient = undefined;
+          await client.close().catch(() => {});
+          throw error;
+        });
+    }
+    return this.labelsClient;
+  }
 
   public constructor(private readonly options: PaseoGatewayOptions = {}) {
     this.cliRunner = options.cliRunner ?? createCliRunner();
@@ -185,24 +216,84 @@ export class ProductionPaseoGateway implements PaseoGateway {
   }
 
   public async close(): Promise<void> {
+    const commandsClient = this.commandsClient;
+    this.commandsClient = undefined;
+    const attention = this.attention;
+    this.attention = undefined;
     const settings = this.settings;
     this.settings = undefined;
     this.focusGeneration += 1;
     const focused = this.focused;
     const metadata = this.metadata;
+    const labelsClient = this.labelsClient;
     const client = this.client;
     this.focused = undefined;
     this.metadata = undefined;
+    this.labelsClient = undefined;
+    this.labelDefinitions = [];
     const outcomes = await Promise.allSettled([
+      commandsClient?.then((connection) => connection.close()),
+      attention?.then((connection) => connection.close()),
       settings?.then((connection) => connection.close()),
       focused?.release(),
       metadata?.then((connection) => connection.close()),
+      labelsClient?.then((connection) => connection.close()),
       client?.close(),
     ]);
     this.client = undefined;
     this.target = undefined;
     const failure = outcomes.find((outcome) => outcome.status === "rejected");
     if (failure?.status === "rejected") throw paseoFailure(failure.reason, "protocol");
+  }
+
+  public async getProviderCommands(
+    context: ProviderCommandContext,
+  ): Promise<readonly ProviderCommand[]> {
+    try {
+      const client = this.requireClient();
+      let result: Awaited<ReturnType<ProviderCommandsClient["listCommands"]>>;
+      if ("agentId" in context) result = await client.agents.ref(context.agentId).commands();
+      else {
+        if (!this.commandsClient) {
+          if (!this.target) throw new PaseoGatewayError("Paseo Deck is not connected.");
+          const owned = (this.options.createCommandsClient ?? createProviderCommandsClient)(
+            this.target,
+          );
+          this.commandsClient = owned
+            .connect()
+            .then(() => owned)
+            .catch(async (error) => {
+              this.commandsClient = undefined;
+              await owned.close().catch(() => {});
+              throw error;
+            });
+        }
+        const owned = await this.commandsClient;
+        result = await owned.listCommands({
+          agentId: `deck-draft:${context.workspaceId}`,
+          draftConfig: {
+            provider: context.draft.providerId,
+            cwd: context.draft.cwd,
+            ...(context.draft.modelId ? { model: context.draft.modelId } : {}),
+            ...(context.draft.modeId ? { modeId: context.draft.modeId } : {}),
+            ...(context.draft.thinkingLevel
+              ? { thinkingOptionId: context.draft.thinkingLevel }
+              : {}),
+          },
+        });
+      }
+      if (result.error) throw new PaseoGatewayError(result.error);
+      return result.commands
+        .filter((item) => Boolean(item.name) && !/[\s/]/u.test(item.name))
+        .map((item) => ({
+          name: item.name,
+          description: item.description,
+          ...(item.argumentHint ? { argumentHint: item.argumentHint } : {}),
+          ...(item.kind === "skill" || item.kind === "command" ? { kind: item.kind } : {}),
+        }));
+    } catch (error) {
+      throw paseoFailure(error, "protocol");
+    }
   }
 
   public async getDirectorySnapshot(): Promise<DirectorySnapshot> {
@@ -214,15 +305,58 @@ export class ProductionPaseoGateway implements PaseoGateway {
         client.agents.list(),
         client.providers.waitForReady(),
       ]);
-      return directorySnapshot(client, projects, workspaces, agents, providers);
+      const snapshot = await directorySnapshot(client, projects, workspaces, agents, providers);
+      if (snapshot.workspaces.some((workspace) => workspace.labels?.length)) {
+        this.labelDefinitions = workspaceLabelRecords(
+          (await (await this.workspaceLabelsClient()).listWorkspaceLabels()).labels,
+        );
+      }
+      return this.labelsClient ? { ...snapshot, workspaceLabels: this.labelDefinitions } : snapshot;
     } catch (error) {
       throw paseoFailure(error, "protocol");
     }
   }
 
+  public async acknowledgeAgentCompletion(agentId: string): Promise<void> {
+    let active: Promise<AttentionClient> | undefined;
+    try {
+      this.requireClient();
+      if (!this.attention) {
+        const target = this.target;
+        if (!target) throw new PaseoGatewayError("Paseo Deck is not connected.");
+        const connection = (this.options.createAttentionClient ?? createAttentionClient)(target);
+        this.attention = connection
+          .connect()
+          .then(() => connection)
+          .catch(async (error) => {
+            this.attention = undefined;
+            await connection.close().catch(() => undefined);
+            throw error;
+          });
+      }
+      active = this.attention;
+      const connection = await active;
+      const latest = await this.requireClient().agents.ref(agentId).refresh();
+      const agent = asRecord(latest?.agent);
+      if (
+        agent?.requiresAttention !== true ||
+        agent.attentionReason !== "finished" ||
+        (Array.isArray(agent.pendingPermissions) && agent.pendingPermissions.length > 0)
+      )
+        return;
+      await connection.clearAgentAttention(agentId);
+    } catch (error) {
+      if (active && this.attention === active) {
+        this.attention = undefined;
+        await active.then((connection) => connection.close()).catch(() => undefined);
+      }
+      throw paseoFailure(error, "command");
+    }
+  }
+
   public async listTerminals(workspaceId: string): Promise<readonly TerminalRecord[]> {
     try {
-      // SDK 0.8's public TerminalSchema strips title/activity. Keep the exception
+      // SDK 0.11.2's public TerminalSchema strips title/activity. Keep the exception
       // on the same owned internal connection as rename; never cache a guessed title.
       const entries = await (await this.mutationClient()).listTerminals(undefined, undefined, {
         workspaceId,
@@ -348,33 +482,142 @@ export class ProductionPaseoGateway implements PaseoGateway {
   public async observeDirectory(listener: Listener<DirectoryUpdate>): Promise<Observation> {
     const client = this.requireClient();
     const releases: Array<() => Promise<void> | void> = [];
+    let active = true;
+    releases.push(() => {
+      active = false;
+    });
+    let observingLabels: Promise<void> | undefined;
+    let releaseLabels: (() => Promise<void>) | undefined;
+    let labelRetry: ReturnType<typeof setTimeout> | undefined;
+    releases.push(async () => {
+      clearTimeout(labelRetry);
+      await releaseLabels?.();
+    });
+    const retryLabels = () => {
+      if (!active || labelRetry) return;
+      labelRetry = setTimeout(() => {
+        labelRetry = undefined;
+        void ensureLabels().catch(retryLabels);
+      }, 500);
+      labelRetry.unref();
+    };
+    const publishLabels = (labels: readonly WorkspaceLabelRecord[]) => {
+      if (!active) return;
+      this.labelDefinitions = labels;
+      listener({ type: "workspace-labels-replaced", labels });
+    };
+    const ensureLabels = (): Promise<void> => {
+      if (observingLabels) return observingLabels;
+      const attempt = (async () => {
+        const labelsClient = await this.workspaceLabelsClient();
+        if (!active) return;
+        const query = labelsClient.observeWorkspaceLabels();
+        let released = false;
+        let unsubscribe = () => {};
+        const release = async () => {
+          if (released) return;
+          released = true;
+          unsubscribe();
+          await query.release();
+        };
+        releaseLabels = release;
+        unsubscribe = query.subscribe({
+          snapshot: (payload) => {
+            if (!released) publishLabels(workspaceLabelRecords(payload.labels));
+          },
+          update: (message) => {
+            if (released || message.type !== "workspace.label.update") return;
+            const payload = message.payload;
+            if (payload.kind === "remove")
+              publishLabels(this.labelDefinitions.filter((label) => label.name !== payload.name));
+            else {
+              const updated = workspaceLabelRecords([payload.label])[0];
+              if (updated)
+                publishLabels([
+                  ...this.labelDefinitions.filter(
+                    (label) => label.name !== updated.name && label.name !== payload.previousName,
+                  ),
+                  updated,
+                ]);
+            }
+          },
+          error: () => {
+            if (released) return;
+            observingLabels = undefined;
+            void release().catch(() => {});
+            retryLabels();
+          },
+        });
+        try {
+          await query.ready;
+        } catch (error) {
+          await release();
+          throw error;
+        }
+      })().catch((error) => {
+        if (observingLabels === attempt) observingLabels = undefined;
+        throw error;
+      });
+      observingLabels = attempt;
+      return attempt;
+    };
     // `connect()` has already settled before a directory observation exists;
     // ApplicationController establishes its initial connected state after the
     // snapshot. Forward only later transitions so startup does not refetch the
     // directory a second time.
-    // Stable 0.8.0 exposes the server-issued subscriptionId but no public release
-    // handle. Local listeners below are released here; server demand ends on close().
-    releases.push(client.agents.subscribe((message) => emitDirectoryMessage(message, listener)));
     try {
-      await client.agents.list({ subscribe: {} });
+      releases.push(client.agents.subscribe((message) => emitDirectoryMessage(message, listener)));
+      const agents = await client.agents.list({ subscribe: {} });
+      if (agents.subscription) releases.push(() => agents.subscription.release());
       releases.push(
-        client.workspaces.subscribe((message) => emitDirectoryMessage(message, listener)),
+        client.workspaces.subscribe((message) => {
+          emitDirectoryMessage(message, listener);
+          const payload = asRecord(asRecord(message)?.payload) ?? asRecord(message);
+          const workspace = asRecord(payload?.workspace);
+          if (Array.isArray(workspace?.labels) && workspace.labels.length)
+            void ensureLabels().catch(retryLabels);
+        }),
       );
+      const workspaces = await client.workspaces.list({ subscribe: {} });
+      if (workspaces.subscription) releases.push(() => workspaces.subscription.release());
+      if (
+        this.labelsClient ||
+        recordEntries(asRecord(workspaces) ?? {}).some(
+          (workspace) => Array.isArray(workspace.labels) && workspace.labels.length > 0,
+        )
+      )
+        await ensureLabels();
+      releases.push(
+        client.projects.subscribe((message) => emitDirectoryMessage(message, listener)),
+      );
+      releases.push(
+        client.providers.subscribe((message) => void emitProviderUpdate(client, message, listener)),
+      );
+      if (typeof client.getConnectionState === "function") {
+        let previous = client.getConnectionState().status;
+        const timer = setInterval(() => {
+          const current = client.getConnectionState();
+          if (current.status === previous) return;
+          previous = current.status;
+          listener({
+            type: "connection-changed",
+            state:
+              current.status === "connected"
+                ? "connected"
+                : current.status === "connecting"
+                  ? "reconnecting"
+                  : "disconnected",
+            ...(current.status === "connecting" ? { attempt: current.attempt } : {}),
+          });
+        }, 200);
+        timer.unref();
+        releases.push(() => clearInterval(timer));
+      }
+      return observation(releases);
     } catch (error) {
       await releaseAll(releases);
       throw paseoFailure(error, "subscription");
     }
-    try {
-      await client.workspaces.list({ subscribe: {} });
-    } catch (error) {
-      await releaseAll(releases);
-      throw paseoFailure(error, "subscription");
-    }
-    releases.push(client.projects.subscribe((message) => emitDirectoryMessage(message, listener)));
-    releases.push(
-      client.providers.subscribe((message) => void emitProviderUpdate(client, message, listener)),
-    );
-    return observation(releases);
   }
 
   public async focusAgent(
@@ -855,6 +1098,28 @@ function nonBlankString(value: unknown): string | undefined {
   return result?.trim() ? result : undefined;
 }
 
+function workspaceLabelRecords(value: unknown): WorkspaceLabelRecord[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((entry) => {
+    const label = asRecord(entry);
+    return typeof label?.name === "string" &&
+      [
+        "violet",
+        "sky",
+        "emerald",
+        "orange",
+        "pink",
+        "indigo",
+        "teal",
+        "red",
+        "amber",
+        "blue",
+      ].includes(String(label.color))
+      ? [{ name: label.name, color: label.color as WorkspaceLabelRecord["color"] }]
+      : [];
+  });
+}
+
 function workspaceRecord(value: UnknownRecord): WorkspaceRecord {
   const directory = String(value.workspaceDirectory ?? value.directory ?? value.cwd ?? "");
   return {
@@ -866,6 +1131,15 @@ function workspaceRecord(value: UnknownRecord): WorkspaceRecord {
     directory,
     archived:
       value.status === "archived" || (value.archivedAt !== null && value.archivedAt !== undefined),
+    ...(["needs_input", "failed", "running", "attention", "done"].includes(String(value.status))
+      ? { status: value.status as WorkspaceActivity }
+      : {}),
+    ...(value.activityAt === null || typeof value.activityAt === "string"
+      ? { activityAt: value.activityAt }
+      : {}),
+    ...(Array.isArray(value.labels)
+      ? { labels: value.labels.filter((label): label is string => typeof label === "string") }
+      : {}),
   };
 }
 
@@ -902,6 +1176,13 @@ function agentRecord(value: UnknownRecord): AgentRecord {
     availableThinkingLevels: thinking,
     pendingPermissions: pending,
     needsAttention: value.requiresAttention === true || pending.length > 0,
+    ...(["finished", "error", "permission"].includes(String(value.attentionReason))
+      ? { attentionReason: value.attentionReason as "finished" | "error" | "permission" }
+      : {}),
+    ...(typeof value.attentionTimestamp === "string"
+      ? { attentionTimestamp: value.attentionTimestamp }
+      : {}),
+    ...(typeof value.parentAgentId === "string" ? { parentAgentId: value.parentAgentId } : {}),
     archived: value.archivedAt !== null && value.archivedAt !== undefined,
     ...(stringValue(value.updatedAt) === undefined
       ? {}

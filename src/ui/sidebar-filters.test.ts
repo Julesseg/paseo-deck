@@ -4,7 +4,8 @@ import { deriveTreeRows } from "./view-model.js";
 
 it("name, archived and combined activity filters retain only eligible parents and children", () => {
   const state = createInitialState();
-  state.treeOrder = "alphabetical";
+  state.treeOrder = "recent";
+  state.treeGrouping = "project";
   state.expandedIds = new Set(["p", "empty"]);
   state.directory = {
     providers: [],
@@ -15,7 +16,14 @@ it("name, archived and combined activity filters retain only eligible parents an
     agents: [],
     workspaces: [
       { id: "a", projectId: "p", title: "Alpha", directory: "/a", archived: false },
-      { id: "b", projectId: "p", title: "Beta", directory: "/b", archived: true },
+      {
+        id: "b",
+        projectId: "p",
+        title: "Beta",
+        status: "attention",
+        directory: "/b",
+        archived: true,
+      },
     ],
   };
   state.workspaceTerminals = {

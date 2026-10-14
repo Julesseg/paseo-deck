@@ -1,3 +1,4 @@
+import type { WorkspaceLabelRecord } from "../contracts/domain.js";
 import type { PaletteId, TerminalAppearance, TerminalBackground } from "./capabilities.js";
 import { clipTerminalLine, sanitizeTerminalText, terminalDisplayWidth } from "./text-safety.js";
 
@@ -21,9 +22,14 @@ export type BackgroundTone =
   | "tab-active"
   | "active-session"
   | "composer"
+  | "user-message"
+  | "tool"
   | "selection";
 
 export type DeckGlyph =
+  | "folder"
+  | "clock"
+  | "unavailable"
   | "agent"
   | "draft"
   | "expanded"
@@ -88,6 +94,8 @@ const emberBackground: Readonly<Record<BackgroundTone, readonly [number, number,
   "tab-active": [101, 69, 43],
   "active-session": [45, 42, 37],
   composer: [39, 36, 33],
+  "user-message": [43, 39, 35],
+  tool: [34, 32, 30],
   selection: [51, 46, 39],
 };
 const emberBackground256: Readonly<Record<BackgroundTone, number>> = {
@@ -96,6 +104,8 @@ const emberBackground256: Readonly<Record<BackgroundTone, number>> = {
   "tab-active": 240,
   "active-session": 238,
   composer: 237,
+  "user-message": 238,
+  tool: 236,
   selection: 239,
 };
 const emberBackground16: Readonly<Record<BackgroundTone, number>> = {
@@ -104,6 +114,8 @@ const emberBackground16: Readonly<Record<BackgroundTone, number>> = {
   "tab-active": 43,
   "active-session": 40,
   composer: 100,
+  "user-message": 100,
+  tool: 40,
   selection: 100,
 };
 const surfaceOpacity: Readonly<Record<BackgroundTone, number>> = {
@@ -112,10 +124,15 @@ const surfaceOpacity: Readonly<Record<BackgroundTone, number>> = {
   "tab-active": 0.32,
   "active-session": 0.075,
   composer: 0.06,
+  "user-message": 0.085,
+  tool: 0.045,
   selection: 0.1,
 };
 
 const unicodeGlyphs: Readonly<Record<DeckGlyph, string>> = {
+  folder: "📁",
+  clock: "◷",
+  unavailable: "—",
   agent: "•",
   draft: "✎",
   expanded: "▾",
@@ -130,6 +147,9 @@ const unicodeGlyphs: Readonly<Record<DeckGlyph, string>> = {
   end: "↓",
 };
 const asciiGlyphs: Readonly<Record<DeckGlyph, string>> = {
+  folder: "[/]",
+  clock: "[t]",
+  unavailable: "-",
   agent: "*",
   draft: "+",
   expanded: "v",
@@ -201,6 +221,77 @@ export class DeckTheme {
     if (this.paletteId() === "terminal" && !this.appearance.background)
       return `\u001b[${tone === "tab-active" ? "7" : "2;7"}m${value}\u001b[0m`;
     return this.styleRenderedBackground(tone, this.styleRendered(textTone, value));
+  }
+
+  styleWorkspaceLabel(color: WorkspaceLabelRecord["color"], value: string): string {
+    const safe = sanitizeTerminalText(value);
+    const [leading, trailing] = this.pillCaps();
+    if (this.appearance.color === "none" || this.appearance.theme === "plain")
+      return `${leading}${safe}${trailing}`;
+    const accent = {
+      violet: [139, 92, 246],
+      sky: [14, 165, 233],
+      emerald: [16, 185, 129],
+      orange: [249, 115, 22],
+      pink: [236, 72, 153],
+      indigo: [99, 102, 241],
+      teal: [20, 184, 166],
+      red: [239, 68, 68],
+      amber: [245, 158, 11],
+      blue: [59, 130, 246],
+    }[color] as [number, number, number];
+    if (this.appearance.color === "ansi16") {
+      const foreground = {
+        violet: 95,
+        sky: 96,
+        emerald: 92,
+        orange: 93,
+        pink: 95,
+        indigo: 94,
+        teal: 96,
+        red: 91,
+        amber: 93,
+        blue: 94,
+      }[color];
+      return `\u001b[30m${leading}\u001b[0m\u001b[${foreground};40m${safe}\u001b[0m\u001b[30m${trailing}\u001b[0m`;
+    }
+    const [red, green, blue] = blendBackground(this.backgroundColor("sidebar"), accent, 0.22);
+    const cube = [red, green, blue].map((channel) =>
+      [0, 95, 135, 175, 215, 255].reduce(
+        (best, candidate, index, palette) =>
+          Math.abs(candidate - channel) < Math.abs((palette[best] ?? 0) - channel) ? index : best,
+        0,
+      ),
+    );
+    const contrastChannels =
+      this.appearance.color === "ansi256"
+        ? cube.map((index) => [0, 95, 135, 175, 215, 255][index] ?? 0)
+        : [red, green, blue];
+    const luminance = contrastChannels.reduce((sum, channel, index) => {
+      const normalized = channel / 255;
+      return (
+        sum +
+        (index === 0 ? 0.2126 : index === 1 ? 0.7152 : 0.0722) *
+          (normalized <= 0.04045 ? normalized / 12.92 : ((normalized + 0.055) / 1.055) ** 2.4)
+      );
+    }, 0);
+    const foreground = (luminance + 0.05) / 0.05 > 1.05 / (luminance + 0.05) ? 30 : 97;
+    const background =
+      this.appearance.color === "truecolor"
+        ? `48;2;${red};${green};${blue}`
+        : `48;5;${16 + 36 * (cube[0] ?? 0) + 6 * (cube[1] ?? 0) + (cube[2] ?? 0)}`;
+    const text =
+      this.appearance.color === "truecolor"
+        ? foreground === 30
+          ? "38;2;0;0;0"
+          : "38;2;255;255;255"
+        : String(foreground);
+    const cap = background.replace("48;", "38;");
+    return `\u001b[${cap}m${leading}\u001b[0m\u001b[${text};${background}m${safe}\u001b[0m\u001b[${cap}m${trailing}\u001b[0m`;
+  }
+
+  pillCaps(): readonly [string, string] {
+    return this.appearance.symbols === "unicode" ? ["", ""] : ["[", "]"];
   }
 
   /** Colours a pill endcap to match the tab body without filling its outside edge. */

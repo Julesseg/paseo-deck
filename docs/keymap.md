@@ -17,6 +17,7 @@ The following tables are part of this spec. They enumerate direct bindings, alia
 | Ctrl-U / Ctrl-D | Every Deck context | Scroll Timeline up/down half a visible page. Terminal input passes these through. No editor deletion fallback at boundaries or without a Timeline. |
 | Ctrl-C | Every Deck context | Quit; confirm if unsent drafts are dirty. From an overlay, cancellation of quit restores that overlay. Repeated Ctrl-C cannot confirm quitting. Terminal input passes it through. |
 | g? | CN, CV, TN, TV, Sidebar | Open Help. In text entry these characters are text; in terminal input they pass through. |
+| i, idle | Sidebar, TN | Focus the displayed Workspace's Composer in Insert at its saved cursor. Sidebar highlight does not activate another Workspace. Unavailable Composer targets are inert. |
 
 Actual focus changes and opening overlays cancel pending counts/operators/prefixes and cancel unconfirmed buffer searches using their Esc restoration rules. Preserve established buffer state within its own draft/Session. Unavailable focus targets and already-focused targets do not reset state.
 
@@ -134,11 +135,13 @@ Ctrl-Shift-Z redo requires distinguishable terminal delivery. In Insert, Esc the
 
 | Keys | Action |
 | --- | --- |
-| Enter / Alt-Enter | Insert newline and stay in Insert, across legacy and enhanced encodings. Never send. |
+| Enter / Alt-Enter | Plain Enter accepts an open provider suggestion; otherwise Enter and Alt-Enter insert newline and stay in Insert. Never send. |
 | Shift-Enter / Ctrl-J | Retained ordinary editor newline aliases, subject to received encoding; never send while Insert is active. |
-| Up / Down | Move through displayed rows, including wraps. At first/last displayed row, first reach line start/end, then another press recalls older/newer prompt. |
-| Esc | Return to Normal, completing the current Insert undo group. |
-| Tab / Shift-Tab | No indentation or focus traversal; Tab has no visible effect while completion is unwired. |
+| Up / Down | Select suggestions while their dropdown is open; otherwise move through displayed rows, including wraps. At first/last displayed row, first reach line start/end, then another press recalls older/newer prompt. |
+| Esc | Dismiss an open suggestion dropdown and stay in Insert; otherwise return to Normal, completing the current Insert undo group. |
+| Tab / Shift-Tab | Tab accepts the selected provider suggestion. Without a dropdown, no indentation or focus traversal. Shift-Tab retains no effect. |
+
+Provider suggestions appear above a slash reference at a logical line start or after a literal space. The selected Session or draft provider supplies its Workspace-scoped skills and commands; ordinary commands are eligible only at prompt start. Fuzzy filtering offers no popup when nothing matches. Tab or plain Enter replaces the entire reference with `/name` and one following space as one undoable edit. A space or second slash dismisses and inserts literally; native paste remains literal and does not accept suggestions. Embedded Codex `/skill` references retain native plain-text semantics; completion adds no provider-specific expansion.
 
 History recall preserves the unfinished draft/cursor, stops without wrapping, and is undoable. Editing a recalled prompt ends history browsing without changing sent history. Ctrl-N/Ctrl-P history aliases are removed; Ctrl-P opens the palette. Ctrl-A/Ctrl-X do not archive/stop here, and Ctrl-T does not open New tab.
 
@@ -205,7 +208,7 @@ Changing provider on a draft resets model, thinking and operational mode to the 
 
 ## 10. Timeline local controls and read-only rules
 
-Inherits the relevant globals, shared motion/object/selection tables and Normal application commands. Timeline has no Insert mode.
+Inherits the relevant globals, shared motion/object/selection tables and Normal application commands. Timeline has no Insert mode. Message bodies omit author/time headings; blank rows separate blocks and tool calls without divider rules. Tool surfaces stop at the reading column before its scrollbar.
 
 | Keys / input | Scope | Action |
 | --- | --- | --- |
@@ -221,20 +224,21 @@ Inherits the relevant globals, shared motion/object/selection tables and Normal 
 | Esc | TN | Cancel query/unfinished command first; otherwise return to composer with its saved mode/cursor. |
 | Enter | TN, TV | Confirm query when entering one; otherwise no action. Never send composer. |
 | Native paste | TN, TV | Consume as a single payload; no editing, command execution or forwarding to composer. |
-| Editing commands | TN, TV | No insert/delete/change/replace/paste/case/join/indent/undo actions. i/a remain object prefixes only in Visual/operator context; o/O remain Visual endpoint controls only. |
+| Editing commands | TN, TV | No edits to Timeline text. Idle TN i focuses Composer Insert; i/a remain object prefixes in Visual/operator context. Pending character finds own i. o/O remain Visual endpoint controls only. |
 
 Cursor is a block with a distinct current-row background. Preserve centered layout, content indentation and stable anchors through streaming, history loading, folds and resize. Characterwise copies rejoin soft wraps and retain real line breaks; rowwise copies keep selected displayed rows as separate lines and record linewise clipboard type. Neither includes terminal styling or decorative padding.
 
 ## 11. Sidebar
 
-Rows are Projects and Workspaces. Moving the highlight does not activate another Workspace. Globals and g? apply.
+Rows are activity groups and Workspaces by default; `s` switches to Project headings. Moving the highlight does not activate another Workspace. Globals and g? apply.
 
 | Keys | Action |
 | --- | --- |
 | j / k, Down / Up | Highlight next/previous visible row. |
 | h / l, Left / Right | Collapse/expand selected branch. |
 | gg / G | First/last visible row. Bare g is only a prefix. |
-| Enter | Activate highlighted Workspace. Project rows use collapse/expand controls. |
+| Enter | Activate highlighted Workspace, clear the Sidebar text query and focus its saved Session Composer, direct Terminal input or empty Workspace Launch composer. Preserve saved Composer mode/cursor; toggle expansion on grouping headings. |
+| i, idle | Focus the currently displayed Workspace Composer in Insert; do not activate the highlighted row. |
 | Esc | Return to composer or active terminal. |
 | n | Open/resume New workspace composer. |
 | c | Open/reuse Session draft in the target existing Workspace. |
@@ -242,12 +246,14 @@ Rows are Projects and Workspaces. Moving the highlight does not activate another
 | Ctrl-A | Archive highlighted Workspace after confirmation. Unavailable on Project rows; no fallback to Active workspace. |
 | / | Open Project/Workspace name filter. |
 | v | Show/hide archived Workspaces. |
-| ! | Toggle needs-attention filter using combined Workspace activity. |
+| ! | Toggle needs-attention filter, retaining native Waiting for user input, Failed and Ready to review Workspaces, plus attention in their Sessions/Terminals. |
 | p | Open permission requests. |
 | [ / ] | Narrow/widen Sidebar. |
-| o | Toggle alphabetical/needs-attention ordering. |
+| s | Toggle Status/Project grouping; persists across launches. |
 
-The three filters combine without changing the Active workspace/Tab; retain parent Projects for matching Workspaces. Keep ordering stable while Sidebar is focused. Sidebar has no tab navigation, Session Stop/Archive/Rename/Detach or Session setting shortcuts. Ctrl-X is unassigned here.
+The three filters combine without changing the Active workspace/Tab; retain grouping headings for matching Workspaces. Name filtering treats `s` and `o` as text. Automatic group positions and within-group ordering stay frozen while Sidebar navigation owns keyboard input, with live badges and stable highlighted Workspace identity; pending positions apply on leaving. Explicit grouping changes apply immediately. Status group headings show their activity icon before the text: Waiting for user input, Failed, Ready to review, Working, then Done, using Paseo's native bucket selection. Within each group, Workspaces always use most recent native Workspace `activityAt` (falling back to the latest native Session update when unavailable), with missing timestamps last and title/identity as tie-breakers. Missing buckets stay ungrouped with a `?` indicator. Workspace metadata shows a folder icon with Project text in Status grouping, or only a status icon in Project grouping. Native label pills share the Tab endcaps and use subdued hue-tinted backgrounds and follow on the same row and are clipped first; activity age retains priority. Sidebar has no tab navigation, Session Stop/Archive/Rename/Detach or Session setting shortcuts. Ctrl-X is unassigned here.
+
+Workspace activation clears only the text query; movement and bare i preserve it. Attention-only and archived visibility toggles survive activation. Search/filter input and native paste own literal i.
 
 ## 12. Terminal direct input
 
@@ -288,6 +294,8 @@ All inherit ordinary single-line editing and Deck globals. Buffer query text is 
 | Sidebar filter | Esc | Cancel edits, retain prior applied filter and restore origin. |
 | Rename Session/Workspace/Terminal | Enter | Trim surrounding whitespace and save nonempty valid name; unchanged name closes. Failure/invalid name keeps input for correction. |
 | Rename Session/Workspace/Terminal | Esc | Cancel and restore origin. |
+
+The Main pane always reserves one blank bottom row. Composer and Timeline search input occupies that row without moving the Composer.
 
 These fields have no local picker-navigation exception unless they actually own a selectable result list. Ctrl-K focuses Timeline. Their local undo cannot reverse the underlying prompt, an applied setting or a saved rename. Plain n/N and g? are text during entry.
 

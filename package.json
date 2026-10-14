@@ -31,8 +31,9 @@
   },
   "dependencies": {
     "@earendil-works/pi-tui": "0.85.1",
-    "@getpaseo/client": "0.8.0",
-    "@getpaseo/protocol": "0.8.0",
+    "@getpaseo/client": "0.11.2",
+    "@getpaseo/protocol": "0.11.2",
+    "@xterm/addon-unicode11": "0.8.0",
     "@xterm/headless": "5.5.0"
   },
   "devDependencies": {

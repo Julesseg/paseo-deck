@@ -14,12 +14,17 @@ export interface ProjectRecord {
   path?: string;
 }
 
+export type WorkspaceActivity = "needs_input" | "failed" | "running" | "attention" | "done";
+
 export interface WorkspaceRecord {
   id: string;
   projectId?: string;
   title: string;
   directory: string;
   archived: boolean;
+  status?: WorkspaceActivity;
+  activityAt?: string | null;
+  labels?: readonly string[];
 }
 
 export type AgentStatus =
@@ -60,6 +65,8 @@ export interface AgentRecord {
   availableThinkingLevels: readonly string[];
   pendingPermissions: readonly PermissionRequest[];
   needsAttention: boolean;
+  attentionReason?: "finished" | "error" | "permission";
+  attentionTimestamp?: string;
   parentAgentId?: string;
   archived: boolean;
   /** The daemon's most recent agent update timestamp, when it provides one. */
@@ -92,6 +99,22 @@ export interface DirectorySnapshot {
   workspaces: readonly WorkspaceRecord[];
   agents: readonly AgentRecord[];
   providers: readonly ProviderOption[];
+  workspaceLabels?: readonly WorkspaceLabelRecord[];
+}
+
+export interface WorkspaceLabelRecord {
+  name: string;
+  color:
+    | "violet"
+    | "sky"
+    | "emerald"
+    | "orange"
+    | "pink"
+    | "indigo"
+    | "teal"
+    | "red"
+    | "amber"
+    | "blue";
 }
 
 export type DirectoryUpdate =
@@ -103,6 +126,7 @@ export type DirectoryUpdate =
   | { type: "agent-upserted"; agent: AgentRecord }
   | { type: "agent-removed"; agentId: string }
   | { type: "providers-replaced"; providers: readonly ProviderOption[] }
+  | { type: "workspace-labels-replaced"; labels: readonly WorkspaceLabelRecord[] }
   | {
       type: "connection-changed";
       state: ConnectionState;

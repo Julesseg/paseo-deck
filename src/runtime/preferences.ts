@@ -2,15 +2,17 @@ import { createHash, randomUUID } from "node:crypto";
 import { chmod, mkdir, open, readFile, rename, rm } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join, normalize, resolve } from "node:path";
-import type { AppState, TreeOrder } from "../contracts/app-state.js";
+import type { AppState, SidebarGrouping, TreeOrder } from "../contracts/app-state.js";
 import { createInitialState } from "../state/store.js";
 import type { ThemeId } from "../ui/capabilities.js";
-import { adjustTreeWidth } from "../ui/layout.js";
+import { adjustTreeWidth, DEFAULT_TREE_WIDTH } from "../ui/layout.js";
 import type { TargetArgument } from "./arguments.js";
 
 export interface TargetPreferences {
   treeWidth?: number;
+  treeWidthVersion?: 2;
   treeOrder?: TreeOrder;
+  treeGrouping?: SidebarGrouping;
   showArchived?: boolean;
   expandedIds?: string[];
 }
@@ -177,7 +179,7 @@ export class PreferenceSession {
       createInitialState(),
       this.preferences.targets[this.scope],
     );
-    this.#treeWidth = this.preferences.targets[this.scope]?.treeWidth ?? 34;
+    this.#treeWidth = this.preferences.targets[this.scope]?.treeWidth ?? DEFAULT_TREE_WIDTH;
     this.#global = this.preferences.global;
     this.#saved = this.encoded();
   }
@@ -318,10 +320,21 @@ function parseTargetPreference(value: unknown): TargetPreferences | undefined {
   const record = value as Record<string, unknown>;
   return {
     ...(typeof record.treeWidth === "number" && Number.isFinite(record.treeWidth)
-      ? { treeWidth: adjustTreeWidth(record.treeWidth, 0) }
+      ? {
+          treeWidth:
+            record.treeWidth === 34 && record.treeWidthVersion !== 2
+              ? DEFAULT_TREE_WIDTH
+              : adjustTreeWidth(record.treeWidth, 0),
+        }
       : {}),
-    ...(record.treeOrder === "attention" || record.treeOrder === "alphabetical"
-      ? { treeOrder: record.treeOrder }
+    ...(record.treeWidthVersion === 2 ? { treeWidthVersion: 2 as const } : {}),
+    ...(record.treeOrder === "recent" ||
+    record.treeOrder === "attention" ||
+    record.treeOrder === "alphabetical"
+      ? { treeOrder: "recent" as const }
+      : {}),
+    ...(record.treeGrouping === "status" || record.treeGrouping === "project"
+      ? { treeGrouping: record.treeGrouping }
       : {}),
     ...(typeof record.showArchived === "boolean" ? { showArchived: record.showArchived } : {}),
     ...(Array.isArray(record.expandedIds) &&
@@ -342,7 +355,9 @@ export function preferenceProjection(
     targets: {
       [scope]: {
         treeWidth: adjustTreeWidth(treeWidth, 0),
+        treeWidthVersion: 2,
         treeOrder: state.treeOrder,
+        treeGrouping: state.treeGrouping ?? "status",
         showArchived: state.showArchived,
         expandedIds: [...state.expandedIds].sort(),
       },
@@ -357,6 +372,7 @@ export function applyTargetPreferences(
   return {
     ...state,
     ...(preference.treeOrder ? { treeOrder: preference.treeOrder } : {}),
+    ...(preference.treeGrouping ? { treeGrouping: preference.treeGrouping } : {}),
     ...(preference.showArchived === undefined ? {} : { showArchived: preference.showArchived }),
     ...(preference.expandedIds ? { expandedIds: new Set(preference.expandedIds) } : {}),
   };

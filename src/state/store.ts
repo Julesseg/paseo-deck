@@ -2,9 +2,9 @@ import type {
   AppState,
   FocusArea,
   ModalState,
+  SidebarGrouping,
   TabId,
   TimelineNavigationState,
-  TreeOrder,
 } from "../contracts/app-state.js";
 import { emptyDirectory } from "../contracts/app-state.js";
 import type {
@@ -45,13 +45,18 @@ export type AppAction =
   | { type: "complete-session-draft"; workspaceId: string; agentId: string }
   | { type: "terminal-lines"; terminalId: string; lines: readonly string[]; stale?: boolean }
   | { type: "set-terminal-scroll"; terminalId: string; offset: number }
-  | { type: "select-sidebar"; selection?: AppState["sidebarSelection"]; order?: readonly string[] }
+  | {
+      type: "select-sidebar";
+      selection?: AppState["sidebarSelection"];
+      order?: readonly string[];
+      groups?: AppState["sidebarGroups"];
+    }
   | { type: "activate-workspace"; workspaceId: string }
   | { type: "refresh-sidebar-order" }
   | { type: "select-workspace"; workspaceId?: string }
   | { type: "select-project"; projectId?: string }
   | { type: "set-filter"; filter: string }
-  | { type: "set-tree-order"; order: TreeOrder }
+  | { type: "set-tree-grouping"; grouping: SidebarGrouping }
   | { type: "toggle-archived" }
   | { type: "toggle-attention-only" }
   | { type: "set-focus"; focus: FocusArea }
@@ -107,9 +112,16 @@ export function createInitialState(): AppState {
     connection: "disconnected",
     recovery: { attempt: 0, directoryStale: false, timelineStale: false },
     directory: emptyDirectory(),
-    expandedIds: new Set(),
+    expandedIds: new Set([
+      "activity:needs_input",
+      "activity:failed",
+      "activity:attention",
+      "activity:running",
+      "activity:done",
+    ]),
     filter: "",
-    treeOrder: "attention",
+    treeOrder: "recent",
+    treeGrouping: "status",
     showArchived: false,
     attentionOnly: false,
     focus: "composer",
@@ -163,6 +175,8 @@ function directoryUpdate(directory: DirectorySnapshot, update: DirectoryUpdate):
   switch (update.type) {
     case "snapshot":
       return update.snapshot;
+    case "workspace-labels-replaced":
+      return { ...directory, workspaceLabels: update.labels };
     case "project-upserted":
       return { ...directory, projects: replaceById(directory.projects, update.project) };
     case "project-removed":
@@ -269,7 +283,7 @@ function reconcileSelection(state: AppState, directory: DirectorySnapshot): AppS
       sidebar.kind === "project"
         ? directory.projects.some((item) => item.id === sidebar.id)
         : directory.workspaces.some((item) => item.id === sidebar.id);
-    if (exists) next.sidebarSelection = sidebar;
+    if (exists || sidebar.kind === "activity") next.sidebarSelection = sidebar;
     else {
       const fallback =
         sidebar.kind === "project"
@@ -341,6 +355,7 @@ function revealWorkspaceIds(state: AppState, workspaceId: string): ReadonlySet<s
   const expandedIds = new Set(state.expandedIds);
   expandedIds.add(workspace.id);
   if (workspace.projectId) expandedIds.add(workspace.projectId);
+  if (workspace.status) expandedIds.add(`activity:${workspace.status}`);
   return expandedIds;
 }
 
@@ -984,6 +999,9 @@ export function reduceApp(state: AppState, action: AppAction): AppState {
         ...(state.sidebarOrder || action.order
           ? { sidebarOrder: state.sidebarOrder ?? action.order ?? [] }
           : {}),
+        ...(state.sidebarGroups || action.groups
+          ? { sidebarGroups: state.sidebarGroups ?? action.groups ?? {} }
+          : {}),
         focus: "tree" as const,
       };
     }
@@ -1001,6 +1019,7 @@ export function reduceApp(state: AppState, action: AppAction): AppState {
     case "refresh-sidebar-order": {
       const next = { ...state };
       delete next.sidebarOrder;
+      delete next.sidebarGroups;
       return next;
     }
     case "select-workspace": {
@@ -1036,15 +1055,21 @@ export function reduceApp(state: AppState, action: AppAction): AppState {
     }
     case "set-filter":
       return { ...state, filter: action.filter };
-    case "set-tree-order":
-      return { ...state, treeOrder: action.order };
+    case "set-tree-grouping":
+      return reduceApp(
+        { ...state, treeGrouping: action.grouping },
+        { type: "refresh-sidebar-order" },
+      );
     case "toggle-archived":
       return { ...state, showArchived: !state.showArchived };
     case "toggle-attention-only":
       return { ...state, attentionOnly: !state.attentionOnly };
     case "set-focus": {
       const next = { ...state, focus: action.focus };
-      if (action.focus !== "tree") delete next.sidebarOrder;
+      if (action.focus !== "tree") {
+        delete next.sidebarOrder;
+        delete next.sidebarGroups;
+      }
       return next;
     }
     case "set-composer-mode":

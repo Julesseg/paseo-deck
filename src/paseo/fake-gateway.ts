@@ -9,6 +9,8 @@ import type {
 import type {
   Observation,
   PaseoGateway,
+  ProviderCommand,
+  ProviderCommandContext,
   WorkspaceCreateOptions,
   WorkspacePlacement,
 } from "../contracts/gateway.js";
@@ -26,6 +28,15 @@ export class FakePaseoGateway implements PaseoGateway {
   private readonly timelineListeners = new Map<string, Set<(update: TimelineUpdate) => void>>();
   public readonly commands: AgentCommand[] = [];
   public releaseCount = 0;
+  public providerCommands: readonly ProviderCommand[] = [];
+  public readonly providerCommandContexts: ProviderCommandContext[] = [];
+  public async getProviderCommands(
+    context: ProviderCommandContext,
+  ): Promise<readonly ProviderCommand[]> {
+    this.assertConnected();
+    this.providerCommandContexts.push(context);
+    return this.providerCommands;
+  }
   public terminals: TerminalRecord[] = [];
   public terminalProfiles: TerminalProfile[] = [];
   public readonly createdTerminals: Array<{
@@ -70,6 +81,19 @@ export class FakePaseoGateway implements PaseoGateway {
     this.connected = false;
     this.directoryListeners.clear();
     this.timelineListeners.clear();
+  }
+
+  public async acknowledgeAgentCompletion(agentId: string): Promise<void> {
+    this.assertConnected();
+    const agent = this.snapshot.agents.find((item) => item.id === agentId);
+    if (agent?.attentionReason !== "finished") return;
+    const { attentionReason: _reason, attentionTimestamp: _timestamp, ...seen } = agent;
+    const updated = { ...seen, needsAttention: seen.pendingPermissions.length > 0 };
+    this.snapshot = {
+      ...this.snapshot,
+      agents: this.snapshot.agents.map((item) => (item.id === agentId ? updated : item)),
+    };
+    this.emitDirectory({ type: "agent-upserted", agent: updated });
   }
 
   public async getDirectorySnapshot(): Promise<DirectorySnapshot> {

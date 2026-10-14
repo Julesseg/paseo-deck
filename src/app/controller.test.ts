@@ -4,7 +4,9 @@ import type { Observation } from "../contracts/gateway.js";
 import { PaseoGatewayError } from "../paseo/errors.js";
 import { FakePaseoGateway } from "../paseo/fake-gateway.js";
 import { selectedComposerDraft } from "../state/composer.js";
-import { activeNotification } from "../state/store.js";
+import { activeNotification, createInitialState } from "../state/store.js";
+import { RecordingTerminal } from "../ui/terminal.js";
+import { DeckTui } from "../ui/views.js";
 import { ApplicationController } from "./controller.js";
 
 const snapshot: DirectorySnapshot = {
@@ -138,12 +140,11 @@ describe("ApplicationController", () => {
     const app = new ApplicationController(new FakePaseoGateway(snapshot));
     await app.start();
 
-    await app.handleIntent({ type: "toggle-tree-order" });
     await app.handleIntent({ type: "toggle-archived" });
     await app.handleIntent({ type: "toggle-attention-only" });
 
     expect(app.state).toMatchObject({
-      treeOrder: "alphabetical",
+      treeOrder: "recent",
       showArchived: true,
       attentionOnly: true,
     });
@@ -201,7 +202,9 @@ describe("ApplicationController", () => {
   });
 
   it("navigates remote and orphan workspaces without activating them", async () => {
-    const app = new ApplicationController(new FakePaseoGateway(remoteSnapshot));
+    const app = new ApplicationController(new FakePaseoGateway(remoteSnapshot), {
+      initialState: { ...createInitialState(), treeGrouping: "project", expandedIds: new Set() },
+    });
     await app.start();
     await app.handleIntent({ type: "set-focus", focus: "tree" });
     expect(app.state.sidebarSelection).toEqual({ kind: "workspace", id: "workspace-remote" });
@@ -213,7 +216,9 @@ describe("ApplicationController", () => {
   });
 
   it("uses visible project and workspace rows for boundaries", async () => {
-    const app = new ApplicationController(new FakePaseoGateway(remoteSnapshot));
+    const app = new ApplicationController(new FakePaseoGateway(remoteSnapshot), {
+      initialState: { ...createInitialState(), treeGrouping: "project", expandedIds: new Set() },
+    });
     await app.start();
     await app.handleIntent({ type: "select-boundary", boundary: "end" });
     expect(app.state.sidebarSelection).toEqual({ kind: "workspace", id: "workspace-orphan" });
@@ -226,7 +231,9 @@ describe("ApplicationController", () => {
 
   it("keeps the main pane until Enter activates a highlighted workspace", async () => {
     const gateway = new FakePaseoGateway(remoteSnapshot);
-    const app = new ApplicationController(gateway);
+    const app = new ApplicationController(gateway, {
+      initialState: { ...createInitialState(), treeGrouping: "project", expandedIds: new Set() },
+    });
     await app.start();
     await app.selectAgent("agent-remote");
     gateway.emitTimeline("agent-remote", {
@@ -245,20 +252,24 @@ describe("ApplicationController", () => {
     expect(app.state.activeSessionId).toBe("agent-orphan");
   });
 
-  it("Project Enter leaves expansion and active workspace content unchanged", async () => {
-    const app = new ApplicationController(new FakePaseoGateway(remoteSnapshot));
+  it("Project Enter toggles expansion and leaves active workspace content unchanged", async () => {
+    const app = new ApplicationController(new FakePaseoGateway(remoteSnapshot), {
+      initialState: { ...createInitialState(), treeGrouping: "project", expandedIds: new Set() },
+    });
     await app.start();
     await app.selectAgent("agent-remote");
     await app.handleIntent({ type: "select-boundary", boundary: "start" });
     const expanded = app.state.expandedIds.has("remote:github.com/acme/paseo-deck");
     await app.handleIntent({ type: "select-or-open" });
-    expect(app.state.expandedIds.has("remote:github.com/acme/paseo-deck")).toBe(expanded);
+    expect(app.state.expandedIds.has("remote:github.com/acme/paseo-deck")).toBe(!expanded);
     expect(app.state.selectedWorkspaceId).toBe("workspace-remote");
     expect(app.state.activeSessionId).toBe("agent-remote");
   });
 
   it("opens sessions from the active workspace tab row", async () => {
-    const app = new ApplicationController(new FakePaseoGateway(remoteSnapshot));
+    const app = new ApplicationController(new FakePaseoGateway(remoteSnapshot), {
+      initialState: { ...createInitialState(), treeGrouping: "project", expandedIds: new Set() },
+    });
     await app.start();
     await app.handleIntent({ type: "select-boundary", boundary: "end" });
     await app.handleIntent({ type: "select-or-open" });
@@ -285,7 +296,9 @@ describe("ApplicationController", () => {
 
   it("keeps a highlighted workspace stable during a directory reorder", async () => {
     const gateway = new FakePaseoGateway(remoteSnapshot);
-    const app = new ApplicationController(gateway);
+    const app = new ApplicationController(gateway, {
+      initialState: { ...createInitialState(), treeGrouping: "project", expandedIds: new Set() },
+    });
     await app.start();
     await app.handleIntent({ type: "select-boundary", boundary: "end" });
     const order = app.state.sidebarOrder;
@@ -465,7 +478,9 @@ describe("ApplicationController", () => {
 
   it("preserves selected tree context through refresh and reconnect snapshots", async () => {
     const gateway = new FakePaseoGateway(snapshot);
-    const app = new ApplicationController(gateway);
+    const app = new ApplicationController(gateway, {
+      initialState: { ...createInitialState(), treeGrouping: "project", expandedIds: new Set() },
+    });
     await app.start();
     await app.selectAgent("agent-1");
     expect(app.state.expandedIds).toEqual(new Set(["workspace-1", "project-1"]));
@@ -485,7 +500,9 @@ describe("ApplicationController", () => {
 
   it("creates an agent only after provider, model, mode, thinking, and prompt choices", async () => {
     const gateway = new FakePaseoGateway(snapshot);
-    const app = new ApplicationController(gateway);
+    const app = new ApplicationController(gateway, {
+      initialState: { ...createInitialState(), treeGrouping: "project", expandedIds: new Set() },
+    });
     await app.start();
 
     await app.handleIntent({
@@ -1862,7 +1879,9 @@ describe("New workspace retained state", () => {
       ...snapshot,
       projects: [{ id: "project-1", name: "Deck", path: "/original" }],
     });
-    const app = new ApplicationController(gateway);
+    const app = new ApplicationController(gateway, {
+      initialState: { ...createInitialState(), treeGrouping: "project", expandedIds: new Set() },
+    });
     await app.start();
     await app.handleIntent({ type: "set-focus", focus: "tree" });
     await app.handleIntent({ type: "select-boundary", boundary: "start" });
@@ -2126,4 +2145,131 @@ it("guards captured confirmation duplication and late completion", async () => {
   finish();
   await request;
   expect(app.state.modal).toMatchObject({ type: "rename", agentId: "agent-2" });
+});
+
+it("sees displayed completion during Sidebar navigation only while the terminal reports visibility", async () => {
+  const gateway = new FakePaseoGateway(snapshot);
+  const app = new ApplicationController(gateway);
+  await app.start();
+  const terminal = new RecordingTerminal(120, 35);
+  const deck = new DeckTui(
+    terminal,
+    app.state,
+    (intent) => {
+      void app.handleIntent(intent);
+    },
+    {
+      onVisibilityChanged: (visible) => app.setVisible(visible),
+    },
+  );
+  const unsubscribe = app.subscribe((state) => deck.update(state));
+  deck.start();
+  try {
+    await terminal.waitForRender();
+    terminal.sendInput("\u0013");
+    terminal.sendInput("\u001b[O");
+    const completed = {
+      ...snapshot,
+      agents: snapshot.agents.map((agent) => ({
+        ...agent,
+        status: "idle" as const,
+        needsAttention: true,
+        attentionReason: "finished" as const,
+      })),
+    };
+    gateway.emitDirectory({ type: "snapshot", snapshot: completed });
+    await terminal.waitForRender();
+    expect(app.state.focus).toBe("tree");
+    expect(app.state.directory.agents.map((agent) => agent.needsAttention)).toEqual([true, true]);
+    terminal.sendInput("\u001b[I");
+    await terminal.waitForRender();
+    expect(app.state.directory.agents.map((agent) => agent.needsAttention)).toEqual([false, true]);
+    expect(app.state.focus).toBe("tree");
+    expect(selectedComposerDraft(app.state)).toBe("");
+  } finally {
+    unsubscribe();
+    await deck.stop();
+    await app.releaseObservations();
+    await gateway.close();
+  }
+});
+
+it("keeps fragmented terminal focus reports out of literal Terminal input and defers review while hidden", async () => {
+  const gateway = new FakePaseoGateway(snapshot);
+  gateway.terminals = [{ id: "shell", workspaceId: "workspace-1", cwd: "/deck", name: "Shell" }];
+  const app = new ApplicationController(gateway);
+  await app.start();
+  const terminal = new RecordingTerminal(120, 35);
+  const deck = new DeckTui(
+    terminal,
+    app.state,
+    (intent) => {
+      void app.handleIntent(intent);
+    },
+    { onVisibilityChanged: (visible) => app.setVisible(visible) },
+  );
+  const unsubscribe = app.subscribe((state) => deck.update(state));
+  deck.start();
+  try {
+    await app.handleIntent({ type: "open-terminal", terminalId: "shell" });
+    terminal.sendInput("\u001b[");
+    terminal.sendInput("O");
+    await terminal.waitForRender();
+    expect(gateway.terminalInput).toEqual([]);
+    gateway.emitDirectory({
+      type: "snapshot",
+      snapshot: {
+        ...snapshot,
+        agents: snapshot.agents.map((agent) => ({
+          ...agent,
+          needsAttention: true,
+          attentionReason: "finished" as const,
+        })),
+      },
+    });
+    await app.selectAgent("agent-1");
+    await terminal.waitForRender();
+    expect(app.state.directory.agents[0]?.needsAttention).toBe(true);
+    terminal.sendInput("\u001b[");
+    terminal.sendInput("I");
+    await terminal.waitForRender();
+    expect(app.state.directory.agents[0]?.needsAttention).toBe(false);
+  } finally {
+    unsubscribe();
+    await deck.stop();
+    await app.releaseObservations();
+    await gateway.close();
+  }
+});
+
+it("passes pasted focus-shaped text literally to the Active terminal", async () => {
+  const gateway = new FakePaseoGateway(snapshot);
+  gateway.terminals = [{ id: "shell", workspaceId: "workspace-1", cwd: "/deck", name: "Shell" }];
+  const app = new ApplicationController(gateway);
+  await app.start();
+  const terminal = new RecordingTerminal(120, 35);
+  const deck = new DeckTui(
+    terminal,
+    app.state,
+    (intent) => {
+      void app.handleIntent(intent);
+    },
+    { onVisibilityChanged: (visible) => app.setVisible(visible) },
+  );
+  const unsubscribe = app.subscribe((state) => deck.update(state));
+  deck.start();
+  try {
+    await app.handleIntent({ type: "open-terminal", terminalId: "shell" });
+    terminal.sendInput("\u001b[200~");
+    terminal.sendInput("\u001b[O");
+    terminal.sendInput("\u001b[201~");
+    expect(gateway.terminalInput.map((input) => input.data).join("")).toBe(
+      "\u001b[200~\u001b[O\u001b[201~",
+    );
+  } finally {
+    unsubscribe();
+    await deck.stop();
+    await app.releaseObservations();
+    await gateway.close();
+  }
 });

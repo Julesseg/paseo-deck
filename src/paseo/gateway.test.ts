@@ -1,9 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
 import { ApplicationController } from "../app/controller.js";
+import type { DirectoryUpdate } from "../contracts/domain.js";
 import { RecordingTerminal } from "../ui/terminal.js";
 import { DeckTui } from "../ui/views.js";
 import type { PaseoGatewayError } from "./errors.js";
 import { ProductionPaseoGateway } from "./gateway.js";
+import type { WorkspaceLabelsClient } from "./workspace-labels.js";
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -11,6 +13,50 @@ function deferred<T>() {
     resolve = next;
   });
   return { promise, resolve };
+}
+
+function labelClientFixture() {
+  const payload: Awaited<ReturnType<WorkspaceLabelsClient["listWorkspaceLabels"]>> = {
+    requestId: "labels",
+    labels: [
+      { name: "urgent", color: "red" },
+      { name: "design", color: "sky" },
+    ],
+    sync: { mode: "snapshot", generation: "labels", headSeq: 1, removals: [] },
+  };
+  let observer:
+    | Parameters<ReturnType<WorkspaceLabelsClient["observeWorkspaceLabels"]>["subscribe"]>[0]
+    | undefined;
+  const release = vi.fn(async () => {});
+  return {
+    client: {
+      connect: vi.fn(async () => {}),
+      close: vi.fn(async () => {}),
+      listWorkspaceLabels: vi.fn(async () => payload),
+      observeWorkspaceLabels: vi.fn(() => ({
+        subscriptionId: "label-query",
+        ready: Promise.resolve({ ...payload, subscriptionId: "label-query" }),
+        subscribe: (listener: NonNullable<typeof observer>) => {
+          observer = listener;
+          listener.snapshot({ ...payload, subscriptionId: "label-query" });
+          return () => {
+            observer = undefined;
+          };
+        },
+        release,
+      })),
+    },
+    release,
+    fail() {
+      observer?.error?.(new Error("Label catalog temporarily unavailable"));
+    },
+    update(color: "emerald") {
+      observer?.update({
+        type: "workspace.label.update",
+        payload: { kind: "upsert", label: { name: "urgent", color }, generation: "labels", seq: 2 },
+      });
+    },
+  };
 }
 
 function testClient(
@@ -89,7 +135,7 @@ function testClient(
           agentDirectoryListener = listener;
           return () => undefined;
         }),
-        ref: vi.fn(() => agent),
+        ref: vi.fn((_id?: string) => agent),
       },
       providers: {
         waitForReady: vi.fn(async () => ({
@@ -213,6 +259,111 @@ describe("ProductionPaseoGateway", () => {
     });
     expect(fixture.client.providers.listModels).toHaveBeenCalledWith("codex");
     expect(fixture.client.providers.listModes).toHaveBeenCalledWith("codex");
+  });
+
+  it("preserves native Workspace label assignments in directory snapshots", async () => {
+    const fixture = testClient();
+    const colors = labelClientFixture();
+    fixture.client.workspaces.list.mockResolvedValueOnce({
+      entries: [
+        {
+          id: "workspace-1",
+          workspaceDirectory: "/repo",
+          labels: ["urgent", "design"],
+          activityAt: null,
+        },
+      ],
+    } as never);
+    const gateway = new ProductionPaseoGateway({
+      host: "127.0.0.1:6767",
+      createClient: () => fixture.client as never,
+      createLabelsClient: () => colors.client,
+    });
+    try {
+      await gateway.connect();
+      const snapshot = await gateway.getDirectorySnapshot();
+      expect(snapshot.workspaceLabels).toEqual([
+        { name: "urgent", color: "red" },
+        { name: "design", color: "sky" },
+      ]);
+      expect(snapshot.workspaces[0]).toMatchObject({
+        labels: ["urgent", "design"],
+        activityAt: null,
+      });
+    } finally {
+      await gateway.close();
+    }
+  });
+
+  it("observes native label color changes and releases the owned catalog query", async () => {
+    const fixture = testClient(),
+      colors = labelClientFixture();
+    fixture.client.workspaces.list.mockResolvedValue({
+      entries: [{ id: "workspace-1", workspaceDirectory: "/repo", labels: ["urgent"] }],
+    } as never);
+    const gateway = new ProductionPaseoGateway({
+      host: "127.0.0.1:6767",
+      createClient: () => fixture.client as never,
+      createLabelsClient: () => colors.client,
+    });
+    const updates: DirectoryUpdate[] = [];
+    try {
+      await gateway.connect();
+      const observation = await gateway.observeDirectory((update) => updates.push(update));
+      await gateway.getDirectorySnapshot();
+      colors.update("emerald");
+      expect(updates.at(-1)).toMatchObject({
+        type: "workspace-labels-replaced",
+        labels: expect.arrayContaining([{ name: "urgent", color: "emerald" }]),
+      });
+      await observation.release();
+      await observation.release();
+      expect(colors.release).toHaveBeenCalledOnce();
+    } finally {
+      await gateway.close();
+    }
+    expect(colors.client.close).toHaveBeenCalledOnce();
+  });
+
+  it("loads and updates native label colors when the first assignment arrives after startup", async () => {
+    const fixture = testClient(),
+      colors = labelClientFixture();
+    const gateway = new ProductionPaseoGateway({
+      host: "127.0.0.1:6767",
+      createClient: () => fixture.client as never,
+      createLabelsClient: () => colors.client,
+    });
+    const app = new ApplicationController(gateway);
+    try {
+      await app.start();
+      expect(colors.client.connect).not.toHaveBeenCalled();
+      fixture.emitWorkspaceDirectory({
+        type: "workspace_update",
+        payload: {
+          kind: "upsert",
+          workspace: { id: "workspace-1", workspaceDirectory: "/repo", labels: ["urgent"] },
+        },
+      });
+      await vi.waitFor(() =>
+        expect(app.state.directory.workspaceLabels).toContainEqual({
+          name: "urgent",
+          color: "red",
+        }),
+      );
+      colors.fail();
+      expect(app.state.connection).toBe("connected");
+      await vi.waitFor(() => expect(colors.client.observeWorkspaceLabels).toHaveBeenCalledTimes(2));
+      colors.update("emerald");
+      expect(app.state.directory.workspaceLabels).toContainEqual({
+        name: "urgent",
+        color: "emerald",
+      });
+      await app.releaseObservations();
+      expect(colors.release).toHaveBeenCalledTimes(2);
+    } finally {
+      await app.releaseObservations();
+      await gateway.close();
+    }
   });
 
   it("uses the live projectId field to join projects with their workspaces", async () => {
@@ -1706,6 +1857,651 @@ it("shows a renamed Terminal title through the assembled app after later directo
   } finally {
     unsubscribe();
     await deck.stop();
+    await app.releaseObservations();
+    await gateway.close();
+  }
+});
+
+it("projects the public Session catalog into controller state without guessing an absent command kind", async () => {
+  const fixture = testClient();
+  Object.assign(fixture.agent, {
+    commands: async () => ({
+      commands: [
+        { name: "clear", description: "Clear context", argumentHint: "", kind: "command" },
+        {
+          name: "personal-review",
+          description: "Personal skill",
+          argumentHint: "files",
+          kind: "skill",
+        },
+        { name: "project-review", description: "Project skill", argumentHint: "", kind: "skill" },
+        { name: "plugin-review", description: "Plugin skill", argumentHint: "", kind: "skill" },
+        { name: "legacy", description: "Unclassified", argumentHint: "" },
+        { name: "unsafe/name", description: "Invalid reference", argumentHint: "" },
+      ],
+      error: null,
+    }),
+  });
+  const gateway = new ProductionPaseoGateway({
+    host: "127.0.0.1:6767",
+    createClient: () => fixture.client as never,
+  });
+  const app = new ApplicationController(gateway);
+  try {
+    await app.start();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(app.state.providerCommands?.items).toEqual([
+      { name: "clear", description: "Clear context", kind: "command" },
+      {
+        name: "personal-review",
+        description: "Personal skill",
+        argumentHint: "files",
+        kind: "skill",
+      },
+      { name: "project-review", description: "Project skill", kind: "skill" },
+      { name: "plugin-review", description: "Plugin skill", kind: "skill" },
+      { name: "legacy", description: "Unclassified" },
+    ]);
+  } finally {
+    await app.releaseObservations();
+    await gateway.close();
+  }
+});
+
+it("uses owned draft discovery with the chosen provider configuration and clears stale catalogs on provider changes", async () => {
+  const fixture = testClient();
+  fixture.client.providers.waitForReady.mockResolvedValue({
+    entries: [
+      { provider: "codex", label: "Codex", status: "ready", enabled: true },
+      { provider: "claude", label: "Claude", status: "ready", enabled: true },
+    ],
+  });
+  const first = deferred<{
+    commands: Array<{ name: string; description: string; argumentHint: string; kind: "skill" }>;
+    error: null;
+  }>();
+  const second = deferred<{
+    commands: Array<{ name: string; description: string; argumentHint: string; kind: "skill" }>;
+    error: null;
+  }>();
+  const requests: unknown[] = [];
+  const owned = {
+    connect: vi.fn(async () => {}),
+    close: vi.fn(async () => {}),
+    listCommands: async (options: unknown) => {
+      requests.push(options);
+      return requests.length === 1 ? first.promise : second.promise;
+    },
+  };
+  const gateway = new ProductionPaseoGateway({
+    host: "127.0.0.1:6767",
+    createClient: () => fixture.client as never,
+    createCommandsClient: () => owned as never,
+  });
+  const app = new ApplicationController(gateway);
+  try {
+    await app.start();
+    await app.handleIntent({ type: "open-workspace-session-draft", workspaceId: "workspace-1" });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(requests[0]).toEqual({
+      agentId: "deck-draft:workspace-1",
+      draftConfig: { provider: "codex", cwd: "/repo", model: "gpt-5" },
+    });
+    await app.handleIntent({ type: "open-draft-setting", setting: "provider" });
+    await app.handleIntent({ type: "draft-setting-choice", choice: "claude" });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(requests[1]).toEqual({
+      agentId: "deck-draft:workspace-1",
+      draftConfig: { provider: "claude", cwd: "/repo", model: "gpt-5" },
+    });
+    first.resolve({
+      commands: [{ name: "old-codex", description: "Stale", argumentHint: "", kind: "skill" }],
+      error: null,
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(app.state.providerCommands?.items).toEqual([]);
+    second.resolve({
+      commands: [
+        { name: "claude-review", description: "Current", argumentHint: "", kind: "skill" },
+      ],
+      error: null,
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(app.state.providerCommands?.items).toEqual([
+      { name: "claude-review", description: "Current", kind: "skill" },
+    ]);
+  } finally {
+    await app.releaseObservations();
+    await gateway.close();
+  }
+  expect(owned.close).toHaveBeenCalledOnce();
+});
+
+it("ignores superseded catalog requests when the user returns to the original provider context", async () => {
+  const fixture = testClient();
+  const pending = Array.from({ length: 3 }, () =>
+    deferred<{
+      commands: Array<{ name: string; description: string; argumentHint: string; kind: "skill" }>;
+      error: null;
+    }>(),
+  );
+  let request = 0;
+  Object.assign(fixture.agent, { commands: () => pending[request++]?.promise });
+  const gateway = new ProductionPaseoGateway({
+    host: "127.0.0.1:6767",
+    createClient: () => fixture.client as never,
+  });
+  const app = new ApplicationController(gateway);
+  try {
+    await app.start();
+    const agent = {
+      id: "agent-1",
+      workspaceId: "workspace-1",
+      title: "Agent",
+      status: "idle",
+      availableModes: [],
+      pendingPermissions: [],
+    };
+    fixture.emitAgentDirectory({
+      type: "agent_snapshot_update",
+      payload: { agent: { ...agent, provider: "claude" } },
+    });
+    fixture.emitAgentDirectory({ type: "agent_snapshot_update", payload: { agent } });
+    pending[0]?.resolve({
+      commands: [{ name: "outdated", description: "Old", argumentHint: "", kind: "skill" }],
+      error: null,
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(app.state.providerCommands?.items).toEqual([]);
+    pending[2]?.resolve({
+      commands: [{ name: "fresh", description: "Current", argumentHint: "", kind: "skill" }],
+      error: null,
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(app.state.providerCommands?.items).toEqual([
+      { name: "fresh", description: "Current", kind: "skill" },
+    ]);
+  } finally {
+    await app.releaseObservations();
+    await gateway.close();
+  }
+});
+
+it("preserves native Workspace activity and Session attention through the gateway into the store", async () => {
+  const fixture = testClient();
+  fixture.client.workspaces.list.mockResolvedValue({
+    entries: [
+      {
+        id: "workspace-1",
+        workspaceDirectory: "/repo",
+        name: "Main",
+        status: "running",
+        activityAt: "2026-10-13T09:00:00Z",
+      },
+    ],
+  } as never);
+  fixture.client.agents.list.mockResolvedValue({
+    entries: [
+      {
+        agent: {
+          id: "agent-1",
+          workspaceId: "workspace-1",
+          status: "running",
+          requiresAttention: true,
+          attentionReason: "permission",
+          attentionTimestamp: "2026-10-13T08:00:00Z",
+          availableModes: [],
+          pendingPermissions: [],
+        },
+      },
+    ],
+  } as never);
+  const gateway = new ProductionPaseoGateway({
+    host: "127.0.0.1:6767",
+    createClient: () => fixture.client as never,
+  });
+  const app = new ApplicationController(gateway);
+  await app.start();
+  try {
+    expect(app.state.directory.workspaces[0]).toMatchObject({
+      status: "running",
+      activityAt: "2026-10-13T09:00:00Z",
+    });
+    expect(app.state.directory.agents[0]).toMatchObject({
+      attentionReason: "permission",
+      attentionTimestamp: "2026-10-13T08:00:00Z",
+    });
+    for (const status of ["attention", "failed", "needs_input", "done"]) {
+      fixture.emitWorkspaceDirectory({
+        type: "workspace_update",
+        payload: {
+          workspace: {
+            id: "workspace-1",
+            workspaceDirectory: "/repo",
+            name: "Main",
+            status,
+            activityAt: null,
+          },
+        },
+      });
+      expect(app.state.directory.workspaces[0]).toMatchObject({ status, activityAt: null });
+    }
+  } finally {
+    await app.releaseObservations();
+    await gateway.close();
+  }
+});
+
+it("acknowledges only the opened Session's finished attention and retains unopened review attention", async () => {
+  const fixture = testClient();
+  let agents = ["agent-1", "agent-2"].map((id) => ({
+    id,
+    workspaceId: "workspace-1",
+    title: id,
+    status: "idle",
+    requiresAttention: true,
+    attentionReason: "finished",
+    availableModes: [],
+    pendingPermissions: [],
+  }));
+  fixture.client.agents.list.mockImplementation(
+    async () => ({ entries: agents.map((agent) => ({ agent })) }) as never,
+  );
+  fixture.client.agents.ref.mockImplementation(
+    (id?: string) =>
+      ({
+        ...fixture.agent,
+        refresh: async () => ({ agent: agents.find((agent) => agent.id === id) }),
+      }) as never,
+  );
+  const attention = {
+    connect: async () => {},
+    close: async () => {},
+    clearAgentAttention: async (agentId: string) => {
+      agents = agents.map((agent) =>
+        agent.id === agentId
+          ? { ...agent, requiresAttention: false, attentionReason: undefined as never }
+          : agent,
+      );
+      fixture.emitAgentDirectory({
+        type: "agent_update",
+        payload: { agent: agents.find((agent) => agent.id === agentId) },
+      });
+    },
+  };
+  const gateway = new ProductionPaseoGateway({
+    host: "127.0.0.1:6767",
+    createClient: () => fixture.client as never,
+    createAttentionClient: () => attention,
+  });
+  const app = new ApplicationController(gateway);
+  await app.start();
+  try {
+    await vi.waitFor(() =>
+      expect(app.state.directory.agents.map((agent) => agent.needsAttention)).toEqual([
+        false,
+        true,
+      ]),
+    );
+    await app.handleIntent({ type: "set-focus", focus: "tree" });
+    expect(app.state.directory.agents[1]?.needsAttention).toBe(true);
+    await app.selectAgent("agent-2");
+    await vi.waitFor(() =>
+      expect(app.state.directory.agents.map((agent) => agent.needsAttention)).toEqual([
+        false,
+        false,
+      ]),
+    );
+    await app.releaseObservations();
+    const reopened = new ApplicationController(gateway);
+    await reopened.start();
+    expect(reopened.state.directory.agents.map((agent) => agent.needsAttention)).toEqual([
+      false,
+      false,
+    ]);
+    await reopened.releaseObservations();
+  } finally {
+    await app.releaseObservations();
+    await gateway.close();
+  }
+});
+
+it("recovers native activity and unread review attention after the SDK reconnects", async () => {
+  const fixture = testClient();
+  let connection: { status: "connected" | "disconnected" } = { status: "connected" };
+  const client = {
+    ...fixture.client,
+    getConnectionState: () => connection,
+    workspaces: {
+      ...fixture.client.workspaces,
+      list: async () => {
+        return fixture.client.workspaces.list();
+      },
+    },
+  };
+  const gateway = new ProductionPaseoGateway({
+    host: "127.0.0.1:6767",
+    createClient: () => client as never,
+  });
+  const app = new ApplicationController(gateway);
+  await app.start();
+  try {
+    connection = { status: "disconnected" };
+    await vi.waitFor(() => expect(app.state.connection).toBe("disconnected"));
+    fixture.client.workspaces.list.mockResolvedValue({
+      entries: [
+        {
+          id: "workspace-1",
+          name: "Main",
+          workspaceDirectory: "/repo",
+          status: "running",
+          activityAt: "2026-10-13T10:00:00Z",
+        },
+      ],
+    } as never);
+    fixture.client.agents.list.mockResolvedValue({
+      entries: [
+        {
+          agent: {
+            id: "agent-1",
+            workspaceId: "workspace-1",
+            status: "running",
+            availableModes: [],
+            pendingPermissions: [],
+          },
+        },
+        {
+          agent: {
+            id: "unopened",
+            workspaceId: "workspace-1",
+            status: "idle",
+            requiresAttention: true,
+            attentionReason: "finished",
+            availableModes: [],
+            pendingPermissions: [],
+          },
+        },
+      ],
+    } as never);
+    connection = { status: "connected" };
+    await vi.waitFor(() =>
+      expect(app.state.directory.workspaces[0]).toMatchObject({
+        status: "running",
+        activityAt: "2026-10-13T10:00:00Z",
+      }),
+    );
+    expect(app.state.directory.agents.find((agent) => agent.id === "unopened")).toMatchObject({
+      needsAttention: true,
+      attentionReason: "finished",
+    });
+    fixture.emitWorkspaceDirectory({
+      type: "workspace_update",
+      payload: {
+        workspace: {
+          id: "workspace-1",
+          workspaceDirectory: "/repo",
+          name: "Main",
+          status: "failed",
+        },
+      },
+    });
+    expect(app.state.directory.workspaces[0]?.status).toBe("failed");
+  } finally {
+    await app.releaseObservations();
+    await gateway.close();
+  }
+});
+
+it("preserves permission attention that supersedes a completion while acknowledgement connects", async () => {
+  const fixture = testClient();
+  const connected = deferred<void>();
+  let agent = {
+    id: "agent-1",
+    workspaceId: "workspace-1",
+    status: "idle",
+    requiresAttention: true,
+    attentionReason: "finished",
+    availableModes: [],
+    pendingPermissions: [],
+  };
+  fixture.client.agents.list.mockImplementation(async () => ({ entries: [{ agent }] }) as never);
+  fixture.client.agents.ref.mockImplementation(
+    () => ({ ...fixture.agent, refresh: async () => ({ agent }) }) as never,
+  );
+  const attention = {
+    connect: () => connected.promise,
+    close: async () => {},
+    clearAgentAttention: async () => {
+      agent = { ...agent, requiresAttention: false };
+      fixture.emitAgentDirectory({ type: "agent_update", payload: { agent } });
+    },
+  };
+  const gateway = new ProductionPaseoGateway({
+    host: "127.0.0.1:6767",
+    createClient: () => fixture.client as never,
+    createAttentionClient: () => attention,
+  });
+  const app = new ApplicationController(gateway);
+  await app.start();
+  try {
+    await vi.waitFor(() => expect(fixture.timeline.refetch).toHaveBeenCalled());
+    agent = { ...agent, attentionReason: "permission" };
+    fixture.emitAgentDirectory({ type: "agent_update", payload: { agent } });
+    connected.resolve();
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(app.state.directory.agents[0]).toMatchObject({
+      needsAttention: true,
+      attentionReason: "permission",
+    });
+  } finally {
+    await app.releaseObservations();
+    await gateway.close();
+  }
+});
+
+it("can acknowledge a visible completion after its attention transport fails and recovers", async () => {
+  const fixture = testClient();
+  let agent = {
+    id: "agent-1",
+    workspaceId: "workspace-1",
+    status: "idle",
+    requiresAttention: true,
+    attentionReason: "finished",
+    availableModes: [],
+    pendingPermissions: [],
+  };
+  fixture.client.agents.list.mockImplementation(async () => ({ entries: [{ agent }] }) as never);
+  fixture.client.agents.ref.mockImplementation(
+    () => ({ ...fixture.agent, refresh: async () => ({ agent }) }) as never,
+  );
+  let available = false;
+  const gateway = new ProductionPaseoGateway({
+    host: "127.0.0.1:6767",
+    createClient: () => fixture.client as never,
+    createAttentionClient: () => {
+      const connected = available;
+      return {
+        connect: async () => {},
+        close: async () => {},
+        clearAgentAttention: async () => {
+          if (!connected) throw new Error("attention transport offline");
+          agent = { ...agent, requiresAttention: false };
+          fixture.emitAgentDirectory({ type: "agent_update", payload: { agent } });
+        },
+      };
+    },
+  });
+  const app = new ApplicationController(gateway);
+  await app.start();
+  try {
+    await vi.waitFor(() =>
+      expect(
+        app.state.notifications.some((item) => item.message.includes("Could not acknowledge")),
+      ).toBe(true),
+    );
+    expect(app.state.directory.agents[0]?.needsAttention).toBe(true);
+    available = true;
+    await app.handleIntent({ type: "refresh" });
+    await vi.waitFor(() => expect(app.state.directory.agents[0]?.needsAttention).toBe(false));
+  } finally {
+    await app.releaseObservations();
+    await gateway.close();
+  }
+});
+
+it("releases public directory query subscriptions when controller observations end", async () => {
+  const fixture = testClient();
+  const agentSnapshot = await fixture.client.agents.list();
+  const workspaceSnapshot = await fixture.client.workspaces.list();
+  const liveQueries = new Set<string>();
+  fixture.client.agents.list.mockImplementation(async (options?: { subscribe?: object }) => {
+    if (!options?.subscribe) return agentSnapshot;
+    liveQueries.add("agents");
+    return {
+      ...agentSnapshot,
+      subscription: {
+        release: async () => {
+          liveQueries.delete("agents");
+        },
+      },
+    } as never;
+  });
+  fixture.client.workspaces.list.mockImplementation(async (options?: { subscribe?: object }) => {
+    if (!options?.subscribe) return workspaceSnapshot;
+    liveQueries.add("workspaces");
+    return {
+      ...workspaceSnapshot,
+      subscription: {
+        release: async () => {
+          liveQueries.delete("workspaces");
+        },
+      },
+    } as never;
+  });
+  const gateway = new ProductionPaseoGateway({
+    host: "127.0.0.1:6767",
+    createClient: () => fixture.client as never,
+  });
+  const app = new ApplicationController(gateway);
+  try {
+    await app.start();
+    expect([...liveQueries]).toEqual(["agents", "workspaces"]);
+    await app.releaseObservations();
+    expect([...liveQueries]).toEqual([]);
+    await app.releaseObservations();
+    expect([...liveQueries]).toEqual([]);
+  } finally {
+    await app.releaseObservations();
+    await gateway.close();
+  }
+});
+
+it("keeps one SDK-owned query per directory through reconnect and delivers each update once", async () => {
+  const fixture = testClient();
+  const agentSnapshot = await fixture.client.agents.list();
+  const workspaceSnapshot = await fixture.client.workspaces.list();
+  const liveQueries = new Map<object, "agents" | "workspaces">();
+  const own = (kind: "agents" | "workspaces") => {
+    const token = {};
+    liveQueries.set(token, kind);
+    return {
+      release: async () => {
+        liveQueries.delete(token);
+      },
+    };
+  };
+  fixture.client.agents.list.mockImplementation(async (options?: { subscribe?: object }) =>
+    options?.subscribe
+      ? ({ ...agentSnapshot, subscription: own("agents") } as never)
+      : agentSnapshot,
+  );
+  fixture.client.workspaces.list.mockImplementation(async (options?: { subscribe?: object }) =>
+    options?.subscribe
+      ? ({ ...workspaceSnapshot, subscription: own("workspaces") } as never)
+      : workspaceSnapshot,
+  );
+  let connection: { status: "connected" | "disconnected" } = { status: "connected" };
+  const client = { ...fixture.client, getConnectionState: () => connection };
+  const gateway = new ProductionPaseoGateway({
+    host: "127.0.0.1:6767",
+    createClient: () => client as never,
+  });
+  const app = new ApplicationController(gateway);
+  let updates = 0;
+  let previous = app.state.directory.workspaces[0];
+  const stop = app.subscribe((state) => {
+    const workspace = state.directory.workspaces[0];
+    if (workspace !== previous && workspace?.title === "After reconnect") updates++;
+    previous = workspace;
+  });
+  try {
+    await app.start();
+    for (let reconnect = 0; reconnect < 2; reconnect++) {
+      connection = { status: "disconnected" };
+      await vi.waitFor(() => expect(app.state.connection).toBe("disconnected"));
+      connection = { status: "connected" };
+      await vi.waitFor(() => expect(app.state.connection).toBe("connected"));
+      expect([...liveQueries.values()]).toEqual(["agents", "workspaces"]);
+    }
+    for (const kind of liveQueries.values())
+      if (kind === "workspaces")
+        fixture.emitWorkspaceDirectory({
+          type: "workspace_update",
+          payload: {
+            workspace: { id: "workspace-1", workspaceDirectory: "/repo", name: "After reconnect" },
+          },
+        });
+    expect(app.state.directory.workspaces[0]?.title).toBe("After reconnect");
+    expect(updates).toBe(1);
+  } finally {
+    stop();
+    await app.releaseObservations();
+    await gateway.close();
+  }
+});
+
+it("releases directory queries if a later observation fails during startup", async () => {
+  const fixture = testClient();
+  const agentSnapshot = await fixture.client.agents.list();
+  const workspaceSnapshot = await fixture.client.workspaces.list();
+  const liveQueries = new Set<string>();
+  fixture.client.agents.list.mockImplementation(async (options?: { subscribe?: object }) => {
+    if (!options?.subscribe) return agentSnapshot;
+    liveQueries.add("agents");
+    return {
+      ...agentSnapshot,
+      subscription: {
+        release: async () => {
+          liveQueries.delete("agents");
+        },
+      },
+    } as never;
+  });
+  fixture.client.workspaces.list.mockImplementation(async (options?: { subscribe?: object }) => {
+    if (!options?.subscribe) return workspaceSnapshot;
+    liveQueries.add("workspaces");
+    return {
+      ...workspaceSnapshot,
+      subscription: {
+        release: async () => {
+          liveQueries.delete("workspaces");
+        },
+      },
+    } as never;
+  });
+  fixture.client.projects.subscribe.mockImplementation(() => {
+    throw new Error("Project observation unavailable");
+  });
+  const gateway = new ProductionPaseoGateway({
+    host: "127.0.0.1:6767",
+    createClient: () => fixture.client as never,
+  });
+  const app = new ApplicationController(gateway);
+  try {
+    await app.start();
+    expect(app.state.connection).toBe("disconnected");
+    expect([...liveQueries]).toEqual([]);
+  } finally {
     await app.releaseObservations();
     await gateway.close();
   }

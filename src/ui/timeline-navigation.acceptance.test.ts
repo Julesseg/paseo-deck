@@ -5,7 +5,7 @@ import { FakePaseoGateway } from "../paseo/fake-gateway.js";
 import { RecordingTerminal } from "./terminal.js";
 import { DeckTui } from "./views.js";
 
-async function fixture(text = "", events?: TimelineEvent[]) {
+async function fixture(text = "", events?: TimelineEvent[], rows = 26) {
   const gateway = new FakePaseoGateway({
     projects: [],
     providers: [],
@@ -33,7 +33,7 @@ async function fixture(text = "", events?: TimelineEvent[]) {
       events ??
       (text ? [{ epoch: "e", sequence: 1, item: { id: "text", type: "user-message", text } }] : []),
   });
-  const terminal = new RecordingTerminal(90, 26);
+  const terminal = new RecordingTerminal(90, rows);
   let clipboard = "outside";
   const opened: string[] = [];
   const deck = new DeckTui(
@@ -76,6 +76,22 @@ async function fixture(text = "", events?: TimelineEvent[]) {
   };
 }
 
+function timelineContentRows(terminal: RecordingTerminal, first: number, last: number): number[] {
+  const viewport = terminal.viewport();
+  return Array.from({ length: last - first + 1 }, (_, index) => first + index).filter((row) => {
+    const text = (viewport[row] ?? "")
+      .trim()
+      .replace(/[┃│█]$/u, "")
+      .trim();
+    if (/^─+$/u.test(text)) return false;
+    const next = (viewport[row + 1] ?? "").trim();
+    return (
+      text.length > 0 ||
+      !/^(?:after(?: tools)?$|Tool (?:completed|running|failed)|Turn |─ Turn )/u.test(next)
+    );
+  });
+}
+
 it("first Timeline focus starts at the beginning of its final displayed row", async () => {
   const f = await fixture("alpha first row\nsecond row\nlast row with a long ending");
   try {
@@ -97,7 +113,7 @@ it("first Timeline focus starts at the beginning of its final displayed row", as
 it("keeps a vertical screen-column goal across separately rendered ordinary rows", async () => {
   const f = await fixture("alpha enough width\nsecond row long\nthird anotherline");
   try {
-    await f.keys("\u000b", "g", "g", "j", "0", "l", "l", "l", "l", "l", "l");
+    await f.keys("\u000b", "g", "g", "0", "l", "l", "l", "l", "l", "l");
     const goal = f.terminal.viewportCursor().column;
     const row = f.terminal.viewportCursor().row;
     await f.keys("j");
@@ -129,13 +145,14 @@ it("reaches every collapsed tool row through cloned hydration and separately ren
     })),
     { epoch: "e", sequence: 5, item: { id: "after", type: "user-message", text: "after tools" } },
   ];
-  const f = await fixture("", items);
+  const f = await fixture("", items, 45);
   try {
     await f.keys("\u000b", "G", "0");
     const last = f.terminal.viewportCursor().row;
     await f.keys("g", "g", "0");
     const first = f.terminal.viewportCursor().row;
-    for (let row = first; row < last; row++) {
+    const contentRows = timelineContentRows(f.terminal, first, last);
+    for (const row of contentRows.slice(1)) {
       f.gateway.emitTimeline("a", {
         type: "hydrated",
         agentId: "a",
@@ -146,9 +163,9 @@ it("reaches every collapsed tool row through cloned hydration and separately ren
       expect(
         f.terminal.viewportCursor().row,
         `down from ${row}: ${f.terminal.viewport()[row]}`,
-      ).toBe(row + 1);
+      ).toBe(row);
     }
-    for (let row = last; row > first; row--) {
+    for (const row of contentRows.slice(0, -1).reverse()) {
       f.gateway.emitTimeline("a", {
         type: "hydrated",
         agentId: "a",
@@ -156,8 +173,12 @@ it("reaches every collapsed tool row through cloned hydration and separately ren
       });
       await f.terminal.waitForRender();
       await f.keys("k");
-      expect(f.terminal.viewportCursor().row, `up from ${row}`).toBe(row - 1);
+      expect(f.terminal.viewportCursor().row, `up to ${row}`).toBe(row);
     }
+    await f.keys("9", "9", "9", "j");
+    expect(f.terminal.viewportCursor().row).toBe(last);
+    await f.keys("9", "9", "9", "k");
+    expect(f.terminal.viewportCursor().row).toBe(first);
   } finally {
     await f.close();
   }
@@ -168,7 +189,7 @@ it("restores its preferred screen column after short blank indented and Unicode 
     "alpha enough width\nx\n\n   indented long row\n界界界界abcdefghijk\néééabcdefghijk\nfinal enough width",
   );
   try {
-    await f.keys("\u000b", "g", "g", "j", "0", "8", "l");
+    await f.keys("\u000b", "g", "g", "0", "8", "l");
     const goal = f.terminal.viewportCursor().column;
     for (const label of ["short", "blank", "indented", "wide", "combining", "final"]) {
       await f.keys("j");
@@ -211,7 +232,7 @@ it("traverses every expanded wrapped diff tool row and synthetic Turn row", asyn
     },
     { epoch: "e", sequence: 3, item: { id: "after", type: "user-message", text: "after" } },
   ];
-  const f = await fixture("", items);
+  const f = await fixture("", items, 45);
   try {
     await f.keys("\u000b", "g", "g");
     await f.keys("j");
@@ -221,7 +242,8 @@ it("traverses every expanded wrapped diff tool row and synthetic Turn row", asyn
     const last = f.terminal.viewportCursor().row;
     await f.keys("g", "g", "0");
     const first = f.terminal.viewportCursor().row;
-    for (let row = first; row < last; row++) {
+    const contentRows = timelineContentRows(f.terminal, first, last);
+    for (const row of contentRows.slice(1)) {
       f.gateway.emitTimeline("a", {
         type: "hydrated",
         agentId: "a",
@@ -232,7 +254,7 @@ it("traverses every expanded wrapped diff tool row and synthetic Turn row", asyn
       expect(
         f.terminal.viewportCursor().row,
         `down from ${row}: ${f.terminal.viewport()[row]}`,
-      ).toBe(row + 1);
+      ).toBe(row);
     }
   } finally {
     await f.close();

@@ -2,6 +2,7 @@ import { expect, it } from "vitest";
 import { ApplicationController } from "../app/controller.js";
 import type { AgentCommand } from "../contracts/commands.js";
 import { FakePaseoGateway } from "../paseo/fake-gateway.js";
+import { createInitialState } from "../state/store.js";
 import { RecordingTerminal } from "./terminal.js";
 import { DeckTui } from "./views.js";
 
@@ -72,13 +73,20 @@ async function fixture(empty = false, settings = false) {
           },
         ],
   });
-  const app = new ApplicationController(gateway);
+  const app = new ApplicationController(gateway, {
+    initialState: { ...createInitialState(), treeGrouping: "project", expandedIds: new Set() },
+  });
   await app.start();
   const terminal = new RecordingTerminal(100, 30);
   const pending: Promise<void>[] = [];
-  const deck = new DeckTui(terminal, app.state, (intent) => {
-    pending.push(app.handleIntent(intent));
-  });
+  const deck = new DeckTui(
+    terminal,
+    app.state,
+    (intent) => {
+      pending.push(app.handleIntent(intent));
+    },
+    { treeWidth: 34 },
+  );
   const unsubscribe = app.subscribe((state) => deck.update(state));
   await deck.start();
   return {
@@ -181,8 +189,20 @@ it("existing Workspace Terminal/profile creates immediately and retries attachme
     await f.key("\r");
     expect(f.gateway.createdTerminals).toHaveLength(1);
     expect(f.gateway.createdTerminals[0]?.workspaceId).toBe("other");
-    expect(f.app.state.modal.type).toBe("new-tab");
-    expect(f.terminal.viewport().join("\n").match(/Build/g)).toHaveLength(2);
+    expect(f.app.state.modal).toMatchObject({
+      type: "new-tab",
+      workspaceId: "other",
+      createdTerminalId: "fake-terminal-1",
+      profiles: [{ id: "build", name: "Build" }],
+    });
+    expect(f.app.state.tabOrder.other).toEqual(["terminal:fake-terminal-1"]);
+    const frame = f.terminal.viewport().join("\n");
+    expect(frame).toContain("New Tab");
+    expect(frame).toContain("Terminal profiles");
+    expect(frame).toContain("> Build");
+    await f.key("x");
+    expect(f.gateway.terminalInput).toEqual([]);
+    await f.key("\u007f");
     await f.key("\r");
     expect(f.gateway.createdTerminals).toHaveLength(1);
     expect(f.app.state.activeTerminalId).toBe("fake-terminal-1");

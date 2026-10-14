@@ -84,7 +84,7 @@ async function fixture() {
 it("preserves Timeline Visual selection through Help, nested quit and background scroll before copying", async () => {
   const f = await fixture();
   try {
-    await f.keys("i", "unsent", "\u001b", "\u000b", "g", "g", "j", "^", "v", "l", "l");
+    await f.keys("i", "unsent", "\u001b", "\u000b", "g", "g", "^", "v", "l", "l");
     expect(f.app.state.timelineMode).toBe("visual");
     await f.keys("g", "?", "\u0003", "\u0003");
     expect(f.terminal.viewport().join("\n")).toContain("Quit and discard");
